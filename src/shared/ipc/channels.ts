@@ -10,6 +10,7 @@ export const IpcChannels = {
   FILE_EXPORT_KEYMAP_C: 'file:export-keymap-c',
   FILE_EXPORT_PDF: 'file:export-pdf',
   FILE_EXPORT_CSV: 'file:export-csv',
+  FILE_EXPORT_JSON: 'file:export-json',
 
   // Logging (preload → main)
   LOG_ENTRY: 'log:entry',
@@ -22,6 +23,7 @@ export const IpcChannels = {
   HID_SEND_RECEIVE: 'hid:sendReceive',
   HID_SEND: 'hid:send',
   HID_IS_DEVICE_OPEN: 'hid:isDeviceOpen',
+  HID_PROBE_DEVICE: 'hid:probeDevice',
 
   // LZMA decompression (preload → main → preload)
   LZMA_DECOMPRESS: 'lzma:decompress',
@@ -30,6 +32,7 @@ export const IpcChannels = {
   SNAPSHOT_STORE_LIST: 'snapshot-store:list',
   SNAPSHOT_STORE_SAVE: 'snapshot-store:save',
   SNAPSHOT_STORE_LOAD: 'snapshot-store:load',
+  SNAPSHOT_STORE_UPDATE: 'snapshot-store:update',
   SNAPSHOT_STORE_RENAME: 'snapshot-store:rename',
   SNAPSHOT_STORE_DELETE: 'snapshot-store:delete',
 
@@ -43,7 +46,9 @@ export const IpcChannels = {
   FAVORITE_STORE_RENAME: 'favorite-store:rename',
   FAVORITE_STORE_DELETE: 'favorite-store:delete',
   FAVORITE_STORE_EXPORT: 'favorite-store:export',
+  FAVORITE_STORE_EXPORT_CURRENT: 'favorite-store:export-current',
   FAVORITE_STORE_IMPORT: 'favorite-store:import',
+  FAVORITE_STORE_IMPORT_TO_CURRENT: 'favorite-store:import-to-current',
 
   // App Config (renderer ↔ main)
   APP_CONFIG_GET_ALL: 'app-config:get-all',
@@ -64,6 +69,7 @@ export const IpcChannels = {
   SYNC_PENDING_STATUS: 'sync:pending-status',
   SYNC_LIST_UNDECRYPTABLE: 'sync:list-undecryptable',
   SYNC_SCAN_REMOTE: 'sync:scan-remote',
+  SYNC_FETCH_REMOTE_BUNDLE: 'sync:fetch-remote-bundle',
   SYNC_DELETE_FILES: 'sync:delete-files',
   SYNC_CHECK_PASSWORD_EXISTS: 'sync:check-password-exists',
 
