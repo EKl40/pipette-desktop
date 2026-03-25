@@ -1,39 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { listDevices, openHidDevice, closeHidDevice, isDeviceOpen } from './hid-transport'
+import {
+  listDevices,
+  openHidDevice,
+  closeHidDevice,
+  isDeviceOpen,
+  probeDevice,
+} from './hid-transport'
 import * as protocol from './protocol'
 import * as keychronProtocol from './keychron-protocol'
 import { IpcChannels } from '../shared/ipc/channels'
-import type { DeviceInfo, KeyboardDefinition } from '../shared/types/protocol'
+import type { DeviceInfo, KeyboardDefinition, ProbeResult } from '../shared/types/protocol'
 import type { SnapshotMeta } from '../shared/types/snapshot-store'
 import type { SavedFavoriteMeta, FavoriteImportResult } from '../shared/types/favorite-store'
 import type { AppConfig } from '../shared/types/app-config'
-import type {
-  SyncAuthStatus,
-  SyncProgress,
-  PasswordStrength,
-  SyncResetTargets,
-  LocalResetTargets,
-  UndecryptableFile,
-  SyncDataScanResult,
-  SyncScope,
-  StoredKeyboardInfo,
-} from '../shared/types/sync'
+import type { SyncAuthStatus, SyncProgress, PasswordStrength, SyncResetTargets, LocalResetTargets, UndecryptableFile, SyncDataScanResult, SyncScope, StoredKeyboardInfo } from '../shared/types/sync'
 import type { PipetteSettings } from '../shared/types/pipette-settings'
 import type { LanguageListEntry } from '../shared/types/language-store'
-import type {
-  HubUploadPostParams,
-  HubUpdatePostParams,
-  HubPatchPostParams,
-  HubUploadResult,
-  HubDeleteResult,
-  HubFetchMyPostsResult,
-  HubFetchMyPostsParams,
-  HubFetchMyKeyboardPostsResult,
-  HubUserResult,
-  HubUploadFavoritePostParams,
-  HubUpdateFavoritePostParams,
-} from '../shared/types/hub'
-import type { NotificationFetchResult } from '../shared/types/notification'
+
 
 /**
  * API exposed to renderer via contextBridge.
@@ -48,6 +31,8 @@ const vialAPI = {
     openHidDevice(vendorId, productId, serialNumber),
   closeDevice: (): Promise<void> => closeHidDevice(),
   isDeviceOpen: (): Promise<boolean> => isDeviceOpen(),
+  probeDevice: (vendorId: number, productId: number, serialNumber?: string): Promise<ProbeResult> =>
+    probeDevice(vendorId, productId, serialNumber),
 
   // --- VIA Protocol ---
   getProtocolVersion: (): Promise<number> => protocol.getProtocolVersion(),
@@ -305,15 +290,9 @@ const vialAPI = {
     deviceName?: string,
   ): Promise<{ success: boolean; filePath?: string; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.FILE_SAVE_LAYOUT, json, deviceName),
-  loadLayout: (
-    title?: string,
-  ): Promise<{ success: boolean; data?: string; filePath?: string; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.FILE_LOAD_LAYOUT, title),
-  exportKeymapC: (
-    content: string,
-    deviceName?: string,
-  ): Promise<{ success: boolean; filePath?: string; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.FILE_EXPORT_KEYMAP_C, content, deviceName),
+  loadLayout: (title?: string, extensions?: string[]): Promise<{ success: boolean; data?: string; filePath?: string; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.FILE_LOAD_LAYOUT, title, extensions),
+  exportKeymapC: (content: string, deviceName?: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>    ipcRenderer.invoke(IpcChannels.FILE_EXPORT_KEYMAP_C, content, deviceName),
   exportPdf: (
     base64Data: string,
     deviceName?: string,
@@ -324,6 +303,8 @@ const vialAPI = {
     defaultName?: string,
   ): Promise<{ success: boolean; filePath?: string; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.FILE_EXPORT_CSV, content, defaultName),
+  exportJson: (content: string, defaultName?: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.FILE_EXPORT_JSON, content, defaultName),
   sideloadJson: (title?: string): Promise<{ success: boolean; data?: unknown; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.SIDELOAD_JSON, title),
 
@@ -336,24 +317,13 @@ const vialAPI = {
     uid: string,
   ): Promise<{ success: boolean; entries?: SnapshotMeta[]; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_LIST, uid),
-  snapshotStoreSave: (
-    uid: string,
-    json: string,
-    deviceName: string,
-    label: string,
-  ): Promise<{ success: boolean; entry?: SnapshotMeta; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_SAVE, uid, json, deviceName, label),
-  snapshotStoreLoad: (
-    uid: string,
-    entryId: string,
-  ): Promise<{ success: boolean; data?: string; error?: string }> =>
+  snapshotStoreSave: (uid: string, json: string, deviceName: string, label: string, vilVersion?: number): Promise<{ success: boolean; entry?: SnapshotMeta; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_SAVE, uid, json, deviceName, label, vilVersion),
+  snapshotStoreLoad: (uid: string, entryId: string): Promise<{ success: boolean; data?: string; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_LOAD, uid, entryId),
-  snapshotStoreRename: (
-    uid: string,
-    entryId: string,
-    newLabel: string,
-  ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_RENAME, uid, entryId, newLabel),
+  snapshotStoreUpdate: (uid: string, entryId: string, json: string, vilVersion?: number): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_UPDATE, uid, entryId, json, vilVersion),
+  snapshotStoreRename: (uid: string, entryId: string, newLabel: string): Promise<{ success: boolean; error?: string }> =>    ipcRenderer.invoke(IpcChannels.SNAPSHOT_STORE_RENAME, uid, entryId, newLabel),
   snapshotStoreDelete: (
     uid: string,
     entryId: string,
@@ -392,8 +362,12 @@ const vialAPI = {
     entryId?: string,
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_EXPORT, scope, entryId),
+  favoriteStoreExportCurrent: (scope: string, data: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_EXPORT_CURRENT, scope, data),
   favoriteStoreImport: (): Promise<FavoriteImportResult> =>
     ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_IMPORT),
+  favoriteStoreImportToCurrent: (scope: string): Promise<{ success: boolean; data?: unknown; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_IMPORT_TO_CURRENT, scope),
 
   // --- Pipette Settings Store (internal save/load via IPC) ---
   pipetteSettingsGet: (uid: string): Promise<PipetteSettings | null> =>
@@ -450,55 +424,7 @@ const vialAPI = {
     ipcRenderer.invoke(IpcChannels.SYNC_LIST_UNDECRYPTABLE),
   syncScanRemote: (): Promise<SyncDataScanResult> =>
     ipcRenderer.invoke(IpcChannels.SYNC_SCAN_REMOTE),
-  syncDeleteFiles: (fileIds: string[]): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.SYNC_DELETE_FILES, fileIds),
-  syncCheckPasswordExists: (): Promise<boolean> =>
-    ipcRenderer.invoke(IpcChannels.SYNC_CHECK_PASSWORD_EXISTS),
-  syncOnPendingChange: (callback: (pending: boolean) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, pending: boolean): void => {
-      callback(pending)
-    }
-    ipcRenderer.on(IpcChannels.SYNC_PENDING_STATUS, handler)
-    return () => ipcRenderer.removeListener(IpcChannels.SYNC_PENDING_STATUS, handler)
-  },
-
-  // --- Hub ---
-  hubUploadPost: (params: HubUploadPostParams): Promise<HubUploadResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_UPLOAD_POST, params),
-  hubUpdatePost: (params: HubUpdatePostParams): Promise<HubUploadResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_UPDATE_POST, params),
-  hubPatchPost: (params: HubPatchPostParams): Promise<HubDeleteResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_PATCH_POST, params),
-  hubDeletePost: (postId: string): Promise<HubDeleteResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_DELETE_POST, postId),
-  hubFetchMyPosts: (params?: HubFetchMyPostsParams): Promise<HubFetchMyPostsResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_FETCH_MY_POSTS, params),
-  hubFetchMyKeyboardPosts: (keyboardName: string): Promise<HubFetchMyKeyboardPostsResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_FETCH_MY_KEYBOARD_POSTS, keyboardName),
-  hubFetchAuthMe: (): Promise<HubUserResult> => ipcRenderer.invoke(IpcChannels.HUB_FETCH_AUTH_ME),
-  hubPatchAuthMe: (displayName: string): Promise<HubUserResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_PATCH_AUTH_ME, displayName),
-  hubSetAuthDisplayName: (displayName: string | null): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.HUB_SET_AUTH_DISPLAY_NAME, displayName),
-  hubGetOrigin: (): Promise<string> => ipcRenderer.invoke(IpcChannels.HUB_GET_ORIGIN),
-
-  // --- Notification ---
-  notificationFetch: (): Promise<NotificationFetchResult> =>
-    ipcRenderer.invoke(IpcChannels.NOTIFICATION_FETCH),
-
-  // --- Hub Feature posts (favorites) ---
-  hubUploadFavoritePost: (params: HubUploadFavoritePostParams): Promise<HubUploadResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_UPLOAD_FAVORITE_POST, params),
-  hubUpdateFavoritePost: (params: HubUpdateFavoritePostParams): Promise<HubUploadResult> =>
-    ipcRenderer.invoke(IpcChannels.HUB_UPDATE_FAVORITE_POST, params),
-
-  // --- Favorite Store extensions ---
-  favoriteStoreSetHubPostId: (
-    type: string,
-    entryId: string,
-    hubPostId: string | null,
-  ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID, type, entryId, hubPostId),
+  favoriteStoreSetHubPostId: (type: string, entryId: string, hubPostId: string | null): Promise<{ success: boolean; error?: string }> =>    ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID, type, entryId, hubPostId),
 
   // --- Snapshot Store extensions ---
   snapshotStoreSetHubPostId: (

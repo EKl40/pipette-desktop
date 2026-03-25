@@ -116,14 +116,32 @@ export function setupFileIO(): void {
     },
   )
 
-  secureHandle(IpcChannels.FILE_LOAD_LAYOUT, async (event, title?: unknown) => {
+  secureHandle(IpcChannels.FILE_EXPORT_JSON, async (event, content: string, defaultName?: string) => {
+    const filename = defaultName ? `${sanitizeFilename(defaultName)}.json` : 'export.json'
+    return saveFileWithDialog(event, content, {
+      title: 'Export JSON',
+      defaultPath: filename,
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
+  })
+
+  secureHandle(IpcChannels.FILE_LOAD_LAYOUT, async (event, title?: unknown, extensions?: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return { success: false, error: 'No window' }
+
+    // Default to .vil; callers can pass ['pipette'] for pipette-file mode
+    const exts = Array.isArray(extensions) && extensions.every((e) => typeof e === 'string')
+      ? extensions as string[]
+      : ['vil']
+    const filterName = exts.includes('pipette') ? 'Pipette Layout' : 'Vial Layout'
 
     const result = await dialog.showOpenDialog(win, {
       title: typeof title === 'string' ? title : 'Import Layout',
       filters: [
-        { name: 'Vial Layout', extensions: ['vil'] },
+        { name: filterName, extensions: exts },
         { name: 'All Files', extensions: ['*'] },
       ],
       properties: ['openFile'],

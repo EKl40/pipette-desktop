@@ -68,13 +68,11 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('sets hubPostId on an existing entry', async () => {
     const saveHandler = getHandler(IpcChannels.FAVORITE_STORE_SAVE)
-    const saved = (await saveHandler(fakeEvent, 'tapDance', '{}', 'My TD')) as {
-      entry: { id: string }
+    const saved = await saveHandler(fakeEvent, 'tapDance', '{}', 'My TD') as {      entry: { id: string }
     }
 
     const handler = getHandler(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID)
-    const result = (await handler(fakeEvent, 'tapDance', saved.entry.id, 'post-123')) as {
-      success: boolean
+    const result = await handler(fakeEvent, 'tapDance', saved.entry.id, 'post-123') as {      success: boolean
     }
     expect(result.success).toBe(true)
 
@@ -85,14 +83,12 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('removes hubPostId when null is passed', async () => {
     const saveHandler = getHandler(IpcChannels.FAVORITE_STORE_SAVE)
-    const saved = (await saveHandler(fakeEvent, 'macro', '{}', 'My Macro')) as {
-      entry: { id: string }
+    const saved = await saveHandler(fakeEvent, 'macro', '{}', 'My Macro') as {      entry: { id: string }
     }
 
     const handler = getHandler(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID)
     await handler(fakeEvent, 'macro', saved.entry.id, 'post-456')
-    const result = (await handler(fakeEvent, 'macro', saved.entry.id, null)) as {
-      success: boolean
+    const result = await handler(fakeEvent, 'macro', saved.entry.id, null) as {      success: boolean
     }
     expect(result.success).toBe(true)
 
@@ -103,8 +99,7 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('returns error when entry is not found', async () => {
     const handler = getHandler(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID)
-    const result = (await handler(fakeEvent, 'tapDance', 'nonexistent-id', 'post-1')) as {
-      success: boolean
+    const result = await handler(fakeEvent, 'tapDance', 'nonexistent-id', 'post-1') as {      success: boolean
       error: string
     }
     expect(result.success).toBe(false)
@@ -113,8 +108,7 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('returns error when type is invalid', async () => {
     const handler = getHandler(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID)
-    const result = (await handler(fakeEvent, 'qmkSettings', 'some-id', 'post-1')) as {
-      success: boolean
+    const result = await handler(fakeEvent, 'qmkSettings', 'some-id', 'post-1') as {      success: boolean
       error: string
     }
     expect(result.success).toBe(false)
@@ -123,13 +117,11 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('trims whitespace from hubPostId', async () => {
     const saveHandler = getHandler(IpcChannels.FAVORITE_STORE_SAVE)
-    const saved = (await saveHandler(fakeEvent, 'combo', '{}', 'My Combo')) as {
-      entry: { id: string }
+    const saved = await saveHandler(fakeEvent, 'combo', '{}', 'My Combo') as {      entry: { id: string }
     }
 
     const handler = getHandler(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID)
-    const result = (await handler(fakeEvent, 'combo', saved.entry.id, '  post-789  ')) as {
-      success: boolean
+    const result = await handler(fakeEvent, 'combo', saved.entry.id, '  post-789  ') as {      success: boolean
     }
     expect(result.success).toBe(true)
 
@@ -140,8 +132,7 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('normalizes empty/whitespace hubPostId to null (deletes field)', async () => {
     const saveHandler = getHandler(IpcChannels.FAVORITE_STORE_SAVE)
-    const saved = (await saveHandler(fakeEvent, 'tapDance', '{}', 'My TD')) as {
-      entry: { id: string }
+    const saved = await saveHandler(fakeEvent, 'tapDance', '{}', 'My TD') as {      entry: { id: string }
     }
 
     const handler = getHandler(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID)
@@ -157,8 +148,7 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('updates updatedAt timestamp', async () => {
     const saveHandler = getHandler(IpcChannels.FAVORITE_STORE_SAVE)
-    const saved = (await saveHandler(fakeEvent, 'keyOverride', '{}', 'My KO')) as {
-      entry: { id: string; updatedAt?: string }
+    const saved = await saveHandler(fakeEvent, 'keyOverride', '{}', 'My KO') as {      entry: { id: string; updatedAt?: string }
     }
     const originalUpdatedAt = saved.entry.updatedAt
 
@@ -176,8 +166,7 @@ describe('favorite-store set-hub-post-id', () => {
 
   it('calls notifyChange with correct path', async () => {
     const saveHandler = getHandler(IpcChannels.FAVORITE_STORE_SAVE)
-    const saved = (await saveHandler(fakeEvent, 'altRepeatKey', '{}', 'My ARK')) as {
-      entry: { id: string }
+    const saved = await saveHandler(fakeEvent, 'altRepeatKey', '{}', 'My ARK') as {      entry: { id: string }
     }
 
     vi.mocked(notifyChange).mockClear()

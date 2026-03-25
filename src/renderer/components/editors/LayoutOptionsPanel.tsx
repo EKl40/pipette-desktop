@@ -63,10 +63,7 @@ export function LayoutOptionsPanel({ options, values, onChange }: LayoutOptionsP
                 style={selectWidth ? { width: selectWidth } : undefined}
               >
                 {opt.labels.slice(1).map((label, i) => (
-                  <option key={i} value={i}>
-                    {label}
-                  </option>
-                ))}
+                  <option key={i} value={i}>{label}</option>                ))}
               </select>
             )}
           </label>

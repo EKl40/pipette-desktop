@@ -128,6 +128,7 @@ describe('useDeviceConnection', () => {
       mockListDevices.mockClear()
 
       // Wait for the polling interval to call isDeviceOpen instead of listDevices
+      // (listDevices only runs when deviceListActive is true)
       await waitFor(
         () => {
           expect(mockIsDeviceOpen).toHaveBeenCalled()

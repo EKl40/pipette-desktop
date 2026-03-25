@@ -3,49 +3,12 @@
 
 import { secureHandle } from '../ipc-guard'
 import { IpcChannels } from '../../shared/ipc/channels'
-import {
-  HUB_ERROR_DISPLAY_NAME_CONFLICT,
-  HUB_ERROR_ACCOUNT_DEACTIVATED,
-  HUB_ERROR_RATE_LIMITED,
-} from '../../shared/types/hub'
-import type {
-  HubUploadPostParams,
-  HubUpdatePostParams,
-  HubPatchPostParams,
-  HubUploadResult,
-  HubDeleteResult,
-  HubFetchMyPostsResult,
-  HubFetchMyKeyboardPostsResult,
-  HubUserResult,
-  HubFetchMyPostsParams,
-  HubUploadFavoritePostParams,
-  HubUpdateFavoritePostParams,
-} from '../../shared/types/hub'
+import { HUB_ERROR_DISPLAY_NAME_CONFLICT, HUB_ERROR_ACCOUNT_DEACTIVATED, HUB_ERROR_RATE_LIMITED } from '../../shared/types/hub'
+import type { HubUploadPostParams, HubUpdatePostParams, HubPatchPostParams, HubUploadResult, HubDeleteResult, HubFetchMyPostsResult, HubFetchMyKeyboardPostsResult, HubUserResult, HubFetchMyPostsParams, HubUploadFavoritePostParams, HubUpdateFavoritePostParams } from '../../shared/types/hub'
 import { getIdToken } from '../sync/google-auth'
-import {
-  Hub401Error,
-  Hub403Error,
-  Hub409Error,
-  Hub429Error,
-  authenticateWithHub,
-  uploadPostToHub,
-  updatePostOnHub,
-  patchPostOnHub,
-  deletePostFromHub,
-  fetchMyPosts,
-  fetchMyPostsByKeyboard,
-  fetchAuthMe,
-  patchAuthMe,
-  getHubOrigin,
-  uploadFeaturePostToHub,
-  updateFeaturePostOnHub,
-} from './hub-client'
+import { Hub401Error, Hub403Error, Hub409Error, Hub429Error, authenticateWithHub, uploadPostToHub, updatePostOnHub, patchPostOnHub, deletePostFromHub, fetchMyPosts, fetchMyPostsByKeyboard, fetchAuthMe, patchAuthMe, getHubOrigin, uploadFeaturePostToHub, updateFeaturePostOnHub } from './hub-client'
 import type { HubAuthResult, HubUploadFiles } from './hub-client'
-import {
-  isValidFavoriteType,
-  FAV_TYPE_TO_EXPORT_KEY,
-  serializeFavData,
-} from '../../shared/favorite-data'
+import { isValidFavoriteType, FAV_TYPE_TO_EXPORT_KEY, serializeFavData } from '../../shared/favorite-data'
 import { serialize as serializeKeycode } from '../../shared/keycodes/keycodes'
 import type { FavoriteType, FavoriteIndex } from '../../shared/types/favorite-store'
 import { readFile } from 'node:fs/promises'
@@ -188,6 +151,7 @@ const MB = 1024 * 1024
 const FILE_SIZE_LIMITS: Record<string, { max: number; label: string }> = {
   thumbnail: { max: 2 * MB, label: 'thumbnail' },
   vil: { max: 10 * MB, label: 'vil' },
+  pipette: { max: 10 * MB, label: 'pipette' },
   c: { max: 10 * MB, label: 'keymap C' },
   pdf: { max: 10 * MB, label: 'PDF' },
 }
@@ -205,6 +169,7 @@ function buildFiles(params: HubUploadPostParams): HubUploadFiles {
   const baseName = params.keyboardName.replace(/[^a-zA-Z0-9_-]/g, '_')
   const files: HubUploadFiles = {
     vil: { name: `${baseName}.vil`, data: Buffer.from(params.vilJson, 'utf-8') },
+    pipette: { name: `${baseName}.pipette`, data: Buffer.from(params.pipetteJson, 'utf-8') },
     c: { name: `${baseName}.c`, data: Buffer.from(params.keymapC, 'utf-8') },
     pdf: { name: `${baseName}.pdf`, data: Buffer.from(params.pdfBase64, 'base64') },
     thumbnail: { name: `${baseName}.jpg`, data: Buffer.from(params.thumbnailBase64, 'base64') },
@@ -241,14 +206,11 @@ async function buildFavoriteExportJson(type: FavoriteType, entryId: string): Pro
     scope: 'fav' as const,
     exportedAt: new Date().toISOString(),
     categories: {
-      [exportKey]: [
-        {
-          label: entry.label,
-          savedAt: entry.savedAt,
-          data: serializedData,
-        },
-      ],
-    },
+      [exportKey]: [{
+        label: entry.label,
+        savedAt: entry.savedAt,
+        data: serializedData,
+      }],    },
   }
 
   return JSON.stringify(exportFile)
@@ -399,12 +361,7 @@ export function setupHubIpc(): void {
     const title = validateTitle(params.title)
     const postType = FAV_TYPE_TO_EXPORT_KEY[params.type]
     const jsonStr = await buildFavoriteExportJson(params.type, params.entryId)
-    return {
-      title,
-      postType,
-      jsonFile: { name: `${postType}.json`, data: Buffer.from(jsonStr, 'utf-8') },
-    }
-  }
+    return { title, postType, jsonFile: { name: `${postType}.json`, data: Buffer.from(jsonStr, 'utf-8') } }  }
 
   secureHandle(
     IpcChannels.HUB_UPLOAD_FAVORITE_POST,

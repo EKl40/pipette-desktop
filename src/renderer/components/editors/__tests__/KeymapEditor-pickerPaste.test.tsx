@@ -13,7 +13,7 @@ vi.mock('react-i18next', () => ({
         'editor.keymap.layerN': `Layer ${opts?.n ?? ''}`,
         'editor.keymap.zoomIn': 'Zoom In',
         'editor.keymap.zoomOut': 'Zoom Out',
-        'editor.keymap.dualMode': 'Dual View',
+        'editor.keymap.splitEdit': 'Split Edit',
         'editor.keymap.copyLayer': 'Copy Layer',
         'editor.keymap.copyLayerConfirm': 'Confirm Copy Layer?',
         'editor.keymap.clickToPaste': 'Click a key to paste',
@@ -22,6 +22,10 @@ vi.mock('react-i18next', () => ({
       return map[key] ?? key
     },
   }),
+}))
+
+vi.mock('../../../hooks/useAppConfig', () => ({
+  useAppConfig: () => ({ config: { maxKeymapHistory: 100 }, loading: false, set: () => {} }),
 }))
 
 let capturedWidgetProps: Array<Record<string, unknown>> = []
@@ -59,6 +63,7 @@ vi.mock('../../../../shared/keycodes/keycodes', () => ({
   extractModMask: () => 0,
   extractBasicKey: (code: number) => code & 0xff,
   buildModMaskKeycode: (mask: number, key: number) => (mask << 8) | key,
+  findKeycode: (qmkId: string) => ({ qmkId, label: qmkId }),
 }))
 
 vi.mock('../../keycodes/ModifierCheckboxStrip', () => ({
@@ -73,31 +78,11 @@ import { KeymapEditor } from '../KeymapEditor'
 import type { KleKey } from '../../../../shared/kle/types'
 
 const KEY_DEFAULTS: KleKey = {
-  x: 0,
-  y: 0,
-  width: 1,
-  height: 1,
-  row: 0,
-  col: 0,
-  encoderIdx: -1,
-  encoderDir: -1,
-  layoutIndex: -1,
-  layoutOption: -1,
-  decal: false,
-  labels: [],
-  x2: 0,
-  y2: 0,
-  width2: 1,
-  height2: 1,
-  rotation: 0,
-  rotationX: 0,
-  rotationY: 0,
-  color: '',
-  textColor: [],
-  textSize: [],
-  nub: false,
-  stepped: false,
-  ghost: false,
+  x: 0, y: 0, width: 1, height: 1, row: 0, col: 0,
+  encoderIdx: -1, encoderDir: -1, layoutIndex: -1, layoutOption: -1,
+  decal: false, labels: [], x2: 0, y2: 0, width2: 1, height2: 1,
+  rotation: 0, rotationX: 0, rotationY: 0, color: '',
+  textColor: [], textSize: [], nub: false, stepped: false, ghost: false,
 }
 
 function makeKey(x: number, col: number): KleKey {
@@ -140,7 +125,7 @@ describe('KeymapEditor — picker paste', () => {
     onSetKey,
     onSetKeysBulk,
     onSetEncoder: vi.fn().mockResolvedValue(undefined),
-    onDualModeChange: vi.fn(),
+    onSplitEditChange: vi.fn(),
     onActivePaneChange: vi.fn(),
     activePane: 'primary' as const,
   }
@@ -151,14 +136,11 @@ describe('KeymapEditor — picker paste', () => {
     capturedTabbedProps = {}
   })
 
+  const TAB_KEYCODE_NUMBERS = TAB_KEYCODES.map((kc) => parseInt(kc.qmkId.replace(/\D/g, ''), 10))
+
   function getOnKeycodeMultiSelect() {
     return capturedTabbedProps.onKeycodeMultiSelect as
-      | ((
-          kc: Keycode,
-          event: { ctrlKey: boolean; shiftKey: boolean },
-          tabKeycodes: Keycode[],
-        ) => void)
-      | undefined
+      ((index: number, keycode: number, event: { ctrlKey: boolean; shiftKey: boolean }, tabKeycodeNumbers: number[]) => void) | undefined
   }
 
   function getOnKeycodeSelect() {
@@ -166,27 +148,17 @@ describe('KeymapEditor — picker paste', () => {
   }
 
   function getPickerSelectedSet() {
-    return capturedTabbedProps.pickerSelectedKeycodes as Set<string> | undefined
+    return capturedTabbedProps.pickerSelectedIndices as Set<number> | undefined
   }
 
   function getActiveOnKeyClick() {
     return capturedWidgetProps.find((p) => p.onKeyClick != null)?.onKeyClick as
-      | ((
-          key: KleKey,
-          maskClicked: boolean,
-          event?: { ctrlKey: boolean; shiftKey: boolean },
-        ) => void)
-      | undefined
+      ((key: KleKey, maskClicked: boolean, event?: { ctrlKey: boolean; shiftKey: boolean }) => void) | undefined
   }
 
   function getLatestOnKeyClick() {
     return capturedWidgetProps.filter((p) => p.onKeyClick != null).pop()?.onKeyClick as
-      | ((
-          key: KleKey,
-          maskClicked: boolean,
-          event?: { ctrlKey: boolean; shiftKey: boolean },
-        ) => void)
-      | undefined
+      ((key: KleKey, maskClicked: boolean, event?: { ctrlKey: boolean; shiftKey: boolean }) => void) | undefined
   }
 
   it('adds keycode to picker selection on Ctrl+click (no key selected)', () => {
@@ -194,28 +166,29 @@ describe('KeymapEditor — picker paste', () => {
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     const selected = getPickerSelectedSet()!
-    expect(selected.has('KC_10')).toBe(true)
+    expect(selected.has(0)).toBe(true)
     expect(selected.size).toBe(1)
   })
 
-  it('toggles picker selection off on second Ctrl+click', () => {
+  it('toggles off on second Ctrl+click of same keycode (toggle)', () => {
     render(<KeymapEditor {...defaultProps} />)
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     const selected = getPickerSelectedSet()!
-    expect(selected.has('KC_10')).toBe(false)
+    // Second Ctrl+click of same keycode at same index removes it (toggle)
+    expect(selected.has(0)).toBe(false)
     expect(selected.size).toBe(0)
   })
 
@@ -224,18 +197,18 @@ describe('KeymapEditor — picker paste', () => {
 
     // Ctrl+click to set anchor at index 1
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[1], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(1, TAB_KEYCODE_NUMBERS[1], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     // Shift+click at index 3 (re-get callback to capture updated pickerAnchor)
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[3], { ctrlKey: false, shiftKey: true }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(3, TAB_KEYCODE_NUMBERS[3], { ctrlKey: false, shiftKey: true }, TAB_KEYCODE_NUMBERS)
     })
 
     const selected = getPickerSelectedSet()!
-    expect(selected.has('KC_11')).toBe(true)
-    expect(selected.has('KC_12')).toBe(true)
-    expect(selected.has('KC_13')).toBe(true)
+    expect(selected.has(1)).toBe(true)
+    expect(selected.has(2)).toBe(true)
+    expect(selected.has(3)).toBe(true)
     expect(selected.size).toBe(3)
   })
 
@@ -245,10 +218,10 @@ describe('KeymapEditor — picker paste', () => {
 
     // Select KC_10 and KC_11
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     act(() => {
-      multiSelect(TAB_KEYCODES[1], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(1, TAB_KEYCODE_NUMBERS[1], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     // Normal click on key [0,1] to paste
@@ -270,10 +243,10 @@ describe('KeymapEditor — picker paste', () => {
 
     // Ctrl+click in order: KC_12 then KC_10
     act(() => {
-      multiSelect(TAB_KEYCODES[2], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(2, TAB_KEYCODE_NUMBERS[2], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     const onKeyClick = getLatestOnKeyClick()!
@@ -281,11 +254,11 @@ describe('KeymapEditor — picker paste', () => {
       onKeyClick({ row: 0, col: 0 } as KleKey, false, { ctrlKey: false, shiftKey: false })
     })
 
-    // Ctrl order: KC_12, KC_10
+    // Index order (sorted by display position): KC_10 (idx 0), KC_12 (idx 2)
     expect(onSetKeysBulk).toHaveBeenCalledTimes(1)
     expect(onSetKeysBulk).toHaveBeenCalledWith([
-      { layer: 0, row: 0, col: 0, keycode: 12 }, // KC_12 -> [0,0]
-      { layer: 0, row: 0, col: 1, keycode: 10 }, // KC_10 -> [0,1]
+      { layer: 0, row: 0, col: 0, keycode: 10 }, // KC_10 (idx 0) -> [0,0]
+      { layer: 0, row: 0, col: 1, keycode: 12 }, // KC_12 (idx 2) -> [0,1]
     ])
   })
 
@@ -294,7 +267,7 @@ describe('KeymapEditor — picker paste', () => {
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     const onKeyClick = getLatestOnKeyClick()!
@@ -306,7 +279,7 @@ describe('KeymapEditor — picker paste', () => {
     expect(selected.size).toBe(0)
   })
 
-  it('does not allow picker multi-select when a key is selected', () => {
+  it('allows picker multi-select even when a key is selected', () => {
     render(<KeymapEditor {...defaultProps} />)
 
     // Select a key first
@@ -315,14 +288,15 @@ describe('KeymapEditor — picker paste', () => {
       onKeyClick({ row: 0, col: 0 } as KleKey, false)
     })
 
-    // Try picker multi-select
+    // Ctrl+click picker multi-select — should work (deselects key first)
     const multiSelect = getOnKeycodeMultiSelect()!
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     const selected = getPickerSelectedSet()!
-    expect(selected.size).toBe(0)
+    expect(selected.size).toBe(1)
+    expect(selected.has(0)).toBe(true)
   })
 
   it('clears picker selection on normal keycode click', () => {
@@ -330,7 +304,7 @@ describe('KeymapEditor — picker paste', () => {
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     expect(getPickerSelectedSet()!.size).toBe(1)
@@ -345,19 +319,11 @@ describe('KeymapEditor — picker paste', () => {
   })
 
   it('clears picker selection on pane Ctrl+click (mutual exclusion)', () => {
-    render(
-      <KeymapEditor
-        {...defaultProps}
-        dualMode
-        activePane="primary"
-        primaryLayer={0}
-        secondaryLayer={1}
-      />,
-    )
+    render(<KeymapEditor {...defaultProps} splitEdit activePane="primary" primaryLayer={0} secondaryLayer={1} />)
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     expect(getPickerSelectedSet()!.size).toBe(1)
 
@@ -371,15 +337,7 @@ describe('KeymapEditor — picker paste', () => {
   })
 
   it('clears pane multi-selection on picker Ctrl+click (mutual exclusion)', () => {
-    render(
-      <KeymapEditor
-        {...defaultProps}
-        dualMode
-        activePane="primary"
-        primaryLayer={0}
-        secondaryLayer={1}
-      />,
-    )
+    render(<KeymapEditor {...defaultProps} splitEdit activePane="primary" primaryLayer={0} secondaryLayer={1} />)
 
     // Select key on keymap with Ctrl+click
     const onKeyClick = getActiveOnKeyClick()!
@@ -397,7 +355,7 @@ describe('KeymapEditor — picker paste', () => {
     // Picker Ctrl+click should clear pane selection
     const multiSelect = getOnKeycodeMultiSelect()!
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     // Pane selection should be cleared
@@ -412,13 +370,13 @@ describe('KeymapEditor — picker paste', () => {
 
     // Select 3 keycodes
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     act(() => {
-      multiSelect(TAB_KEYCODES[1], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(1, TAB_KEYCODE_NUMBERS[1], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     act(() => {
-      multiSelect(TAB_KEYCODES[2], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(2, TAB_KEYCODE_NUMBERS[2], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     // Click on last key [0,3] — only 1 target position available
@@ -428,7 +386,9 @@ describe('KeymapEditor — picker paste', () => {
     })
 
     expect(onSetKeysBulk).toHaveBeenCalledTimes(1)
-    expect(onSetKeysBulk).toHaveBeenCalledWith([{ layer: 0, row: 0, col: 3, keycode: 10 }])
+    expect(onSetKeysBulk).toHaveBeenCalledWith([
+      { layer: 0, row: 0, col: 3, keycode: 10 },
+    ])
   })
 
   it('stores picker selection after multi-select', () => {
@@ -436,7 +396,7 @@ describe('KeymapEditor — picker paste', () => {
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     expect(getPickerSelectedSet()!.size).toBe(1)
@@ -447,7 +407,7 @@ describe('KeymapEditor — picker paste', () => {
     const multiSelect = getOnKeycodeMultiSelect()!
 
     act(() => {
-      multiSelect(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      multiSelect(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     expect(getPickerSelectedSet()!.size).toBe(1)
 
@@ -462,12 +422,12 @@ describe('KeymapEditor — picker paste', () => {
 
     // Ctrl+click at index 3 to set anchor
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[3], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(3, TAB_KEYCODE_NUMBERS[3], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
 
     // Shift+click at index 1 (backward)
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[1], { ctrlKey: false, shiftKey: true }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(1, TAB_KEYCODE_NUMBERS[1], { ctrlKey: false, shiftKey: true }, TAB_KEYCODE_NUMBERS)
     })
 
     // Paste starting at [0,0]
@@ -485,24 +445,25 @@ describe('KeymapEditor — picker paste', () => {
     ])
   })
 
-  it('Shift+click with stale anchor (not in tab) is a no-op', () => {
+  it('Shift+click after tab switch creates range from anchor index', () => {
     render(<KeymapEditor {...defaultProps} />)
 
-    // Ctrl+click to set anchor with TAB_KEYCODES
+    // Ctrl+click to set anchor at index 0
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(0, TAB_KEYCODE_NUMBERS[0], { ctrlKey: true, shiftKey: false }, TAB_KEYCODE_NUMBERS)
     })
     expect(getPickerSelectedSet()!.size).toBe(1)
 
-    // Shift+click with a different tabKeycodes list (simulating tab switch)
-    const otherTab = [makeKeycode('KC_99', 'X'), makeKeycode('KC_100', 'Y')]
+    // Shift+click at index 1 with different keycode numbers (simulating tab switch)
+    const otherNumbers = [99, 100]
     act(() => {
-      getOnKeycodeMultiSelect()!(otherTab[1], { ctrlKey: false, shiftKey: true }, otherTab)
+      getOnKeycodeMultiSelect()!(1, otherNumbers[1], { ctrlKey: false, shiftKey: true }, otherNumbers)
     })
 
-    // Anchor KC_10 is not in otherTab, so no range should be added; original Ctrl selection remains
-    expect(getPickerSelectedSet()!.size).toBe(1)
-    expect(getPickerSelectedSet()!.has('KC_10')).toBe(true)
+    // Index-based range: anchor 0 to click 1 = indices 0, 1
+    expect(getPickerSelectedSet()!.size).toBe(2)
+    expect(getPickerSelectedSet()!.has(0)).toBe(true)
+    expect(getPickerSelectedSet()!.has(1)).toBe(true)
   })
 
   it('Shift+click without prior anchor selects single keycode and sets anchor', () => {
@@ -510,23 +471,23 @@ describe('KeymapEditor — picker paste', () => {
 
     // Shift+click without any prior Ctrl+click
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[2], { ctrlKey: false, shiftKey: true }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(2, TAB_KEYCODE_NUMBERS[2], { ctrlKey: false, shiftKey: true }, TAB_KEYCODE_NUMBERS)
     })
 
     // Should select just the clicked keycode
     const selected = getPickerSelectedSet()!
     expect(selected.size).toBe(1)
-    expect(selected.has('KC_12')).toBe(true)
+    expect(selected.has(2)).toBe(true)
 
     // Subsequent Shift+click should work as range from the anchor
     act(() => {
-      getOnKeycodeMultiSelect()!(TAB_KEYCODES[4], { ctrlKey: false, shiftKey: true }, TAB_KEYCODES)
+      getOnKeycodeMultiSelect()!(4, TAB_KEYCODE_NUMBERS[4], { ctrlKey: false, shiftKey: true }, TAB_KEYCODE_NUMBERS)
     })
 
     const rangeSelected = getPickerSelectedSet()!
-    expect(rangeSelected.has('KC_12')).toBe(true)
-    expect(rangeSelected.has('KC_13')).toBe(true)
-    expect(rangeSelected.has('KC_14')).toBe(true)
+    expect(rangeSelected.has(2)).toBe(true)
+    expect(rangeSelected.has(3)).toBe(true)
+    expect(rangeSelected.has(4)).toBe(true)
     expect(rangeSelected.size).toBe(3)
   })
 })

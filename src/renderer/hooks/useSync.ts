@@ -230,6 +230,11 @@ export function useSync(): UseSyncReturn {
 
   const scanRemote = useCallback(() => window.vialAPI.syncScanRemote(), [])
 
+  const scanRemote = useCallback(
+    () => window.vialAPI.syncScanRemote(),
+    [],
+  )
+
   const deleteFiles = useCallback(
     (fileIds: string[]) => window.vialAPI.syncDeleteFiles(fileIds),
     [],

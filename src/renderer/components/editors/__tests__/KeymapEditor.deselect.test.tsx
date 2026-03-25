@@ -26,6 +26,10 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
+vi.mock('../../../hooks/useAppConfig', () => ({
+  useAppConfig: () => ({ config: { maxKeymapHistory: 100 }, loading: false, set: () => {} }),
+}))
+
 // Track the captured callbacks from KeyboardWidget
 let capturedOnKeyClick: ((key: { row: number; col: number }) => void) | undefined
 
@@ -93,6 +97,7 @@ vi.mock('../../../../shared/keycodes/keycodes', () => {
     extractModMask: () => 0,
     extractBasicKey: (code: number) => code & 0xff,
     buildModMaskKeycode: (mask: number, key: number) => (mask << 8) | key,
+  findKeycode: (qmkId: string) => ({ qmkId, label: qmkId }),
   }
 })
 

@@ -1,7 +1,7 @@
 {
   "name": "pipette-desktop",
   "version": "0.3.2",
-  "description": "Pipette — Vial-compatible keyboard configurator built with Electron and TypeScript",
+  "description": "Pipette \u2014 Vial-compatible keyboard configurator built with Electron and TypeScript",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "author": "darakuneko <tvkids@gmail.com>",
@@ -26,7 +26,8 @@
     "test:e2e": "playwright test",
     "test:e2e:dev": "E2E_MODE=dev playwright test",
     "generate:language-manifest": "tsx scripts/generate-language-manifest.ts",
-    "doc:screenshots": "tsx e2e/helpers/doc-capture.ts"
+    "doc:screenshots": "tsx e2e/helpers/doc-capture.ts",
+    "lint:tdz": "npx tsx scripts/check-hook-deps-tdz.ts"
   },
   "dependencies": {
     "@zxcvbn-ts/core": "^3.0.4",

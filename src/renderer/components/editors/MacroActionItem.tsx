@@ -100,10 +100,7 @@ export function MacroActionItem({
                   selected={isSelected}
                   selectedMaskPart={isSelected && selectedMaskPart}
                   onSelect={() => onKeycodeClick(ki)}
-                  onMaskPartClick={
-                    onMaskPartClick ? (part) => onMaskPartClick(ki, part) : undefined
-                  }
-                  onDoubleClick={isSelected ? (rect) => onKeycodeDoubleClick(ki, rect) : undefined}
+                  onMaskPartClick={onMaskPartClick ? (part) => onMaskPartClick(ki, part) : undefined}                  onDoubleClick={isSelected ? (rect) => onKeycodeDoubleClick(ki, rect) : undefined}
                 />
               )
             })}
@@ -153,10 +150,7 @@ export function MacroActionItem({
           selected
           selectedMaskPart={selectedMaskPart}
           onSelect={() => onKeycodeClick(selectedKeycodeIndex)}
-          onMaskPartClick={
-            onMaskPartClick ? (part) => onMaskPartClick(selectedKeycodeIndex, part) : undefined
-          }
-          onDoubleClick={(rect) => onKeycodeDoubleClick(selectedKeycodeIndex, rect)}
+          onMaskPartClick={onMaskPartClick ? (part) => onMaskPartClick(selectedKeycodeIndex, part) : undefined}          onDoubleClick={(rect) => onKeycodeDoubleClick(selectedKeycodeIndex, rect)}
         />
         {showConfirmHint && (
           <span className="text-xs text-content-muted">{t('editor.keymap.pickerDoubleClickHint')}</span>
@@ -168,21 +162,12 @@ export function MacroActionItem({
   return (
     <div
       onDragOver={onDragOver}
-      onDrop={(e) => {
-        e.preventDefault()
-        onDrop()
-      }}
-      className={`flex items-center gap-2 rounded border border-edge bg-surface-alt px-2 py-1.5 ${dropIndicator === 'above' ? 'border-t-2 border-t-accent' : dropIndicator === 'below' ? 'border-b-2 border-b-accent' : ''}`}
+      onDrop={(e) => { e.preventDefault(); onDrop() }}      className={`flex items-center gap-2 rounded border border-edge bg-surface-alt px-2 py-1.5 ${dropIndicator === 'above' ? 'border-t-2 border-t-accent' : dropIndicator === 'below' ? 'border-b-2 border-b-accent' : ''}`}
     >
       <div
         draggable
         data-testid="drag-handle"
-        onDragStart={(e) => {
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('text/plain', '')
-          onDragStart()
-        }}
-        onDragEnd={onDragEnd}
+        onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', ''); onDragStart() }}        onDragEnd={onDragEnd}
         className="flex items-center gap-1.5 border-r border-edge py-1 pl-1 pr-3 cursor-grab active:cursor-grabbing"
       >
         <GripVertical className="shrink-0 text-content-muted" size={14} />

@@ -3,7 +3,7 @@
 
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
-import { readFile, writeFile, readdir, mkdir, access } from 'node:fs/promises'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { encrypt, decrypt, retrievePassword, storePassword, clearPassword } from './sync-crypto'
 import { loadAppConfig } from '../app-config'
 import { getAuthStatus } from './google-auth'
@@ -17,18 +17,9 @@ import {
 } from './google-drive'
 import { pLimit } from '../../shared/concurrency'
 import { IpcChannels } from '../../shared/ipc/channels'
-import { FAVORITE_TYPES } from '../../shared/favorite-data'
 import { mergeEntries, gcTombstones } from './merge'
-import type { FavoriteIndex } from '../../shared/types/favorite-store'
-import type { SnapshotIndex } from '../../shared/types/snapshot-store'
-import type {
-  SyncBundle,
-  SyncProgress,
-  SyncEnvelope,
-  UndecryptableFile,
-  SyncDataScanResult,
-  SyncScope,
-} from '../../shared/types/sync'
+import { readIndexFile, bundleSyncUnit, collectAllSyncUnits } from './sync-bundle'
+import type { SyncBundle, SyncProgress, SyncEnvelope, UndecryptableFile, SyncDataScanResult, SyncScope } from '../../shared/types/sync'
 
 const SYNC_CONCURRENCY = 10
 const DEBOUNCE_MS = 10_000
@@ -114,10 +105,7 @@ async function requireSyncCredentials(): Promise<string | null> {
 
 // --- Remote data inspection ---
 
-async function fetchValidatedDataFiles(): Promise<{
-  password: string
-  dataFiles: DriveFile[]
-} | null> {
+async function fetchValidatedDataFiles(): Promise<{ password: string; dataFiles: DriveFile[] } | null> {
   const password = await requireSyncCredentials()
   if (!password) return null
   const remoteFiles = await listFiles()
@@ -129,10 +117,7 @@ async function fetchValidatedDataFiles(): Promise<{
   return { password, dataFiles }
 }
 
-async function findUndecryptableFiles(
-  password: string,
-  dataFiles: DriveFile[],
-): Promise<UndecryptableFile[]> {
+async function findUndecryptableFiles(password: string, dataFiles: DriveFile[]): Promise<UndecryptableFile[]> {
   const undecryptable: UndecryptableFile[] = []
   const limit = pLimit(SYNC_CONCURRENCY)
   await Promise.allSettled(
@@ -186,6 +171,23 @@ export async function scanRemoteData(): Promise<SyncDataScanResult> {
     keyboards: [...keyboardUids],
     favorites: [...favoriteTypes],
     undecryptable,
+  }
+}
+
+/** Download and decrypt a remote sync unit bundle without merging into local. */
+export async function fetchRemoteBundle(syncUnit: string): Promise<SyncBundle | null> {
+  const result = await fetchValidatedDataFiles()
+  if (!result) return null
+  const { password, dataFiles } = result
+  const targetName = driveFileName(syncUnit)
+  const file = dataFiles.find((f) => f.name === targetName)
+  if (!file) return null
+  try {
+    const envelope = await downloadFile(file.id)
+    const plaintext = await decrypt(envelope, password)
+    return JSON.parse(plaintext) as SyncBundle
+  } catch {
+    return null
   }
 }
 
@@ -244,63 +246,8 @@ export async function changePassword(newPassword: string): Promise<void> {
   }
 }
 
-// --- Bundle creation ---
-
-export async function readIndexFile(dir: string): Promise<FavoriteIndex | SnapshotIndex | null> {
-  try {
-    const raw = await readFile(join(dir, 'index.json'), 'utf-8')
-    return JSON.parse(raw) as FavoriteIndex | SnapshotIndex
-  } catch {
-    return null
-  }
-}
-
-export async function bundleSyncUnit(syncUnit: string): Promise<SyncBundle | null> {
-  const parts = syncUnit.split('/')
-  const userData = app.getPath('userData')
-
-  // Handle "keyboards/{uid}/settings" — single-file bundle (no index)
-  if (parts.length === 3 && parts[0] === 'keyboards' && parts[2] === 'settings') {
-    const uid = parts[1]
-    const filePath = join(userData, 'sync', 'keyboards', uid, 'pipette_settings.json')
-    try {
-      const content = await readFile(filePath, 'utf-8')
-      return {
-        type: 'settings',
-        key: uid,
-        index: { uid, entries: [] } as SnapshotIndex,
-        files: { 'pipette_settings.json': content },
-      }
-    } catch {
-      return null
-    }
-  }
-
-  // Handle index-based sync units (favorites, keyboard snapshots)
-  const basePath = join(userData, 'sync', ...parts)
-  const index = await readIndexFile(basePath)
-  if (!index) return null
-
-  const gcEntries = gcTombstones(index.entries)
-  index.entries = gcEntries as typeof index.entries
-
-  const files: Record<string, string> = {}
-
-  for (const entry of gcEntries) {
-    try {
-      const content = await readFile(join(basePath, entry.filename), 'utf-8')
-      files[entry.filename] = content
-    } catch {
-      // File missing — skip
-    }
-  }
-
-  files['index.json'] = JSON.stringify(index, null, 2)
-
-  const type: SyncBundle['type'] = parts[0] === 'favorites' ? 'favorite' : 'layout'
-
-  return { type, key: parts[1], index, files }
-}
+// Re-export bundle functions for backward compatibility
+export { readIndexFile, bundleSyncUnit, collectAllSyncUnits } from './sync-bundle'
 
 // --- Password check validation ---
 
@@ -311,7 +258,10 @@ class PasswordMismatchError extends Error {
   }
 }
 
-async function validatePasswordCheck(password: string, remoteFiles: DriveFile[]): Promise<void> {
+async function validatePasswordCheck(
+  password: string,
+  remoteFiles: DriveFile[],
+): Promise<void> {
   const fileName = driveFileName(PASSWORD_CHECK_UNIT)
   const existing = remoteFiles.find((f) => f.name === fileName)
 
@@ -364,7 +314,7 @@ async function uploadSyncUnit(
   const plaintext = JSON.stringify(bundle)
   const envelope = await encrypt(plaintext, password, syncUnit)
 
-  const files = remoteFiles ?? (await listFiles())
+  const files = remoteFiles ?? await listFiles()
   const targetName = driveFileName(syncUnit)
   const existing = files.find((f) => f.name === targetName)
 
@@ -397,9 +347,7 @@ async function mergeSyncUnit(
       const raw = await readFile(filePath, 'utf-8')
       const local = JSON.parse(raw) as { _updatedAt?: string }
       localTime = safeTimestamp(local._updatedAt)
-    } catch {
-      /* no local settings */
-    }
+    } catch { /* no local settings */ }
 
     const remoteSettings = JSON.parse(remoteContent) as { _updatedAt?: string }
     const remoteTime = safeTimestamp(remoteSettings._updatedAt)
@@ -430,8 +378,14 @@ async function mergeSyncUnit(
   }
 
   // Write merged index
-  const mergedIndex = localIndex ? { ...localIndex, entries: result.entries } : remoteBundle.index
-  await writeFile(join(basePath, 'index.json'), JSON.stringify(mergedIndex, null, 2), 'utf-8')
+  const mergedIndex = localIndex
+    ? { ...localIndex, entries: result.entries }
+    : remoteBundle.index
+  await writeFile(
+    join(basePath, 'index.json'),
+    JSON.stringify(mergedIndex, null, 2),
+    'utf-8',
+  )
 
   return result.remoteNeedsUpdate
 }
@@ -530,7 +484,7 @@ async function executeDownloadSync(
   prefetchedFiles?: DriveFile[],
   scope: SyncScope = 'all',
 ): Promise<string[]> {
-  const remoteFiles = prefetchedFiles ?? (await listFiles())
+  const remoteFiles = prefetchedFiles ?? await listFiles()
   updateRemoteState(remoteFiles) // Always record full remote state for polling
 
   const filesToDownload = remoteFiles.filter((f) => {
@@ -585,7 +539,7 @@ async function executeUploadSync(
   if (scope !== 'all') {
     syncUnits = syncUnits.filter((unit) => matchesScope(unit, scope))
   }
-  const remoteFiles = prefetchedFiles ?? (await listFiles())
+  const remoteFiles = prefetchedFiles ?? await listFiles()
   updateRemoteState(remoteFiles)
   const total = syncUnits.length
   let completed = 0
@@ -624,39 +578,6 @@ async function executeUploadSync(
   updateRemoteState(updatedFiles)
 
   return failedUnits
-}
-
-export async function collectAllSyncUnits(): Promise<string[]> {
-  const userData = app.getPath('userData')
-  const units = FAVORITE_TYPES.map((type) => `favorites/${type}`)
-
-  // Scan sync/keyboards/{uid}/ for settings and snapshots
-  const keyboardsDir = join(userData, 'sync', 'keyboards')
-  try {
-    const entries = await readdir(keyboardsDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const uid = entry.name
-      // settings (single file)
-      try {
-        await access(join(keyboardsDir, uid, 'pipette_settings.json'))
-        units.push(`keyboards/${uid}/settings`)
-      } catch {
-        /* no settings */
-      }
-      // snapshots (index-based)
-      try {
-        await access(join(keyboardsDir, uid, 'snapshots', 'index.json'))
-        units.push(`keyboards/${uid}/snapshots`)
-      } catch {
-        /* no snapshots */
-      }
-    }
-  } catch {
-    /* dir doesn't exist */
-  }
-
-  return units
 }
 
 // --- Remote state tracking ---
@@ -800,11 +721,7 @@ async function flushPendingChanges(): Promise<void> {
         if (err instanceof PasswordMismatchError) {
           emitProgress({ direction: 'upload', status: 'error', message: 'sync.passwordMismatch' })
         } else {
-          emitProgress({
-            direction: 'upload',
-            status: 'error',
-            message: errorMessage(err, 'Password check failed'),
-          })
+          emitProgress({ direction: 'upload', status: 'error', message: errorMessage(err, 'Password check failed') })
         }
         return
       }

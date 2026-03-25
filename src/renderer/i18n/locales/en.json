@@ -20,7 +20,14 @@
     "notConfigured": "N/C",
     "settingsLabel": "Settings:",
     "saving": "Saving...",
-    "back": "Back"
+    "back": "Back",
+    "saved": "Saved",
+    "delete": "Delete",
+    "confirmDelete": "Delete?",
+    "confirmReset": "Reset?",
+    "configuration": "Configuration",
+    "exported": "Exported",
+    "imported": "Imported"
   },
   "app": {
     "title": "Pipette",
@@ -29,7 +36,14 @@
     "selectDevices": "Select Devices",
     "connectedTo": "Connected to {{name}}",
     "udevHelp": "If no devices are found on Linux, ensure udev rules are installed. See the project README for details.",
-    "loadDummy": "Load from JSON file…"
+    "loadDummy": "Load from JSON file\u2026",
+    "keyboardTab": "Device",
+    "fileTab": "File",
+    "loadPipetteFile": "Load .pipette file\u2026",
+    "loadPipetteFileDescription": "Open a .pipette file for offline editing. All features except lighting and matrix tester are available.",
+    "noSavedFiles": "No saved files",
+    "selectKeyboard": "Select locally saved file",
+    "fileCount": "{{count}} saves"
   },
   "loading": {
     "protocol": "Reading device info",
@@ -37,7 +51,10 @@
     "keymap": "Loading keymap",
     "macros": "Loading macros",
     "dynamicEntries": "Loading features",
-    "settings": "Loading settings"
+    "settings": "Loading settings",
+    "migrating": "Migrating snapshots",
+    "migratingEntry": "Migrating snapshots ({{current}}/{{total}})",
+    "migrationSync": "Syncing migrated data"
   },
   "editor": {
     "autoAdvance": "Auto Move",
@@ -70,7 +87,7 @@
       "copyLayerConfirm": "Overwrite {{target}} with {{source}}?",
       "copySelected": "Paste Selected ({{count}})",
       "clickToPaste": "Click a key to paste",
-      "pickerHint": "Ctrl+click: multi-select / Shift+click: range select → click a key to paste",
+      "pickerHint": "Ctrl+click: multi-select / Shift+click: range select \u2192 click a key to paste",
       "pickerDoubleClickHint": "Double-click the same key again or press Enter to close",
       "keyPopover": {
         "keyTab": "Key",
@@ -88,8 +105,28 @@
         "layerLabel": "Layer",
         "keySelected": "Selected: {{key}}",
         "clickToClose": "Click to apply and close, or press Enter",
-        "undo": "Undo"
-      }
+        "undo": "Undo",
+        "redo": "Redo"
+      },
+      "comboSettings": "Combo",
+      "comboLabel": "Combo",
+      "undo": "Undo",
+      "redo": "Redo",
+      "splitEdit": "Split Edit",
+      "keyboardTab": "Keyboard",
+      "pickerSourceCurrent": "Current",
+      "pickerSourceFile": "File",
+      "pickerLoadFile": "Load from .pipette\u2026",
+      "pickerNoSavedFiles": "No saved keyboards",
+      "pickerNoEntries": "No saved keymaps",
+      "pickerBackToFiles": "\u2190 Files",
+      "pickerSourceDevice": "Device",
+      "pickerNoDevices": "No other keyboards connected",
+      "pickerProbing": "Reading keyboard...",
+      "pickerProbeError": "Failed to read keyboard",
+      "pickerBackToDevices": "\u2190 Devices",
+      "pickerCurrentState": "Current State",
+      "pickerSavedFiles": "Locally saved files"
     },
     "layout": {
       "title": "Layout",
@@ -114,7 +151,8 @@
       "addKeycode": "Add keycode",
       "asciiOnly": "Only ASCII characters (A-Z, 0-9, symbols) are supported",
       "unlockClickAgain": "After unlocking, click the macro key again to open the editor.",
-      "unlockWarning": "Do not store passwords or sensitive information in macros, as they may be replayed or shared."
+      "unlockWarning": "Do not store passwords or sensitive information in macros, as they may be replayed or shared.",
+      "invalidMacroEntry": "Invalid macro at index {{index}}"
     },
     "lighting": {
       "title": "Lighting",
@@ -129,7 +167,7 @@
       "value": "Value",
       "hex": "HEX",
       "noLighting": "This keyboard does not support lighting control.",
-      "unsavedPreview": "Preview — not saved to keyboard yet",
+      "unsavedPreview": "Preview \u2014 not saved to keyboard yet",
       "colorPicker": {
         "label": "Color Picker",
         "palette": "Palette",
@@ -144,7 +182,13 @@
       "onTapHold": "On Tap Hold",
       "tappingTerm": "Tapping Term (ms)",
       "hint": "Use TD({{index}}) to set up this action in the keymap",
-      "editTitle": "TD({{index}})"
+      "editTitle": "TD({{index}})",
+      "editJson": "Edit JSON",
+      "jsonEditorTitle": "Edit JSON",
+      "invalidJson": "Invalid JSON format",
+      "unknownKeycode": "Unknown keycode: {{keycode}}",
+      "invalidTappingTerm": "Tapping term must be a number between 0 and 10000",
+      "applyFailed": "Failed to apply changes"
     },
     "combo": {
       "title": "Combo",
@@ -153,7 +197,10 @@
       "editTitle": "Combo - {{index}}",
       "timeout": "Timeout (ms)",
       "selectEntry": "Select an entry to edit",
-      "settings": "Combo Settings"
+      "settings": "Combo Settings",
+      "invalidJson": "Invalid JSON format",
+      "unknownKeycode": "Unknown keycode: {{keycode}}",
+      "invalidEntry": "Invalid entry at index {{index}}"
     },
     "keyOverride": {
       "title": "Key Override",
@@ -170,7 +217,10 @@
       "editTitle": "Key Override - {{index}}",
       "modsOnly": "Mods",
       "settings": "Key Override Settings",
-      "selectEntry": "Select an entry to edit"
+      "selectEntry": "Select an entry to edit",
+      "invalidJson": "Invalid JSON format",
+      "unknownKeycode": "Unknown keycode: {{keycode}}",
+      "invalidEntry": "Invalid entry at index {{index}}"
     },
     "altRepeatKey": {
       "title": "Alt Repeat Key",
@@ -181,7 +231,10 @@
       "enabled": "Enabled",
       "editTitle": "Alt Repeat Key - {{index}}",
       "settings": "Alt Repeat Key Settings",
-      "selectEntry": "Select an entry to edit"
+      "selectEntry": "Select an entry to edit",
+      "invalidJson": "Invalid JSON format",
+      "unknownKeycode": "Unknown keycode: {{keycode}}",
+      "invalidEntry": "Invalid entry at index {{index}}"
     },
     "matrixTester": {
       "title": "Key Tester"
@@ -241,20 +294,27 @@
         "allModes": "All",
         "exportCsv": "Export CSV"
       }
+    },
+    "keyTester": {
+      "title": "Key Tester"
     }
   },
   "error": {
     "loadFailed": "Failed to load layout file",
     "saveFailed": "Failed to save layout file",
     "exampleUid": "Please configure a unique UID.",
-    "dummyMode": "Running in dummy mode — no keyboard connected.",
+    "dummyMode": "Running in dummy mode \u2014 no keyboard connected.",
     "protocolVersion": "This keyboard's VIA protocol version is not supported. Please update your firmware.",
     "exportKeymapCFailed": "Failed to export keymap.c file",
     "exportPdfFailed": "Failed to export Keymap PDF",
     "exportLayoutPdfFailed": "Failed to export Layout PDF",
     "sideloadFailed": "Failed to load JSON definition file",
     "sideloadInvalidDefinition": "Invalid keyboard definition: missing required fields (matrix, layouts)",
-    "notVialCompatible": "This device may not be a Vial-compatible keyboard."
+    "notVialCompatible": "This device may not be a Vial-compatible keyboard.",
+    "pipetteFileMode": "File Mode",
+    "unsavedChanges": "Unsaved changes",
+    "noSavedFiles": "No saved files",
+    "vilV1NotSupported": "Legacy data format. Connect the keyboard and open the keymap to migrate."
   },
   "warning": {
     "echoDetected": "Communication error detected. Please check your USB cable and reconnect the device."
@@ -311,22 +371,22 @@
       "backlight": "Backlight",
       "rgbLighting": "RGB Lighting",
       "rgbMatrix": "RGB Matrix",
-      "fKeys": "F13–F24",
+      "fKeys": "F13\u2013F24",
       "systemControl": "System",
       "appBrowser": "App & Browser",
       "mediaPlayback": "Media",
       "mouse": "Mouse",
       "lockingKeys": "Locking Keys",
       "layerSpecial": "Special",
-      "layerMO": "MO – Momentary",
-      "layerDF": "DF – Default Layer",
-      "layerPDF": "PDF – Persistent Default",
-      "layerTG": "TG – Toggle",
-      "layerTT": "TT – Tap Toggle",
-      "layerOSL": "OSL – One Shot Layer",
-      "layerTO": "TO – Turn On Layer",
-      "layerLT": "LT – Layer Tap",
-      "layerLM": "LM – Layer Mod",
+      "layerMO": "MO \u2013 Momentary",
+      "layerDF": "DF \u2013 Default Layer",
+      "layerPDF": "PDF \u2013 Persistent Default",
+      "layerTG": "TG \u2013 Toggle",
+      "layerTT": "TT \u2013 Tap Toggle",
+      "layerOSL": "OSL \u2013 One Shot Layer",
+      "layerTO": "TO \u2013 Turn On Layer",
+      "layerLT": "LT \u2013 Layer Tap",
+      "layerLM": "LM \u2013 Layer Mod",
       "macroDM": "Dynamic Macro",
       "midiNotes": "Notes",
       "midiOctave": "Octave",
@@ -338,7 +398,10 @@
       "sequencer": "Sequencer",
       "joystick": "Joystick",
       "ledMatrix": "LED Matrix"
-    }
+    },
+    "behavior": "Behavior",
+    "lighting": "Lighting",
+    "system": "System"
   },
   "unlock": {
     "title": "Unlock Keyboard",
@@ -410,7 +473,8 @@
     "confirmOverwrite": "Overwrite?",
     "exportVil": ".vil",
     "exportKeymapC": ".c",
-    "exportPdf": ".pdf"
+    "exportPdf": ".pdf",
+    "versionPrefix": "v{{version}} - "
   },
   "sync": {
     "title": "Settings",
@@ -515,10 +579,37 @@
       "version": "Version {{version}}",
       "license": "License: {{license}}",
       "licenseValue": "GPL-3.0-or-later"
-    }
+    },
+    "maxKeymapHistory": "Max Keymap History"
   },
   "dataModal": {
-    "title": "Data"
+    "title": "Data",
+    "tabLocal": "Local",
+    "tabSync": "Sync",
+    "local": "Local",
+    "cloud": "Cloud",
+    "keyboards": "Keyboards",
+    "favorites": "Favorites",
+    "application": "Application",
+    "settings": "Settings",
+    "saves": "Saves",
+    "sync": "Sync - Not available locally",
+    "hub": "Hub - Not available locally",
+    "noKeyboards": "No stored keyboards",
+    "noSettings": "No settings found",
+    "noSaves": "No saves found",
+    "settingsLayout": "Layout",
+    "settingsAutoAdvance": "Auto Advance",
+    "settingsLayers": "Layers",
+    "settingsTypingTests": "Typing Tests",
+    "settingsTypingTestCount": "{{count}} results",
+    "deleteKeyboard": "Delete",
+    "deleteKeyboardConfirm": "Delete all data for this keyboard?",
+    "importExportDesc": "Import/Export all local data (keyboards, favorites, settings)",
+    "deleteAll": "Delete All Data",
+    "deleteAllConfirm": "This will delete all data including synced data.",
+    "syncNoOrphans": "All synced data is available locally",
+    "resetAppSettings": "Reset application settings"
   },
   "editorSettings": {
     "title": "Menu",
@@ -573,7 +664,8 @@
     "displayNameRequired": "Required to upload to Hub",
     "authDisplayNameConflict": "Your Google account name conflicts with an existing display name. Please choose a different display name to continue.",
     "accountDeactivated": "Your account has been deactivated. Please contact support for assistance.",
-    "rateLimited": "Too many requests. Please try again later."
+    "rateLimited": "Too many requests. Please try again later.",
+    "hub": "Hub"
   },
   "notification": {
     "title": "Notifications",
@@ -607,6 +699,8 @@
     "importFailed": "Failed to import favorites",
     "importSuccess": "Imported {{imported}} entries",
     "importPartial": "Imported {{imported}} entries ({{skipped}} skipped)",
-    "importEmpty": "No entries were imported"
+    "importEmpty": "No entries were imported",
+    "exportCurrent": "Export",
+    "importCurrent": "Import"
   }
 }

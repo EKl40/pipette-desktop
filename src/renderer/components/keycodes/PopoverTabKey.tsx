@@ -57,16 +57,7 @@ interface Props {
 
 const MAX_RESULTS = 50
 
-export function PopoverTabKey({
-  currentKeycode,
-  maskOnly,
-  modMask = 0,
-  lmMode: lmModeProp,
-  basicKeyOnly,
-  onKeycodeSelect,
-  onClose,
-}: Props) {
-  const hasModMask = modMask > 0
+export function PopoverTabKey({ currentKeycode, maskOnly, modMask = 0, lmMode: lmModeProp, basicKeyOnly, onKeycodeSelect, onClose }: Props) {  const hasModMask = modMask > 0
   const { t } = useTranslation()
   const initialQuery = useMemo(() => {
     // When modifier strip is active or in LT/SH_T mode, show the inner basic key

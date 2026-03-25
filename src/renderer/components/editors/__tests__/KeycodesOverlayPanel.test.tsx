@@ -14,7 +14,7 @@ vi.mock('react-i18next', () => ({
         'editorSettings.tabLayout': 'Layout',
         'layout.keyboardLayout': 'Layout',
         'editor.autoAdvance': 'Auto Move',
-        'editor.matrixTester.title': 'Key Tester',
+        'editor.keyTester.title': 'Key Tester',
         'settings.security': 'Security',
         'security.lock': 'Lock',
         'statusBar.locked': 'Locked',
@@ -119,9 +119,7 @@ describe('KeycodesOverlayPanel', () => {
 
   it('calls onKeyboardLayoutChange when layout is changed', () => {
     const onKeyboardLayoutChange = vi.fn()
-    render(
-      <KeycodesOverlayPanel {...DEFAULT_PROPS} onKeyboardLayoutChange={onKeyboardLayoutChange} />,
-    )
+    render(<KeycodesOverlayPanel {...DEFAULT_PROPS} onKeyboardLayoutChange={onKeyboardLayoutChange} />)
 
     fireEvent.change(screen.getByTestId('overlay-layout-selector'), { target: { value: 'dvorak' } })
     expect(onKeyboardLayoutChange).toHaveBeenCalledWith('dvorak')

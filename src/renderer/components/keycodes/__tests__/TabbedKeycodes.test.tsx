@@ -10,9 +10,11 @@ const mockBasicKeycodes = [
   { qmkId: 'KC_TILD', label: '~', hidden: false },
 ]
 
-const mockQuantumKeycodes = [{ qmkId: 'QK_BOOT', label: 'Boot', hidden: false }]
+const mockBehaviorKeycodes = [
+  { qmkId: 'QK_BOOT', label: 'Boot', hidden: false },
+]
 
-const mockMediaKeycodes = [
+const mockSystemKeycodes = [
   { qmkId: 'KC_MUTE', label: 'Mute', hidden: false },
   { qmkId: 'KC_MS_U', label: 'Mouse Up', hidden: false },
 ]
@@ -22,8 +24,8 @@ vi.mock('react-i18next', () => ({
     t: (key: string) => {
       const map: Record<string, string> = {
         'keycodes.basic': 'Basic',
-        'keycodes.quantum': 'Quantum',
-        'keycodes.media': 'Media',
+        'keycodes.behavior': 'Behavior',
+        'keycodes.system': 'System',
       }
       return map[key] ?? key
     },
@@ -34,8 +36,8 @@ vi.mock('react-i18next', () => ({
 vi.mock('../categories', () => ({
   KEYCODE_CATEGORIES: [
     { id: 'basic', labelKey: 'keycodes.basic', getKeycodes: () => mockBasicKeycodes },
-    { id: 'quantum', labelKey: 'keycodes.quantum', getKeycodes: () => mockQuantumKeycodes },
-    { id: 'media', labelKey: 'keycodes.media', getKeycodes: () => mockMediaKeycodes },
+    { id: 'behavior', labelKey: 'keycodes.behavior', getKeycodes: () => mockBehaviorKeycodes },
+    { id: 'system', labelKey: 'keycodes.system', getKeycodes: () => mockSystemKeycodes },
   ],
 }))
 
@@ -57,6 +59,7 @@ vi.mock('../../../../shared/keycodes/keycodes', () => ({
   },
   getAvailableLMMods: () => [],
   findKeycode: () => undefined,
+  deserialize: () => 0,
   KEYCODES_SPECIAL: [],
   KEYCODES_BASIC: [],
   KEYCODES_SHIFTED: [],
@@ -69,7 +72,7 @@ describe('TabbedKeycodes', () => {
   it('renders category tabs', () => {
     render(<TabbedKeycodes />)
     expect(screen.getByText('Basic')).toBeInTheDocument()
-    expect(screen.getByText('Quantum')).toBeInTheDocument()
+    expect(screen.getByText('Behavior')).toBeInTheDocument()
   })
 
   it('shows keycodes from active category (default: basic)', () => {
@@ -80,7 +83,7 @@ describe('TabbedKeycodes', () => {
 
   it('switches category on tab click', () => {
     render(<TabbedKeycodes />)
-    fireEvent.click(screen.getByText('Quantum'))
+    fireEvent.click(screen.getByText('Behavior'))
     expect(screen.getByText('Boot')).toBeInTheDocument()
     // Basic tab content is still in the DOM but hidden via invisible class
     expect(screen.getByText('A').closest('[class*="invisible"]')).toBeTruthy()
@@ -95,11 +98,11 @@ describe('TabbedKeycodes', () => {
 
   it('shows categories with basic keycodes when maskOnly is true', () => {
     render(<TabbedKeycodes maskOnly />)
-    // Basic and Media contain keycodes < 0xFF
+    // Basic and System contain keycodes < 0xFF
     expect(screen.getByText('Basic')).toBeInTheDocument()
-    expect(screen.getByText('Media')).toBeInTheDocument()
-    // Quantum has only QK_BOOT (> 0xFF)
-    expect(screen.queryByText('Quantum')).not.toBeInTheDocument()
+    expect(screen.getByText('System')).toBeInTheDocument()
+    // Behavior has only QK_BOOT (> 0xFF)
+    expect(screen.queryByText('Behavior')).not.toBeInTheDocument()
   })
 
   it('filters out non-basic keycodes within category when maskOnly', () => {

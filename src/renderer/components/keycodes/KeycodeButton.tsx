@@ -15,18 +15,7 @@ interface Props {
   displayLabel?: string
 }
 
-function KeycodeButtonInner({
-  keycode,
-  onClick,
-  onDoubleClick,
-  onHover,
-  onHoverEnd,
-  highlighted,
-  selected,
-  sizeClass,
-  displayLabel,
-}: Props) {
-  if (keycode.hidden) return null
+function KeycodeButtonInner({ keycode, onClick, onDoubleClick, onHover, onHoverEnd, highlighted, selected, sizeClass, displayLabel }: Props) {  if (keycode.hidden) return null
 
   const label = displayLabel ?? keycode.label
   const lines = label.split('\n')

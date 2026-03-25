@@ -35,35 +35,22 @@ vi.mock('../../../../shared/keycodes/keycodes', () => ({
   extractModMask: () => 0,
   extractBasicKey: (code: number) => code & 0xff,
   buildModMaskKeycode: (mask: number, key: number) => (mask << 8) | key,
+  findKeycode: (qmkId: string) => ({ qmkId, label: qmkId }),
   isMask: () => false,
   findOuterKeycode: () => undefined,
   findInnerKeycode: () => undefined,
 }))
 
 vi.mock('../../keycodes/TabbedKeycodes', () => ({
-  TabbedKeycodes: ({
-    onKeycodeSelect,
-    onClose,
-    onConfirm,
-  }: {
-    onKeycodeSelect?: (kc: { qmkId: string }) => void
-    onClose?: () => void
-    onConfirm?: () => void
-  }) => (
+  TabbedKeycodes: ({ onKeycodeSelect, onClose, onConfirm }: { onKeycodeSelect?: (kc: { qmkId: string }) => void; onClose?: () => void; onConfirm?: () => void }) => (
     <div data-testid="tabbed-keycodes">
       <button data-testid="pick-kc-a" onClick={() => onKeycodeSelect?.({ qmkId: 'KC_4' })}>
         KC_A
       </button>
       {onClose && (
-        <button data-testid="tabbed-keycodes-close" onClick={onClose}>
-          Close
-        </button>
+        <button data-testid="tabbed-keycodes-close" onClick={onClose}>Close</button>
       )}
-      {onConfirm && (
-        <button data-testid="confirm-picker" onClick={onConfirm}>
-          Confirm
-        </button>
-      )}
+      {onConfirm && <button data-testid="confirm-picker" onClick={onConfirm}>Confirm</button>}
     </div>
   ),
 }))
@@ -125,12 +112,16 @@ describe('TapDanceModal', () => {
   })
 
   it('renders modal with title showing TD index', () => {
-    render(<TapDanceModal index={3} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={3} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     expect(screen.getByText('TD(3)')).toBeInTheDocument()
   })
 
   it('renders 4 keycode fields', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     const fields = screen.getAllByTestId('keycode-field')
     expect(fields).toHaveLength(4)
   })
@@ -149,19 +140,25 @@ describe('TapDanceModal', () => {
   })
 
   it('shows TabbedKeycodes when a field is clicked', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     expect(screen.queryByTestId('tabbed-keycodes')).not.toBeInTheDocument()
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
     expect(screen.getByTestId('tabbed-keycodes')).toBeInTheDocument()
   })
 
   it('Save button is disabled when no changes', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     expect(screen.getByTestId('td-modal-save')).toBeDisabled()
   })
 
   it('Save button enables after editing', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
     fireEvent.click(screen.getByTestId('pick-kc-a'))
     fireEvent.click(screen.getByTestId('confirm-picker'))
@@ -169,7 +166,9 @@ describe('TapDanceModal', () => {
   })
 
   it('calls onSave with edited entry', async () => {
-    render(<TapDanceModal index={2} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={2} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     // Edit onTap
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
     fireEvent.click(screen.getByTestId('pick-kc-a'))
@@ -180,25 +179,33 @@ describe('TapDanceModal', () => {
   })
 
   it('calls onClose when close icon is clicked', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     fireEvent.click(screen.getByTestId('td-modal-close'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('calls onClose when backdrop is clicked', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     fireEvent.click(screen.getByTestId('td-modal-backdrop'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('does not close when modal content is clicked', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     fireEvent.click(screen.getByTestId('td-modal'))
     expect(onClose).not.toHaveBeenCalled()
   })
 
   it('does not close modal on Escape key', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).not.toHaveBeenCalled()
   })
@@ -219,14 +226,18 @@ describe('TapDanceModal', () => {
   })
 
   it('hides non-selected fields when picker is open', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     expect(screen.getAllByTestId('keycode-field')).toHaveLength(4)
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
     expect(screen.getAllByTestId('keycode-field')).toHaveLength(1)
   })
 
   it('hides modal close button and shows picker close button when picker is open', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     expect(screen.getByTestId('td-modal-close')).toBeInTheDocument()
     expect(screen.queryByTestId('tabbed-keycodes-close')).not.toBeInTheDocument()
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
@@ -235,7 +246,9 @@ describe('TapDanceModal', () => {
   })
 
   it('hides save button and tapping term when picker is open', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     expect(screen.getByTestId('td-modal-save')).toBeInTheDocument()
     expect(screen.getByDisplayValue('200')).toBeInTheDocument()
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
@@ -244,7 +257,9 @@ describe('TapDanceModal', () => {
   })
 
   it('closes picker via X button and restores all fields', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
     expect(screen.getAllByTestId('keycode-field')).toHaveLength(1)
     fireEvent.click(screen.getByTestId('tabbed-keycodes-close'))
@@ -254,13 +269,7 @@ describe('TapDanceModal', () => {
 
   it('shows inline favorites panel when isDummy is false', () => {
     render(
-      <TapDanceModal
-        index={0}
-        entry={makeEntry()}
-        onSave={onSave}
-        onClose={onClose}
-        isDummy={false}
-      />,
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} isDummy={false} />,
     )
     expect(screen.getByTestId('td-favorites-panel')).toBeInTheDocument()
     expect(screen.getByTestId('favorite-store-content')).toBeInTheDocument()
@@ -268,13 +277,7 @@ describe('TapDanceModal', () => {
 
   it('hides favorites panel when isDummy is true', () => {
     render(
-      <TapDanceModal
-        index={0}
-        entry={makeEntry()}
-        onSave={onSave}
-        onClose={onClose}
-        isDummy={true}
-      />,
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} isDummy={true} />,
     )
     expect(screen.queryByTestId('td-favorites-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('favorite-store-content')).not.toBeInTheDocument()
@@ -282,13 +285,7 @@ describe('TapDanceModal', () => {
 
   it('hides favorites panel when picker is open', () => {
     render(
-      <TapDanceModal
-        index={0}
-        entry={makeEntry()}
-        onSave={onSave}
-        onClose={onClose}
-        isDummy={false}
-      />,
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} isDummy={false} />,
     )
     const panel = screen.getByTestId('td-favorites-panel')
     expect(panel.className).not.toContain('hidden')
@@ -297,7 +294,9 @@ describe('TapDanceModal', () => {
   })
 
   it('uses guard-based selection (clicking another field while picker closed selects it)', () => {
-    render(<TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />)
+    render(
+      <TapDanceModal index={0} entry={makeEntry()} onSave={onSave} onClose={onClose} />,
+    )
     // Select first field
     fireEvent.click(screen.getAllByTestId('keycode-field')[0])
     expect(screen.getAllByTestId('keycode-field')).toHaveLength(1)

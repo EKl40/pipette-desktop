@@ -951,12 +951,7 @@ describe('sync-service', () => {
     it('categorizes keyboards, favorites, and undecryptable files', async () => {
       mockListFiles.mockResolvedValue([
         { id: 'f1', name: 'keyboards_uid1_settings.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
-        {
-          id: 'f2',
-          name: 'keyboards_uid1_snapshots.enc',
-          modifiedTime: '2025-01-01T00:00:00.000Z',
-        },
-        { id: 'f3', name: 'keyboards_uid2_settings.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
+        { id: 'f2', name: 'keyboards_uid1_snapshots.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },        { id: 'f3', name: 'keyboards_uid2_settings.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
         { id: 'f4', name: 'favorites_tapDance.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
         { id: 'f5', name: 'favorites_macro.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
       ])
@@ -993,12 +988,7 @@ describe('sync-service', () => {
     it('deduplicates keyboard UIDs', async () => {
       mockListFiles.mockResolvedValue([
         { id: 'f1', name: 'keyboards_uid1_settings.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
-        {
-          id: 'f2',
-          name: 'keyboards_uid1_snapshots.enc',
-          modifiedTime: '2025-01-01T00:00:00.000Z',
-        },
-      ])
+        { id: 'f2', name: 'keyboards_uid1_snapshots.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },      ])
       mockDownloadFile
         .mockResolvedValueOnce(makeSettingsEnvelope('uid1', '2025-01-01T00:00:00.000Z'))
         .mockResolvedValueOnce(makeSettingsEnvelope('uid1', '2025-01-01T00:00:00.000Z'))

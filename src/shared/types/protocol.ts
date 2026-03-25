@@ -121,8 +121,17 @@ export interface QmkSettingsTab {
   fields: QmkSettingsField[]
 }
 
-/** .vil file format for save/restore */
+/**
+ * .vil / .pipette file format for save/restore.
+ *
+ * Version history:
+ *   v1 (implicit) — original format, no `version` field, no `definition`.
+ *   v2 — adds `version: 2` and embeds `KeyboardDefinition` so the snapshot
+ *         can render a virtual keyboard without a physical device connected.
+ */
 export interface VilFile {
+  /** Format version. Absent in legacy v1 files; 2 for current format. */
+  version?: number
   uid: string
   keymap: Record<string, number>
   encoderLayout: Record<string, number>
@@ -136,4 +145,26 @@ export interface VilFile {
   qmkSettings: Record<string, number[]>
   layerNames?: string[]
   keychron?: Record<string, unknown>
+  /** VIA protocol version. */
+  viaProtocol?: number
+  /** Vial protocol version — determines keycode address table (v5 vs v6). */
+  vialProtocol?: number
+  /** Feature flags bitmask (caps_word, layer_lock). */
+  featureFlags?: number
+  /** Keyboard definition embedded in v2 snapshots for offline rendering. */
+  definition?: KeyboardDefinition
 }
+
+/** Result of probing a connected keyboard device */
+export interface ProbeResult {
+  uid: string
+  name: string
+  vialProtocol: number
+  definition: KeyboardDefinition
+  layers: number
+  rows: number
+  cols: number
+  keymap: Record<string, number>      // "layer,row,col" → keycode
+  encoderLayout: Record<string, number> // "layer,idx,dir" → keycode
+  encoderCount: number
+  layoutOptions: number}

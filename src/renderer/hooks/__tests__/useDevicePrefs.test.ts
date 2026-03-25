@@ -110,19 +110,14 @@ describe('useDevicePrefs', () => {
       expect(result.current.layerNames).toEqual([])
 
       expect(mockPipetteSettingsGet).toHaveBeenCalledWith('0xAABB')
-      expect(mockPipetteSettingsSet).toHaveBeenCalledWith(
-        '0xAABB',
-        expect.objectContaining({
-          _rev: 1,
+      expect(mockPipetteSettingsSet).toHaveBeenCalledWith('0xAABB', expect.objectContaining({          _rev: 1,
           keyboardLayout: 'dvorak',
           autoAdvance: false,
           layerPanelOpen: true,
           basicViewType: 'ansi',
           layerNames: [],
           typingTestResults: [],
-        }),
-      )
-    })
+      }))    })
 
     it('restores existing per-device prefs from IPC', async () => {
       setupMocks()
@@ -735,13 +730,9 @@ describe('useDevicePrefs', () => {
       })
 
       expect(result.current.splitKeyMode).toBe('flat')
-      expect(mockPipetteSettingsSet).toHaveBeenCalledWith(
-        '0xAABB',
-        expect.objectContaining({
-          splitKeyMode: 'flat',
-        }),
-      )
-    })
+      expect(mockPipetteSettingsSet).toHaveBeenCalledWith('0xAABB', expect.objectContaining({
+        splitKeyMode: 'flat',
+      }))    })
 
     it('setDefaultSplitKeyMode persists via IPC', async () => {
       const { mockAppConfigSet } = setupMocks()

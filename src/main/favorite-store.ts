@@ -6,19 +6,8 @@ import { join } from 'node:path'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { IpcChannels } from '../shared/ipc/channels'
-import {
-  isValidFavoriteType,
-  isFavoriteDataFile,
-  FAV_EXPORT_KEY_MAP,
-  FAV_TYPE_TO_EXPORT_KEY,
-  isValidFavExportFile,
-  serializeFavData,
-  deserializeFavData,
-} from '../shared/favorite-data'
-import {
-  serialize as serializeKeycode,
-  deserialize as deserializeKeycode,
-} from '../shared/keycodes/keycodes'
+import { isValidFavoriteType, isFavoriteDataFile, FAV_EXPORT_KEY_MAP, FAV_TYPE_TO_EXPORT_KEY, isValidFavExportFile, serializeFavData, deserializeFavData } from '../shared/favorite-data'
+import { serialize as serializeKeycode, deserialize as deserializeKeycode } from '../shared/keycodes/keycodes'
 import { notifyChange } from './sync/sync-service'
 import { secureHandle } from './ipc-guard'
 import type {
@@ -301,6 +290,134 @@ export function setupFavoriteStore(): void {
   )
 
   // --- Set Hub Post ID ---
+  // --- Export Current (live state without saving first) ---
+  secureHandle(
+    IpcChannels.FAVORITE_STORE_EXPORT_CURRENT,
+    async (event, scope: unknown, dataJson: unknown): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender)
+        if (!win) return { success: false, error: 'No window' }
+
+        if (!isValidFavoriteType(scope)) return { success: false, error: 'Invalid scope' }
+        if (typeof dataJson !== 'string') return { success: false, error: 'Invalid data' }
+
+        const parsed = JSON.parse(dataJson) as Record<string, unknown>
+        if (parsed.data == null) return { success: false, error: 'Missing data field' }
+
+        const exportKey = FAV_TYPE_TO_EXPORT_KEY[scope]
+        const serializedData = serializeFavData(scope, parsed.data, serializeKeycode)
+
+        const now = new Date()
+        const ts = now.toISOString().replace(/:/g, '').replace(/\.\d+Z$/, '').replace('T', '-')
+        const defaultFilename = `pipette-fav-${exportKey}-current-${ts}.json`
+
+        const result = await dialog.showSaveDialog(win, {
+          title: 'Export Favorites',
+          defaultPath: defaultFilename,
+          filters: [
+            { name: 'JSON', extensions: ['json'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
+        })
+
+        if (result.canceled || !result.filePath) {
+          return { success: false, error: 'cancelled' }
+        }
+
+        const exportFile = {
+          app: 'pipette' as const,
+          version: 2 as const,
+          scope: 'fav' as const,
+          exportedAt: now.toISOString(),
+          categories: {
+            [exportKey]: [{
+              label: 'Current',
+              savedAt: now.toISOString(),
+              data: serializedData,
+            }],
+          },
+        }
+
+        await writeFile(result.filePath, JSON.stringify(exportFile, null, 2), 'utf-8')
+        return { success: true }
+      } catch (err) {
+        return { success: false, error: String(err) }
+      }
+    },
+  )
+
+  // --- Set Hub Post ID ---
+  secureHandle(
+    IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID,
+    async (_event, type: unknown, entryId: string, hubPostId: string | null): Promise<{ success: boolean; error?: string }> => {
+      try {
+        validateType(type)
+        const found = await findEntry(type, entryId)
+        if (!found) return { success: false, error: 'Entry not found' }
+
+        const normalized = hubPostId?.trim() || null
+        if (normalized === null) {
+          delete found.entry.hubPostId
+        } else {
+          found.entry.hubPostId = normalized
+        }
+        found.entry.updatedAt = new Date().toISOString()
+        await writeIndex(type, found.index)
+        notifyChange(`favorites/${type}`)
+        return { success: true }
+      } catch (err) {
+        return { success: false, error: String(err) }
+      }
+    },
+  )
+
+  // --- Import to Current (read file, return first matching entry data without saving) ---
+  secureHandle(
+    IpcChannels.FAVORITE_STORE_IMPORT_TO_CURRENT,
+    async (event, scope: unknown): Promise<{ success: boolean; data?: unknown; error?: string }> => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender)
+        if (!win) return { success: false, error: 'No window' }
+
+        if (!isValidFavoriteType(scope)) return { success: false, error: 'Invalid scope' }
+
+        const result = await dialog.showOpenDialog(win, {
+          title: 'Import Favorites',
+          filters: [
+            { name: 'JSON', extensions: ['json'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
+          properties: ['openFile'],
+        })
+
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: false, error: 'cancelled' }
+        }
+
+        const raw = await readFile(result.filePaths[0], 'utf-8')
+        const parsed: unknown = JSON.parse(raw)
+
+        if (!isValidFavExportFile(parsed)) {
+          return { success: false, error: 'Invalid export file format' }
+        }
+
+        const exportKey = FAV_TYPE_TO_EXPORT_KEY[scope]
+        const entries = parsed.categories[exportKey]
+        if (!entries || entries.length === 0) {
+          return { success: false, error: 'No matching data found for this type' }
+        }
+
+        const firstEntry = entries[0]
+        const normalizedData = deserializeFavData(scope, firstEntry.data, deserializeKeycode)
+
+        return { success: true, data: normalizedData }
+      } catch (err) {
+        return { success: false, error: String(err) }
+      }
+    },
+  )
+
+  // --- Import ---
   secureHandle(
     IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID,
     async (
@@ -394,12 +511,7 @@ export function setupFavoriteStore(): void {
           const filename = `${favType}_${timestamp}_${randomUUID().slice(0, 8)}.json`
           const filePath = getSafeFilePath(favType, filename)
 
-          await writeFile(
-            filePath,
-            JSON.stringify({ type: favType, data: normalizedData }),
-            'utf-8',
-          )
-
+            await writeFile(filePath, JSON.stringify({ type: favType, data: normalizedData }), 'utf-8')
           const meta: SavedFavoriteMeta = {
             id: randomUUID(),
             label: entry.label,

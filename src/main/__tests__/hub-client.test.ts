@@ -220,6 +220,7 @@ describe('hub-client', () => {
   describe('uploadPostToHub', () => {
     const testFiles: HubUploadFiles = {
       vil: { name: 'test.vil', data: Buffer.from('{"keymap":{}}') },
+      pipette: { name: 'test.pipette', data: Buffer.from('{"version":2}') },
       c: { name: 'test.c', data: Buffer.from('const uint16_t PROGMEM keymaps[]') },
       pdf: { name: 'test.pdf', data: Buffer.from('pdf-content') },
       thumbnail: { name: 'test.jpg', data: Buffer.from('jpeg-data') },
@@ -454,6 +455,7 @@ describe('hub-client', () => {
   describe('updatePostOnHub', () => {
     const testFiles: HubUploadFiles = {
       vil: { name: 'test.vil', data: Buffer.from('{"keymap":{}}') },
+      pipette: { name: 'test.pipette', data: Buffer.from('{"version":2}') },
       c: { name: 'test.c', data: Buffer.from('const uint16_t PROGMEM keymaps[]') },
       pdf: { name: 'test.pdf', data: Buffer.from('pdf-content') },
       thumbnail: { name: 'test.jpg', data: Buffer.from('jpeg-data') },

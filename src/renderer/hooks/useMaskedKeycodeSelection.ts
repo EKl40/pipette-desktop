@@ -2,14 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Keycode } from '../../shared/keycodes/keycodes'
-import {
-  deserialize,
-  resolve,
-  serialize,
-  isMask,
-  isLMKeycode,
-} from '../../shared/keycodes/keycodes'
-
+import { deserialize, resolve, serialize, isMask, isLMKeycode } from '../../shared/keycodes/keycodes'
 interface Options {
   onUpdate: (code: number) => boolean | void // Update the field; return false to skip
   onCommit: () => void // Close the picker / deselect the field
@@ -35,14 +28,7 @@ interface Result {
   enterMaskMode: (code: number, part: 'outer' | 'inner') => void
 }
 
-export function useMaskedKeycodeSelection({
-  onUpdate,
-  onCommit,
-  resetKey,
-  initialValue,
-  quickSelect,
-}: Options): Result {
-  const [activeMask, setActiveMask] = useState<number | null>(null)
+export function useMaskedKeycodeSelection({ onUpdate, onCommit, resetKey, initialValue, quickSelect }: Options): Result {  const [activeMask, setActiveMask] = useState<number | null>(null)
   const [editingPart, setEditingPart] = useState<'outer' | 'inner' | null>(null)
   const activeMaskRef = useRef(activeMask)
   activeMaskRef.current = activeMask
@@ -90,8 +76,8 @@ export function useMaskedKeycodeSelection({
     setEditingPart(part)
   }, [])
 
-  const handleKeycodeSelect = useCallback((kc: Keycode) => {
-    const mask = activeMaskRef.current
+  const handleKeycodeSelect = useCallback(
+    (kc: Keycode) => {    const mask = activeMaskRef.current
     const part = editingPartRef.current
 
     // Mask active + editing inner: resolve inner key, update but don't commit
@@ -120,8 +106,9 @@ export function useMaskedKeycodeSelection({
     if (onUpdateRef.current(deserialize(kc.qmkId)) !== false) {
       resetState()
     }
-  }, [])
-
+    },
+    [],
+  )
   const selectAndCommit = useCallback(
     (kc: Keycode) => {
       const mask = activeMaskRef.current
@@ -166,18 +153,4 @@ export function useMaskedKeycodeSelection({
   const pickerSelect = quickSelect ? selectAndCommit : handleKeycodeSelect
   const pickerDoubleClick = quickSelect ? undefined : selectAndCommit
 
-  return {
-    handleKeycodeSelect,
-    selectAndCommit,
-    pickerSelect,
-    pickerDoubleClick,
-    maskOnly,
-    lmMode,
-    activeMask,
-    editingPart,
-    clearMask,
-    confirm,
-    setEditingPart,
-    enterMaskMode,
-  }
-}
+  return { handleKeycodeSelect, selectAndCommit, pickerSelect, pickerDoubleClick, maskOnly, lmMode, activeMask, editingPart, clearMask, confirm, setEditingPart, enterMaskMode }}

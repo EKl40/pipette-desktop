@@ -8,12 +8,12 @@ import { IpcChannels } from '../shared/ipc/channels'
 import { secureHandle } from './ipc-guard'
 import { log } from './logger'
 
-export const MAX_COMPRESSED_SIZE = 1 * 1024 * 1024 // 1 MB
+export const MAX_COMPRESSED_SIZE = 1 * 1024 * 1024   // 1 MB
 export const MAX_DECOMPRESSED_SIZE = 10 * 1024 * 1024 // 10 MB
 
 const XZ_MAGIC = new Uint8Array([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])
 
-function hasXzMagic(buf: Buffer): boolean {
+export function hasXzMagic(buf: Buffer): boolean {
   if (buf.length < XZ_MAGIC.length) return false
   for (let i = 0; i < XZ_MAGIC.length; i++) {
     if (buf[i] !== XZ_MAGIC[i]) return false
@@ -38,7 +38,7 @@ export function setupLzmaIpc(): void {
   })
 }
 
-async function decompressXz(buf: Buffer): Promise<string | null> {
+export async function decompressXz(buf: Buffer): Promise<string | null> {
   try {
     const input = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -69,7 +69,7 @@ async function decompressXz(buf: Buffer): Promise<string | null> {
   }
 }
 
-function decompressLzma(data: number[]): Promise<string | null> {
+export function decompressLzma(data: number[]): Promise<string | null> {
   return new Promise((resolve) => {
     try {
       lzmaModule.decompress(data, (result: string | Uint8Array | null, error?: unknown) => {

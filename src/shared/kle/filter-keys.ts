@@ -5,8 +5,10 @@ import type { KleKey } from './types'
 
 /** Whether the key has a secondary rectangle (stepped, ISO enter, etc.) */
 export function hasSecondaryRect(key: KleKey): boolean {
-  return key.width2 !== key.width || key.height2 !== key.height || key.x2 !== 0 || key.y2 !== 0
-}
+  return (
+    key.width2 !== key.width || key.height2 !== key.height ||
+    key.x2 !== 0 || key.y2 !== 0
+  )}
 
 /**
  * Compute the visual bounding-box min corner of a key, accounting for rotation.

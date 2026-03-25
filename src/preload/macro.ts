@@ -158,7 +158,7 @@ function deserializeV2(data: number[]): MacroAction[] {
         // Delay
         i += 2
         if (i + 1 >= data.length) break
-        const delay = data[i] - 1 + (data[i + 1] - 1) * 255
+        const delay = (data[i] - 1) + (data[i + 1] - 1) * 255
         actions.push({ type: 'delay', delay })
         i += 2
       } else {

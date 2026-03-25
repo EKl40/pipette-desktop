@@ -40,8 +40,12 @@ describe('FavoriteHubActions', () => {
   })
 
   it('shows Upload button when entry has no hubPostId and onUploadToHub is provided', () => {
-    render(<FavoriteHubActions entry={ENTRY} onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        onUploadToHub={vi.fn()}
+      />,
+    )
     expect(screen.getByTestId('fav-hub-upload-btn')).toBeInTheDocument()
     expect(screen.getByText('hub.uploadToHub')).toBeInTheDocument()
     expect(screen.queryByTestId('fav-hub-update-btn')).not.toBeInTheDocument()
@@ -96,21 +100,35 @@ describe('FavoriteHubActions', () => {
   })
 
   it('does not show Open link when hubOrigin is not set', () => {
-    render(<FavoriteHubActions entry={ENTRY_WITH_HUB} onUpdateOnHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY_WITH_HUB}
+        onUpdateOnHub={vi.fn()}
+      />,
+    )
     expect(screen.queryByTestId('fav-hub-share-link')).not.toBeInTheDocument()
   })
 
   it('hides upload button when hubNeedsDisplayName is true for non-uploaded entries', () => {
-    render(<FavoriteHubActions entry={ENTRY} hubNeedsDisplayName onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubNeedsDisplayName
+        onUploadToHub={vi.fn()}
+      />,
+    )
     // Upload hidden; needsDisplayName not shown because onUploadToHub is provided
     expect(screen.queryByTestId('fav-hub-upload-btn')).not.toBeInTheDocument()
   })
 
   it('shows needsDisplayName when handler is absent and hubNeedsDisplayName is true', () => {
-    render(<FavoriteHubActions entry={ENTRY} hubNeedsDisplayName onRemoveFromHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubNeedsDisplayName
+        onRemoveFromHub={vi.fn()}
+      />,
+    )
     expect(screen.getByTestId('fav-hub-needs-display-name')).toBeInTheDocument()
     expect(screen.getByText('hub.needsDisplayName')).toBeInTheDocument()
   })
@@ -133,16 +151,26 @@ describe('FavoriteHubActions', () => {
   })
 
   it('shows Uploading indicator when hubUploading matches entry.id', () => {
-    render(<FavoriteHubActions entry={ENTRY} hubUploading={ENTRY.id} onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubUploading={ENTRY.id}
+        onUploadToHub={vi.fn()}
+      />,
+    )
     expect(screen.getByTestId('fav-hub-uploading')).toBeInTheDocument()
     expect(screen.getByText('hub.uploading')).toBeInTheDocument()
     expect(screen.queryByTestId('fav-hub-upload-btn')).not.toBeInTheDocument()
   })
 
   it('does not show Uploading indicator when hubUploading does not match entry.id', () => {
-    render(<FavoriteHubActions entry={ENTRY} hubUploading="other-id" onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubUploading="other-id"
+        onUploadToHub={vi.fn()}
+      />,
+    )
     expect(screen.queryByTestId('fav-hub-uploading')).not.toBeInTheDocument()
     expect(screen.getByTestId('fav-hub-upload-btn')).toBeInTheDocument()
   })
@@ -154,8 +182,13 @@ describe('FavoriteHubActions', () => {
       entryId: ENTRY.id,
     }
 
-    render(<FavoriteHubActions entry={ENTRY} hubUploadResult={result} onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubUploadResult={result}
+        onUploadToHub={vi.fn()}
+      />,
+    )
     const el = screen.getByTestId('fav-hub-result')
     expect(el).toBeInTheDocument()
     expect(el.textContent).toBe('Uploaded successfully')
@@ -169,8 +202,13 @@ describe('FavoriteHubActions', () => {
       entryId: ENTRY.id,
     }
 
-    render(<FavoriteHubActions entry={ENTRY} hubUploadResult={result} onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubUploadResult={result}
+        onUploadToHub={vi.fn()}
+      />,
+    )
     const el = screen.getByTestId('fav-hub-result')
     expect(el).toBeInTheDocument()
     expect(el.textContent).toBe('Upload failed')
@@ -184,8 +222,13 @@ describe('FavoriteHubActions', () => {
       entryId: 'other-entry',
     }
 
-    render(<FavoriteHubActions entry={ENTRY} hubUploadResult={result} onUploadToHub={vi.fn()} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubUploadResult={result}
+        onUploadToHub={vi.fn()}
+      />,
+    )
     expect(screen.queryByTestId('fav-hub-result')).not.toBeInTheDocument()
   })
 
@@ -239,8 +282,12 @@ describe('FavoriteHubActions', () => {
   it('Upload button calls onUploadToHub with entry.id', () => {
     const onUploadToHub = vi.fn()
 
-    render(<FavoriteHubActions entry={ENTRY} onUploadToHub={onUploadToHub} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY}
+        onUploadToHub={onUploadToHub}
+      />,
+    )
     fireEvent.click(screen.getByTestId('fav-hub-upload-btn'))
     expect(onUploadToHub).toHaveBeenCalledWith(ENTRY.id)
   })
@@ -248,8 +295,12 @@ describe('FavoriteHubActions', () => {
   it('Update button calls onUpdateOnHub with entry.id', () => {
     const onUpdateOnHub = vi.fn()
 
-    render(<FavoriteHubActions entry={ENTRY_WITH_HUB} onUpdateOnHub={onUpdateOnHub} />)
-
+    render(
+      <FavoriteHubActions
+        entry={ENTRY_WITH_HUB}
+        onUpdateOnHub={onUpdateOnHub}
+      />,
+    )
     fireEvent.click(screen.getByTestId('fav-hub-update-btn'))
     expect(onUpdateOnHub).toHaveBeenCalledWith(ENTRY_WITH_HUB.id)
   })
@@ -270,8 +321,11 @@ describe('FavoriteHubActions', () => {
 
   it('upload button is disabled when hubUploading is set', () => {
     render(
-      <FavoriteHubActions entry={ENTRY} hubUploading="some-other-entry" onUploadToHub={vi.fn()} />,
-    )
+      <FavoriteHubActions
+        entry={ENTRY}
+        hubUploading="some-other-entry"
+        onUploadToHub={vi.fn()}
+      />,    )
 
     expect(screen.getByTestId('fav-hub-upload-btn')).toBeDisabled()
   })

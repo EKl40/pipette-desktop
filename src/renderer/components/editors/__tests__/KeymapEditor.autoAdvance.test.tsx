@@ -18,21 +18,17 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
-let capturedOnKeyClick:
-  | ((key: { row: number; col: number }, maskClicked?: boolean) => void)
-  | undefined
-let capturedOnKeyDoubleClick:
-  | ((key: { row: number; col: number }, rect: DOMRect, maskClicked?: boolean) => void)
-  | undefined
+vi.mock('../../../hooks/useAppConfig', () => ({
+  useAppConfig: () => ({ config: { maxKeymapHistory: 100 }, loading: false, set: () => {} }),
+}))
+
+let capturedOnKeyClick: ((key: { row: number; col: number }, maskClicked?: boolean) => void) | undefined
+let capturedOnKeyDoubleClick: ((key: { row: number; col: number }, rect: DOMRect, maskClicked?: boolean) => void) | undefined
 
 vi.mock('../../keyboard/KeyboardWidget', () => ({
   KeyboardWidget: (props: {
     onKeyClick?: (key: { row: number; col: number }, maskClicked?: boolean) => void
-    onKeyDoubleClick?: (
-      key: { row: number; col: number },
-      rect: DOMRect,
-      maskClicked?: boolean,
-    ) => void
+    onKeyDoubleClick?: (key: { row: number; col: number }, rect: DOMRect, maskClicked?: boolean) => void
   }) => {
     capturedOnKeyClick = props.onKeyClick
     capturedOnKeyDoubleClick = props.onKeyDoubleClick
@@ -46,10 +42,16 @@ vi.mock('../../keycodes/TabbedKeycodes', () => ({
     maskOnly?: boolean
   }) => (
     <div data-testid="tabbed-keycodes" data-mask-only={props.maskOnly ? 'true' : 'false'}>
-      <button data-testid="kc-a" onClick={() => props.onKeycodeSelect?.({ qmkId: 'KC_A' })}>
+      <button
+        data-testid="kc-a"
+        onClick={() => props.onKeycodeSelect?.({ qmkId: 'KC_A' })}
+      >
         A
       </button>
-      <button data-testid="kc-lt" onClick={() => props.onKeycodeSelect?.({ qmkId: 'LT(kc)' })}>
+      <button
+        data-testid="kc-lt"
+        onClick={() => props.onKeycodeSelect?.({ qmkId: 'LT(kc)' })}
+      >
         LT
       </button>
     </div>
@@ -70,7 +72,10 @@ vi.mock('../../keycodes/KeyPopover', () => ({
         >
           Popover A
         </button>
-        <button data-testid="popover-raw-5" onClick={() => props.onRawKeycodeSelect?.(5)}>
+        <button
+          data-testid="popover-raw-5"
+          onClick={() => props.onRawKeycodeSelect?.(5)}
+        >
           Popover Raw 5
         </button>
       </div>
@@ -102,6 +107,7 @@ vi.mock('../../../../shared/keycodes/keycodes', () => ({
   extractModMask: () => 0,
   extractBasicKey: (code: number) => code & 0xff,
   buildModMaskKeycode: (mask: number, key: number) => (mask << 8) | key,
+  findKeycode: (qmkId: string) => ({ qmkId, label: qmkId }),
 }))
 
 vi.mock('../../keycodes/ModifierCheckboxStrip', () => ({
@@ -130,15 +136,8 @@ describe('KeymapEditor — auto advance', () => {
   const onSetEncoder = vi.fn().mockResolvedValue(undefined)
 
   const mockRect = {
-    top: 100,
-    left: 200,
-    bottom: 140,
-    right: 260,
-    width: 60,
-    height: 40,
-    x: 200,
-    y: 100,
-    toJSON: () => ({}),
+    top: 100, left: 200, bottom: 140, right: 260,
+    width: 60, height: 40, x: 200, y: 100, toJSON: () => ({}),
   } as DOMRect
 
   const defaultProps = {
@@ -270,9 +269,7 @@ describe('KeymapEditor — auto advance', () => {
         <KeymapEditor
           {...defaultProps}
           keymap={km}
-          onSetKey={async (l, r, c, code) =>
-            setKm((prev) => new Map(prev).set(`${l},${r},${c}`, code))
-          }
+          onSetKey={async (l, r, c, code) => setKm((prev) => new Map(prev).set(`${l},${r},${c}`, code))}
           autoAdvance={true}
         />
       )
@@ -297,13 +294,11 @@ describe('KeymapEditor — auto advance', () => {
     render(
       <KeymapEditor
         {...defaultProps}
-        keymap={
-          new Map([
-            ['0,0,0', 0x4200], // LT(2,KC_NO) — a masked keycode
-            ['0,0,1', 5],
-            ['0,0,2', 6],
-          ])
-        }
+        keymap={new Map([
+          ['0,0,0', 0x4200], // LT(2,KC_NO) — a masked keycode
+          ['0,0,1', 5],
+          ['0,0,2', 6],
+        ])}
         autoAdvance={true}
       />,
     )
