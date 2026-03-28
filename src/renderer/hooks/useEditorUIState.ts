@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { LIGHTING_TYPES } from '../app-types'
 import type { QmkSettingsTab } from '../../shared/types/protocol'
 import settingsDefs from '../../shared/qmk-settings-defs.json'
@@ -11,10 +11,12 @@ interface Options {
   supportedQsids: Set<number>
   lighting: string | undefined
   dynamicCounts: { combo: number; altRepeatKey: number; keyOverride: number }
+  keymapScale: number
+  setKeymapScale: (scale: number) => void
 }
 
 export function useEditorUIState(options: Options) {
-  const { isDummy, effectiveIsDummy, supportedQsids, lighting, dynamicCounts } = options
+  const { isDummy, effectiveIsDummy, supportedQsids, lighting, dynamicCounts, keymapScale, setKeymapScale } = options
 
   // Unlock dialog
   const [showUnlockDialog, setShowUnlockDialog] = useState(false)
@@ -23,14 +25,12 @@ export function useEditorUIState(options: Options) {
   // Matrix
   const [matrixState, setMatrixState] = useState({ matrixMode: false, hasMatrixTester: false })
 
-  // Keymap scale
-  const [keymapScale, setKeymapScale] = useState(1)
+  // Keymap scale — persisted via devicePrefs (ref keeps callback stable)
+  const scaleRef = useRef(keymapScale)
+  scaleRef.current = keymapScale
   const adjustKeymapScale = useCallback((delta: number) => {
-    setKeymapScale((prev) => {
-      const clamped = Math.max(0.3, Math.min(2.0, prev + delta))
-      return Math.round(clamped * 10) / 10
-    })
-  }, [])
+    setKeymapScale(scaleRef.current + delta)
+  }, [setKeymapScale])
 
   const handleMatrixModeChange = useCallback((matrixMode: boolean, hasMatrixTester: boolean) => {
     setMatrixState({ matrixMode, hasMatrixTester })
@@ -39,31 +39,12 @@ export function useEditorUIState(options: Options) {
   // Typing test
   const [typingTestMode, setTypingTestMode] = useState(false)
 
-  // Split edit
-  const [splitEdit, setSplitEdit] = useState(false)
-  const [activePane, setActivePane] = useState<'primary' | 'secondary'>('primary')
-  const [primaryLayer, setPrimaryLayer] = useState(0)
-  const [secondaryLayer, setSecondaryLayer] = useState(0)
+  // Layer
+  const [currentLayer, setCurrentLayer] = useState(0)
 
   const handleTypingTestModeChange = useCallback((enabled: boolean) => {
     setTypingTestMode(enabled)
-    if (enabled) {
-      setSplitEdit(false)
-      setActivePane('primary')
-    }
   }, [])
-
-  const handleSplitEditChange = useCallback((enabled: boolean) => {
-    setSplitEdit(enabled)
-    setActivePane('primary')
-    if (enabled) setSecondaryLayer(primaryLayer)
-  }, [primaryLayer])
-
-  const currentLayer = splitEdit && activePane === 'secondary' ? secondaryLayer : primaryLayer
-  const setCurrentLayer = useCallback((l: number) => {
-    if (splitEdit && activePane === 'secondary') setSecondaryLayer(l)
-    else setPrimaryLayer(l)
-  }, [splitEdit, activePane])
 
   // Modals
   const [showLightingModal, setShowLightingModal] = useState(false)
@@ -110,11 +91,7 @@ export function useEditorUIState(options: Options) {
 
   const resetUIState = useCallback(() => {
     setTypingTestMode(false)
-    setPrimaryLayer(0)
-    setSecondaryLayer(0)
-    setSplitEdit(false)
-    setActivePane('primary')
-    setKeymapScale(1)
+    setCurrentLayer(0)
     setShowUnlockDialog(false)
     setUnlockMacroWarning(false)
     setMatrixState({ matrixMode: false, hasMatrixTester: false })
@@ -135,13 +112,7 @@ export function useEditorUIState(options: Options) {
     // Typing test
     typingTestMode,
     handleTypingTestModeChange,
-    // Split edit
-    splitEdit,
-    handleSplitEditChange,
-    activePane,
-    setActivePane,
-    primaryLayer,
-    secondaryLayer,
+    // Layer
     currentLayer,
     setCurrentLayer,
     // Modals

@@ -95,6 +95,10 @@ export interface KeymapEditorProps {
   onLock?: () => void
   onMatrixModeChange?: (matrixMode: boolean, hasMatrixTester: boolean) => void
   onOpenLighting?: () => void
+  onOpenKeychron?: () => void
+  onOpenKeychronRgb?: () => void
+  onOpenKeychronAnalog?: () => void
+  onOpenKeychronFlasher?: () => void
   comboEntries?: ComboEntry[]
   onOpenCombo?: (index: number) => void
   onSetComboEntry?: (index: number, entry: ComboEntry) => Promise<void>
@@ -113,12 +117,6 @@ export interface KeymapEditorProps {
   onLayerPanelOpenChange?: (open: boolean) => void
   scale?: number
   onScaleChange?: (delta: number) => void
-  splitEdit?: boolean
-  onSplitEditChange?: (enabled: boolean) => void
-  activePane?: 'primary' | 'secondary'
-  onActivePaneChange?: (pane: 'primary' | 'secondary') => void
-  primaryLayer?: number
-  secondaryLayer?: number
   typingTestMode?: boolean
   onTypingTestModeChange?: (enabled: boolean) => void
   onSaveTypingTestResult?: (result: TypingTestResult) => void

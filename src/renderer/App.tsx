@@ -1,48 +1,43 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppConfig } from './hooks/useAppConfig'
 import { useDeviceConnection } from './hooks/useDeviceConnection'
 import { useKeyboard } from './hooks/useKeyboard'
 import { useFileIO } from './hooks/useFileIO'
 import { useLayoutStore } from './hooks/useLayoutStore'
-import { useSideloadJson, isKeyboardDefinition } from './hooks/useSideloadJson'
+import { useSideloadJson } from './hooks/useSideloadJson'
 import { useTheme } from './hooks/useTheme'
 import { useDevicePrefs } from './hooks/useDevicePrefs'
-import { useAutoLock } from './hooks/useAutoLock'
+import { useSync } from './hooks/useSync'
+import { useStartupNotification } from './hooks/useStartupNotification'
+import { useDeviceAutoSync } from './hooks/useDeviceAutoSync'
+import { useEditorUIState } from './hooks/useEditorUIState'
+import { useFileHandlers } from './hooks/useFileHandlers'
+import { useEntryOperations } from './hooks/useEntryOperations'
+import { useHubState } from './hooks/useHubState'
+import { useSnapshotMigration } from './hooks/useSnapshotMigration'
+import { useDeviceLifecycle } from './hooks/useDeviceLifecycle'
+import { formatDeviceId } from './app-types'
 import { DeviceSelector } from './components/DeviceSelector'
 import { SettingsModal } from './components/SettingsModal'
 import { DataModal } from './components/DataModal'
 import { NotificationModal } from './components/NotificationModal'
 import { ConnectingOverlay } from './components/ConnectingOverlay'
-import { useSync } from './hooks/useSync'
-import { useStartupNotification } from './hooks/useStartupNotification'
 import { StatusBar } from './components/StatusBar'
 import { ComboPanelModal } from './components/editors/ComboPanelModal'
 import { AltRepeatKeyPanelModal } from './components/editors/AltRepeatKeyPanelModal'
 import { KeyOverridePanelModal } from './components/editors/KeyOverridePanelModal'
 import { RGBConfigurator } from './components/editors/RGBConfigurator'
 import { UnlockDialog } from './components/editors/UnlockDialog'
-
-import { KeychronSettings } from './components/editors/KeychronSettings'
-import { KeychronRGB } from './components/editors/KeychronRGB'
-import { KeychronDfuFlasher } from './components/editors/KeychronDfuFlasher'
-import { KeychronAnalog } from './components/editors/KeychronAnalog'
-import { KeychronSocd } from './components/editors/KeychronSocd'
 import { KeymapEditor, type KeymapEditorHandle } from './components/editors/KeymapEditor'
-import { LayoutStoreContent, type FileStatus, type HubEntryResult } from './components/editors/LayoutStoreModal'
+import { LayoutStoreContent } from './components/editors/LayoutStoreModal'
 import { ROW_CLASS } from './components/editors/modal-controls'
 import { ModalCloseButton } from './components/editors/ModalCloseButton'
 import { decodeLayoutOptions } from '../shared/kle/layout-options'
 import { generateKeymapC } from '../shared/keymap-export'
 import { generateKeymapPdf } from '../shared/pdf-export'
-import { generateAllLayoutOptionsPdf, generateCurrentLayoutPdf, type LayoutPdfInput } from '../shared/pdf-layout-export'
-import { parseLayoutLabels } from '../shared/layout-options'
-import { generatePdfThumbnail } from './utils/pdf-thumbnail'
-import { isVilFile, recordToMap, deriveLayerCount } from '../shared/vil-file'
-import { vilToVialGuiJson } from '../shared/vil-compat'
-import { splitMacroBuffer, deserializeMacro, deserializeAllMacros, macroActionsToJson, jsonToMacroActions } from '../preload/macro'
 import {
   serialize as serializeKeycode,
   serializeForCExport,
@@ -51,95 +46,10 @@ import {
   findOuterKeycode,
   findInnerKeycode,
 } from '../shared/keycodes/keycodes'
-import type { DeviceInfo, QmkSettingsTab, VilFile } from '../shared/types/protocol'
+import { deserializeAllMacros } from '../preload/macro'
 import { EMPTY_UID } from '../shared/constants/protocol'
-import type { SnapshotMeta } from '../shared/types/snapshot-store'
-import { HUB_ERROR_DISPLAY_NAME_CONFLICT, HUB_ERROR_ACCOUNT_DEACTIVATED, HUB_ERROR_RATE_LIMITED } from '../shared/types/hub'
-import type { HubMyPost, HubUploadResult, HubPaginationMeta, HubFetchMyPostsParams } from '../shared/types/hub'
-import type { FavoriteType, SavedFavoriteMeta } from '../shared/types/favorite-store'
-import type { FavHubEntryResult } from './components/editors/FavoriteHubActions'
-import settingsDefs from '../shared/qmk-settings-defs.json'
 
-// Lighting types that require the RGBConfigurator modal
-
-const FAKE_KEYCHRON_JSON = {
-  name: 'Keychron K2 HE ANSI RGB (Mock)',
-  vendorId: '0x3434',
-  productId: '0x0E20',
-  lighting: 'vialrgb',
-  matrix: { rows: 6, cols: 16 },
-  keychron: {
-    hasSnapClick: true,
-    snapClickEntries: [],
-    hasDebounce: true,
-    hasDfuInfo: true,
-    hasRgb: true,
-    hasNkro: true,
-    hasQuickStart: true,
-    hasLanguage: true,
-    hasReportRate: true,
-    hasAnalog: true,
-    rgb: {
-      isDebug: true,
-      protocolVersion: 1,
-      ledCount: 84,
-      perKeyRGBType: 1,
-      perKeyColors: [],
-      osIndicatorConfig: null,
-      ledMatrix: new Map(),
-      mixedRGBLayers: 2,
-      mixedRGBEffectsPerLayer: 5,
-      mixedRGBRegions: [],
-      mixedRGBEffects: [],
-    },
-  },
-  layouts: {
-    keymap: [
-      [
-        { c: '#777777' }, '0,0',
-        { c: '#cccccc' }, '0,1', '0,2', '0,3', '0,4',
-        { c: '#aaaaaa' }, '0,5', '0,6', '0,7', '0,8', '0,9',
-        { c: '#cccccc' }, '0,10', '0,11', '0,12',
-        { c: '#aaaaaa' }, '0,13', '0,14', '0,15'
-      ],
-      [
-        { c: '#aaaaaa' }, '1,0',
-        { c: '#cccccc' }, '1,1', '1,2', '1,3', '1,4', '1,5', '1,6', '1,7', '1,8', '1,9', '1,10', '1,11', '1,12',
-        { w: 2, c: '#aaaaaa' }, '1,13', '1,14'
-      ],
-      [
-        { w: 1.5, c: '#aaaaaa' }, '2,0',
-        { c: '#cccccc' }, '2,1', '2,2', '2,3', '2,4', '2,5', '2,6', '2,7', '2,8', '2,9', '2,10', '2,11', '2,12',
-        { w: 1.5, c: '#aaaaaa' }, '2,13', '2,14'
-      ],
-      [
-        { w: 1.75, c: '#aaaaaa' }, '3,0',
-        { c: '#cccccc' }, '3,1', '3,2', '3,3', '3,4', '3,5', '3,6', '3,7', '3,8', '3,9', '3,10', '3,11',
-        { w: 2.25, c: '#777777' }, '3,12',
-        { c: '#aaaaaa' }, '3,13'
-      ],
-      [
-        { w: 2.25, c: '#aaaaaa' }, '4,0',
-        { c: '#cccccc' }, '4,2', '4,3', '4,4', '4,5', '4,6', '4,7', '4,8', '4,9', '4,10', '4,11',
-        { w: 1.75, c: '#aaaaaa' }, '4,12', '4,13', '4,14'
-      ],
-      [
-        { w: 1.25, c: '#aaaaaa' }, '5,0',
-        { w: 1.25 }, '5,1',
-        { w: 1.25 }, '5,2',
-        { w: 6.25, c: '#cccccc' }, '5,6',
-        { c: '#aaaaaa' }, '5,9', '5,10', '5,11', '5,12', '5,13', '5,14'
-      ]
-    ],
-  },
-}
-const LIGHTING_TYPES = new Set(['qmk_backlight', 'qmk_rgblight', 'qmk_backlight_rgblight', 'vialrgb'])
-
-function formatDeviceId(dev: DeviceInfo): string {
-  const vid = dev.vendorId.toString(16).padStart(4, '0')
-  const pid = dev.productId.toString(16).padStart(4, '0')
-  return `${vid}:${pid}`
-}
+export { type PipetteFileKeyboard, type PipetteFileEntry } from './app-types'
 
 export function App() {
   const { t } = useTranslation()
@@ -151,6 +61,8 @@ export function App() {
   const sync = useSync()
   const startupNotification = useStartupNotification()
 
+  const effectiveIsDummy = device.isDummy && !device.isPipetteFile
+
   const deserializedMacros = useMemo(
     () => keyboard.parsedMacros
       ?? (keyboard.macroBuffer && keyboard.macroCount
@@ -159,75 +71,17 @@ export function App() {
     [keyboard.parsedMacros, keyboard.macroBuffer, keyboard.macroCount, keyboard.vialProtocol],
   )
 
-  // Wire keyboard's layer name persistence through devicePrefs
   useEffect(() => {
     keyboard.setSaveLayerNamesCallback(devicePrefs.setLayerNames)
   }, [keyboard.setSaveLayerNamesCallback, devicePrefs.setLayerNames])
-
-  const [showSettings, setShowSettings] = useState(false)
-  const [showDataModal, setShowDataModal] = useState(false)
-  const [dummyError, setDummyError] = useState<string | null>(null)
-  const [deviceLoadError, setDeviceLoadError] = useState<string | null>(null)
-  const [deviceSyncing, setDeviceSyncing] = useState(false)
-  const hasSyncedRef = useRef(false)
-  const hasFavSyncedForDataRef = useRef(false)
-  const hasKeyboardSyncedRef = useRef<string | null>(null)
-  const [resettingData, setResettingData] = useState(false)
-  const [hubUploading, setHubUploading] = useState<string | null>(null)
-  const hubUploadingRef = useRef(false)
-  const [hubUploadResult, setHubUploadResult] = useState<HubEntryResult | null>(null)
-  const [favHubUploading, setFavHubUploading] = useState<string | null>(null)
-  const favHubUploadingRef = useRef(false)
-  const [favHubUploadResult, setFavHubUploadResult] = useState<FavHubEntryResult | null>(null)
-  const [lastLoadedLabel, setLastLoadedLabel] = useState('')
-  // Clear loaded label when device identity changes (USB unplug/replug, device switch)
-  useEffect(() => { setLastLoadedLabel('') }, [keyboard.uid])
-  const [hubMyPosts, setHubMyPosts] = useState<HubMyPost[]>([])
-  const [hubMyPostsPagination, setHubMyPostsPagination] = useState<HubPaginationMeta | undefined>()
-  const [hubKeyboardPosts, setHubKeyboardPosts] = useState<HubMyPost[]>([])
-  const [hubOrigin, setHubOrigin] = useState('')
-  useEffect(() => { window.vialAPI.hubGetOrigin().then(setHubOrigin).catch(() => {}) }, [])
-  const [hubConnected, setHubConnected] = useState(false)
-  const [hubDisplayName, setHubDisplayName] = useState<string | null>(null)
-  const [hubAuthConflict, setHubAuthConflict] = useState(false)
-  const [hubAccountDeactivated, setHubAccountDeactivated] = useState(false)
-
-  // Device-triggered auto-sync — download favorites + keyboard files in one call
-  useEffect(() => {
-    // Not connected: reset flags so next connection triggers sync
-    if (!device.connectedDevice) {
-      if (!deviceSyncing) {
-        hasSyncedRef.current = false
-        hasKeyboardSyncedRef.current = null
-      }
-      return
-    }
-
-    // Wait for UID (available ~22ms into reload)
-    if (!keyboard.uid || keyboard.uid === EMPTY_UID) {
-      hasKeyboardSyncedRef.current = null
-      return
-    }
-
-    if (hasKeyboardSyncedRef.current === keyboard.uid) return
-    if (!sync.config.autoSync || !sync.authStatus.authenticated || !sync.hasPassword) return
-    if (sync.loading || deviceSyncing) return
-
-    hasSyncedRef.current = true
-    hasKeyboardSyncedRef.current = keyboard.uid
-    setDeviceSyncing(true)
-    sync.syncNow('download', { favorites: true as const, keyboard: keyboard.uid })
-      .catch(() => { hasSyncedRef.current = false; hasKeyboardSyncedRef.current = null })
-      .finally(() => setDeviceSyncing(false))
-  }, [device.connectedDevice, keyboard.uid, keyboard.loading,
-      sync.loading, sync.config.autoSync, sync.authStatus.authenticated, sync.hasPassword,
-      sync.syncNow, deviceSyncing])
 
   const decodedLayoutOptions = useMemo(() => {
     const labels = keyboard.definition?.layouts?.labels
     if (!labels) return new Map<number, number>()
     return decodeLayoutOptions(keyboard.layoutOptions, labels)
   }, [keyboard.definition, keyboard.layoutOptions])
+
+  const deviceName = device.connectedDevice?.productName || 'keyboard'
 
   const keymapCGenerator = useCallback(
     () => generateKeymapC({
@@ -238,18 +92,11 @@ export function App() {
       encoderCount: keyboard.encoderCount,
       layoutOptions: decodedLayoutOptions,
       serializeKeycode: serializeForCExport,
+      customKeycodes: keyboard.definition?.customKeycodes,
     }),
-    [
-      keyboard.layers,
-      keyboard.layout,
-      keyboard.keymap,
-      keyboard.encoderLayout,
-      keyboard.encoderCount,
-      decodedLayoutOptions,
-    ],
+    [keyboard.layers, keyboard.layout, keyboard.keymap, keyboard.encoderLayout,
+     keyboard.encoderCount, decodedLayoutOptions, keyboard.definition?.customKeycodes],
   )
-
-  const deviceName = device.connectedDevice?.productName || 'keyboard'
 
   const pdfGenerator = useCallback(
     () => generateKeymapPdf({
@@ -271,20 +118,10 @@ export function App() {
       altRepeatKey: keyboard.altRepeatKeyEntries,
       macros: deserializedMacros,
     }),
-    [
-      deviceName,
-      keyboard.layers,
-      keyboard.layout,
-      keyboard.keymap,
-      keyboard.encoderLayout,
-      keyboard.encoderCount,
-      decodedLayoutOptions,
-      keyboard.tapDanceEntries,
-      keyboard.comboEntries,
-      keyboard.keyOverrideEntries,
-      keyboard.altRepeatKeyEntries,
-      deserializedMacros,
-    ],
+    [deviceName, keyboard.layers, keyboard.layout, keyboard.keymap,
+     keyboard.encoderLayout, keyboard.encoderCount, decodedLayoutOptions,
+     keyboard.tapDanceEntries, keyboard.comboEntries, keyboard.keyOverrideEntries,
+     keyboard.altRepeatKeyEntries, deserializedMacros],
   )
 
   const fileIO = useFileIO({
@@ -296,917 +133,148 @@ export function App() {
     keymapCGenerator,
     pdfGenerator,
   })
+
   const sideload = useSideloadJson(keyboard.applyDefinition)
+
   const layoutStore = useLayoutStore({
     deviceUid: keyboard.uid,
     deviceName,
     serialize: keyboard.serialize,
     applyVilFile: keyboard.applyVilFile,
+    currentDefinition: keyboard.definition,
   })
-  const keymapEditorRef = useRef<KeymapEditorHandle>(null)
-  const [showUnlockDialog, setShowUnlockDialog] = useState(false)
-  const [unlockMacroWarning, setUnlockMacroWarning] = useState(false)
-  const [matrixState, setMatrixState] = useState({ matrixMode: false, hasMatrixTester: false })
-  const [keymapScale, setKeymapScale] = useState(1)
 
-  const adjustKeymapScale = useCallback((delta: number) => {
-    setKeymapScale((prev) => {
-      const clamped = Math.max(0.3, Math.min(2.0, prev + delta))
-      return Math.round(clamped * 10) / 10
+  // --- Extracted hooks ---
+
+  const { deviceSyncing, phase2SyncPending } = useDeviceAutoSync({
+    connectedDevice: device.connectedDevice,
+    isPipetteFile: device.isPipetteFile,
+    keyboardUid: keyboard.uid,
+    keyboardLoading: keyboard.loading,
+    syncLoading: sync.loading,
+    autoSync: sync.config.autoSync,
+    authenticated: sync.authStatus.authenticated,
+    hasPassword: sync.hasPassword,
+    syncNow: sync.syncNow,
+  })
+
+  const editorUI = useEditorUIState({
+    isDummy: device.isDummy,
+    effectiveIsDummy,
+    supportedQsids: keyboard.supportedQsids,
+    lighting: keyboard.definition?.lighting,
+    dynamicCounts: keyboard.dynamicCounts,
+    keymapScale: devicePrefs.keymapScale,
+    setKeymapScale: devicePrefs.setKeymapScale,
+  })
+
+  const fileHandlers = useFileHandlers({
+    fileIO,
+    layoutLabels: keyboard.definition?.layouts?.labels,
+    layoutKeys: keyboard.layout?.keys,
+    decodedLayoutOptions,
+    deviceName,
+  })
+
+  const entryOps = useEntryOperations({
+    keyboardUid: keyboard.uid,
+    definition: keyboard.definition,
+    layout: keyboard.layout,
+    encoderCount: keyboard.encoderCount,
+    macroCount: keyboard.macroCount,
+    vialProtocol: keyboard.vialProtocol,
+    viaProtocol: keyboard.viaProtocol,
+    rows: keyboard.rows,
+    cols: keyboard.cols,
+    qmkSettingsValues: keyboard.qmkSettingsValues,
+    dynamicCountsFeatureFlags: keyboard.dynamicCounts.featureFlags,
+    layoutStoreEntries: layoutStore.entries,
+    deviceName,
+  })
+
+  const lifecycle = useDeviceLifecycle({
+    connectDevice: device.connectDevice,
+    disconnectDevice: device.disconnectDevice,
+    connectDummy: device.connectDummy,
+    connectPipetteFile: device.connectPipetteFile,
+    isPipetteFile: device.isPipetteFile,
+    keyboardUid: keyboard.uid,
+    keyboardReload: keyboard.reload,
+    keyboardReset: keyboard.reset,
+    keyboardLoadDummy: keyboard.loadDummy,
+    keyboardLoadPipetteFile: keyboard.loadPipetteFile,
+    refreshUnlockStatus: keyboard.refreshUnlockStatus,
+    unlocked: keyboard.unlockStatus.unlocked,
+    activityCount: keyboard.activityCount,
+    applyDevicePrefs: devicePrefs.applyDevicePrefs,
+    autoLockTime: devicePrefs.autoLockTime,
+    autoSync: sync.config.autoSync,
+    authenticated: sync.authStatus.authenticated,
+    hasPassword: sync.hasPassword,
+    syncNow: sync.syncNow,
+    deviceSyncing,
+    resetUIState: editorUI.resetUIState,
+    clearFileStatus: fileHandlers.clearFileStatus,
+    resetHubState: () => hub.resetHubState(),
+    matrixMode: editorUI.matrixState.matrixMode,
+    typingTestMode: editorUI.typingTestMode,
+  })
+
+  const hub = useHubState({
+    hubEnabled: appConfig.config.hubEnabled,
+    authenticated: sync.authStatus.authenticated,
+    keyboardUid: keyboard.uid,
+    layoutStoreEntries: layoutStore.entries,
+    layoutStoreRefreshEntries: layoutStore.refreshEntries,
+    layoutStoreDeleteEntry: layoutStore.deleteEntry,
+    layoutStoreSaveLayout: layoutStore.saveLayout,
+    layoutStoreRenameEntry: layoutStore.renameEntry,
+    deviceName,
+    effectiveIsDummy,
+    loadEntryVilData: entryOps.loadEntryVilData,
+    buildHubPostParams: entryOps.buildHubPostParams,
+    activityCount: keyboard.activityCount,
+    pipetteFileSavedActivityRef: lifecycle.pipetteFileSavedActivityRef,
+  })
+
+  const migration = useSnapshotMigration({
+    connectedDevice: device.connectedDevice,
+    isDummy: device.isDummy,
+    keyboardLoading: keyboard.loading,
+    keyboardUid: keyboard.uid,
+    definition: keyboard.definition,
+    viaProtocol: keyboard.viaProtocol,
+    vialProtocol: keyboard.vialProtocol,
+    featureFlags: keyboard.dynamicCounts.featureFlags,
+    deviceSyncing,
+    phase2SyncPending,
+    layoutStoreRefreshEntries: layoutStore.refreshEntries,
+    backfillQmkSettings: entryOps.backfillQmkSettings,
+    hubCanUpload: hub.hubCanUpload,
+    buildHubPostParams: entryOps.buildHubPostParams,
+    refreshHubPosts: hub.refreshHubPosts,
+    setHubUploadResult: hub.setHubUploadResult,
+  })
+
+  // Register boot guard unlock callback so setKey/setEncoder can trigger the dialog
+  useEffect(() => {
+    keyboard.setBootGuardUnlock(() => {
+      editorUI.setShowUnlockDialog(true)
     })
-  }, [])
+  }, [keyboard.setBootGuardUnlock, editorUI.setShowUnlockDialog])
 
-  const handleMatrixModeChange = useCallback((matrixMode: boolean, hasMatrixTester: boolean) => {
-    setMatrixState({ matrixMode, hasMatrixTester })
-  }, [])
-
-  const comboTimeoutSupported = !device.isDummy && keyboard.supportedQsids.has(2)
-
-  // Collect visible settings tab names for per-feature support checks
-  const visibleSettingsNames = useMemo(() => {
-    if (device.isDummy || keyboard.supportedQsids.size === 0) return new Set<string>()
-    const tabs = (settingsDefs as { tabs: QmkSettingsTab[] }).tabs
-    return new Set(
-      tabs
-        .filter((tab) => tab.fields.some((f) => keyboard.supportedQsids.has(f.qsid)))
-        .map((tab) => tab.name),
-    )
-  }, [keyboard.supportedQsids, device.isDummy])
-
-  const tapHoldSupported = visibleSettingsNames.has('Tap-Hold')
-  const mouseKeysSupported = visibleSettingsNames.has('Mouse keys')
-  const magicSupported = visibleSettingsNames.has('Magic')
-  const graveEscapeSupported = visibleSettingsNames.has('Grave Escape')
-  const autoShiftSupported = visibleSettingsNames.has('Auto Shift')
-  const oneShotKeysSupported = visibleSettingsNames.has('One Shot Keys')
-  const hasIntegratedSettings =
-    tapHoldSupported || mouseKeysSupported || magicSupported ||
-    graveEscapeSupported || autoShiftSupported || oneShotKeysSupported
-
-  const lightingSupported = !device.isDummy && LIGHTING_TYPES.has(keyboard.definition?.lighting ?? '')
-
-  const [typingTestMode, setTypingTestMode] = useState(false)
-
-  const handleTypingTestModeChange = useCallback((enabled: boolean) => {
-    setTypingTestMode(enabled)
-    if (enabled) {
-      setDualMode(false)
-      setActivePane('primary')
-    }
-  }, [])
-
-  const [dualMode, setDualMode] = useState(false)
-  const [activePane, setActivePane] = useState<'primary' | 'secondary'>('primary')
-  const [primaryLayer, setPrimaryLayer] = useState(0)
-  const [secondaryLayer, setSecondaryLayer] = useState(0)
-
-  // Use Keychron's default layer if supported
-  useEffect(() => {
-    if (keyboard.keychron?.hasDefaultLayer && 
-        keyboard.keychron.defaultLayer >= 0 && 
-        keyboard.keychron.defaultLayer < keyboard.layers) {
-      setPrimaryLayer(keyboard.keychron.defaultLayer)
-    }
-  }, [keyboard.keychron?.hasDefaultLayer, keyboard.keychron?.defaultLayer, keyboard.layers])
-
-
-  const handleDualModeChange = useCallback((enabled: boolean) => {
-    setDualMode(enabled)
-    setActivePane('primary')
-    if (enabled) setSecondaryLayer(primaryLayer)
-  }, [primaryLayer])
-
-  const currentLayer = dualMode && activePane === 'secondary' ? secondaryLayer : primaryLayer
-  const setCurrentLayer = useCallback((l: number) => {
-    if (dualMode && activePane === 'secondary') setSecondaryLayer(l)
-    else setPrimaryLayer(l)
-  }, [dualMode, activePane])
-
-  const [fileSuccessKind, setFileSuccessKind] = useState<'import' | 'export' | null>(null)
-  const [showLightingModal, setShowLightingModal] = useState(false)
-  const [showComboModal, setShowComboModal] = useState(false)
-  const [comboInitialIndex, setComboInitialIndex] = useState<number | undefined>(undefined)
-  const [showAltRepeatKeyModal, setShowAltRepeatKeyModal] = useState(false)
-  const [altRepeatKeyInitialIndex, setAltRepeatKeyInitialIndex] = useState<number | undefined>(undefined)
-  const [showKeyOverrideModal, setShowKeyOverrideModal] = useState(false)
-  const [keyOverrideInitialIndex, setKeyOverrideInitialIndex] = useState<number | undefined>(undefined)
-  const [showKeychronModal, setShowKeychronModal] = useState(false)
-  const [showKeychronRgbModal, setShowKeychronRgbModal] = useState(false)
-  const [showKeychronFlasherModal, setShowKeychronFlasherModal] = useState(false)
-  const [showKeychronAnalogModal, setShowKeychronAnalogModal] = useState(false)
-  const [showKeychronSocdModal, setShowKeychronSocdModal] = useState(false)
-  const [keychronAnalogData, setKeychronAnalogData] = useState<import('../shared/types/keychron').KeychronAnalogState | null>(
-    keyboard.keychron?.analog ?? null
-  )
-
-  const keychronSupported = !device.isDummy && keyboard.keychron != null
-
-  const handleOpenKeychronAnalog = useCallback(async () => {
-    if (!keyboard.keychron?.hasAnalog) return
-    // If we already have analog data loaded, just show the modal
-    if (keychronAnalogData) {
-      setShowKeychronAnalogModal(true)
-      return
-    }
-    // Lazy-load the analog state
-    try {
-      const result = await window.vialAPI.keychronAnalogReload(keyboard.rows, keyboard.cols) as import('../shared/types/keychron').KeychronAnalogState | null
-      if (result) {
-        setKeychronAnalogData(result)
-        setShowKeychronAnalogModal(true)
-      }
-    } catch (err) {
-      console.error('[App] Failed to load analog state:', err)
-    }
-  }, [keyboard.keychron?.hasAnalog, keyboard.rows, keyboard.cols, keychronAnalogData])
-
-  const showFileSuccess = useCallback((kind: 'import' | 'export') => {
-    setFileSuccessKind(kind)
-  }, [])
-
-  const clearFileStatus = useCallback(() => {
-    setFileSuccessKind(null)
-  }, [])
-
-  const fetchHubUser = useCallback(async () => {
-    if (!appConfig.config.hubEnabled || !sync.authStatus.authenticated) return
-    try {
-      const result = await window.vialAPI.hubFetchAuthMe()
-      if (result.success && result.user) {
-        setHubDisplayName(result.user.display_name)
-      }
-    } catch {}
-  }, [appConfig.config.hubEnabled, sync.authStatus.authenticated])
-
-  const handleUpdateHubDisplayName = useCallback(async (name: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const result = await window.vialAPI.hubPatchAuthMe(name)
-      if (result.success && result.user) {
-        setHubDisplayName(result.user.display_name)
-        return { success: true }
-      }
-      return { success: false, error: result.error }
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : undefined }
-    }
-  }, [])
-
-  const clearHubPostsState = useCallback(() => {
-    setHubMyPosts([])
-    setHubMyPostsPagination(undefined)
-    setHubConnected(false)
-  }, [])
-
-  const markAccountDeactivated = useCallback(() => {
-    setHubAccountDeactivated(true)
-    clearHubPostsState()
-  }, [clearHubPostsState])
-
-  const refreshHubMyPosts = useCallback(async (params?: HubFetchMyPostsParams) => {
-    if (appConfig.config.hubEnabled && sync.authStatus.authenticated) {
-      try {
-        const result = await window.vialAPI.hubFetchMyPosts(params)
-        if (result.success && Array.isArray(result.posts)) {
-          setHubMyPosts(result.posts)
-          setHubMyPostsPagination(result.pagination)
-          setHubConnected(true)
-          setHubAuthConflict(false)
-          setHubAccountDeactivated(false)
-          return
-        }
-        if (result.error === HUB_ERROR_DISPLAY_NAME_CONFLICT) {
-          setHubAuthConflict(true)
-          clearHubPostsState()
-          return
-        }
-        if (result.error === HUB_ERROR_ACCOUNT_DEACTIVATED) {
-          markAccountDeactivated()
-          return
-        }
-      } catch {}
-    }
-    clearHubPostsState()
-  }, [appConfig.config.hubEnabled, sync.authStatus.authenticated, clearHubPostsState, markAccountDeactivated])
-
-  const refreshHubKeyboardPosts = useCallback(async () => {
-    if (!appConfig.config.hubEnabled || !sync.authStatus.authenticated || !deviceName || device.isDummy) {
-      setHubKeyboardPosts([])
-      return
-    }
-    try {
-      const result = await window.vialAPI.hubFetchMyKeyboardPosts(deviceName)
-      setHubKeyboardPosts(result.success && result.posts ? result.posts : [])
-    } catch {
-      setHubKeyboardPosts([])
-    }
-  }, [appConfig.config.hubEnabled, sync.authStatus.authenticated, deviceName, device.isDummy])
-
-  const refreshHubPosts = useCallback(async () => {
-    // Fetch keyboard posts first so they are ready before hubConnected
-    // is set to true inside refreshHubMyPosts (which gates hubReady).
-    await refreshHubKeyboardPosts()
-    await refreshHubMyPosts()
-  }, [refreshHubMyPosts, refreshHubKeyboardPosts])
-
-  const handleResolveAuthConflict = useCallback(async (name: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      await window.vialAPI.hubSetAuthDisplayName(name)
-      const result = await window.vialAPI.hubFetchAuthMe()
-      if (!result.success) {
-        return { success: false, error: result.error }
-      }
-      if (result.user) {
-        setHubAuthConflict(false)
-        setHubDisplayName(result.user.display_name)
-        await refreshHubPosts()
-      }
-      return { success: true }
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : undefined }
-    } finally {
-      await window.vialAPI.hubSetAuthDisplayName(null).catch(() => {})
-    }
-  }, [refreshHubPosts])
-
-  const getHubPostId = useCallback((entry: { hubPostId?: string; label: string }): string | undefined => {
-    return entry.hubPostId || hubKeyboardPosts.find((p) => p.title === entry.label)?.id
-  }, [hubKeyboardPosts])
-
-  const persistHubPostId = useCallback(async (entryId: string, postId: string | null) => {
-    await window.vialAPI.snapshotStoreSetHubPostId(keyboard.uid, entryId, postId)
-    await layoutStore.refreshEntries()
-  }, [keyboard.uid, layoutStore])
-
-  const handleHubRenamePost = useCallback(async (postId: string, newTitle: string) => {
-    const result = await window.vialAPI.hubPatchPost({ postId, title: newTitle })
-    if (!result.success) throw new Error(result.error ?? 'Rename failed')
-    await refreshHubPosts()
-  }, [refreshHubPosts])
-
-  const handleHubDeletePost = useCallback(async (postId: string) => {
-    const result = await window.vialAPI.hubDeletePost(postId)
-    if (!result.success) throw new Error(result.error ?? 'Delete failed')
-    await refreshHubPosts()
-  }, [refreshHubPosts])
-
-  // Auto-check Hub connectivity when auth status changes
-  useEffect(() => {
-    void refreshHubPosts()
-    void fetchHubUser()
-  }, [refreshHubPosts, fetchHubUser])
-
-  const handleImportVil = useCallback(async () => {
-    const ok = await fileIO.loadLayout()
-    if (ok) showFileSuccess('import')
-  }, [fileIO.loadLayout, showFileSuccess])
-
-  const handleExportVil = useCallback(async (): Promise<boolean> => {
-    const ok = await fileIO.saveLayout()
-    if (ok) showFileSuccess('export')
-    return ok
-  }, [fileIO.saveLayout, showFileSuccess])
-
-  const handleSilentBackup = useCallback(async (): Promise<boolean> => {
-    const entryId = await layoutStore.saveLayout('Pre-Flash Auto-Backup')
-    if (entryId) {
-      localStorage.setItem('pendingDeviceRestore', JSON.stringify({ uid: keyboard.uid, entryId }))
-      return true
-    }
-    return false
-  }, [layoutStore, keyboard.uid])
-
-  useEffect(() => {
-    if (device.isDummy || !layoutStore) return
-    const pendingRestoreStr = localStorage.getItem('pendingDeviceRestore')
-    if (pendingRestoreStr) {
-      try {
-        const pendingRestore = JSON.parse(pendingRestoreStr)
-        if (pendingRestore.uid === keyboard.uid && pendingRestore.entryId) {
-          localStorage.removeItem('pendingDeviceRestore')
-          console.log(`Auto-restoring layout for flashed device ${keyboard.uid} from backup ${pendingRestore.entryId}`)
-          // We fire and forget loading the layout so it quietly applies in the background
-          layoutStore.loadLayout(pendingRestore.entryId).catch(() => {})
-        }
-      } catch {
-        localStorage.removeItem('pendingDeviceRestore')
-      }
-    }
-  }, [device.isDummy, keyboard.uid, layoutStore.loadLayout])
-
-  const handleExportKeymapC = useCallback(async () => {
-    const ok = await fileIO.exportKeymapC()
-    if (ok) showFileSuccess('export')
-  }, [fileIO.exportKeymapC, showFileSuccess])
-
-  const handleExportPdf = useCallback(async () => {
-    const ok = await fileIO.exportPdf()
-    if (ok) showFileSuccess('export')
-  }, [fileIO.exportPdf, showFileSuccess])
-
-  const exportLayoutPdf = useCallback(async (
-    generator: (input: LayoutPdfInput) => string,
-    suffix: string,
-  ) => {
-    try {
-      const parsedOptions = parseLayoutLabels(keyboard.definition?.layouts?.labels)
-      const base64 = generator({
-        deviceName,
-        keys: keyboard.layout?.keys ?? [],
-        layoutOptions: parsedOptions,
-        currentValues: decodedLayoutOptions,
-      })
-      await window.vialAPI.exportPdf(base64, `${deviceName}_layout_${suffix}`)
-    } catch {
-      // Export errors are non-critical; file dialog handles user feedback
-    }
-  }, [keyboard.definition, keyboard.layout, decodedLayoutOptions, deviceName])
-
-  const handleExportLayoutPdfAll = useCallback(
-    () => exportLayoutPdf(generateAllLayoutOptionsPdf, 'all'),
-    [exportLayoutPdf],
-  )
-
-  const handleExportLayoutPdfCurrent = useCallback(
-    () => exportLayoutPdf(generateCurrentLayoutPdf, 'current'),
-    [exportLayoutPdf],
-  )
-
-  function deriveFileStatus(): FileStatus {
-    if (fileIO.loading) return 'importing'
-    if (fileIO.saving) return 'exporting'
-    if (fileSuccessKind === 'import') return { kind: 'success', message: t('fileIO.importSuccess') }
-    if (fileSuccessKind === 'export') return { kind: 'success', message: t('fileIO.exportSuccess') }
-    return 'idle'
-  }
-  const fileStatus = deriveFileStatus()
+  const keymapEditorRef = useRef<KeymapEditorHandle>(null)
 
   const handleLoadEntry = useCallback(async (entryId: string) => {
     const entry = layoutStore.entries.find((e) => e.id === entryId)
     const ok = await layoutStore.loadLayout(entryId)
     if (ok) {
-      setLastLoadedLabel(entry?.label ?? '')
-      clearFileStatus()
+      lifecycle.setLastLoadedLabel(entry?.label ?? '')
+      fileHandlers.clearFileStatus()
     }
-  }, [layoutStore, clearFileStatus])
+  }, [layoutStore, fileHandlers.clearFileStatus, lifecycle.setLastLoadedLabel])
 
-  const loadEntryVilData = useCallback(async (entryId: string): Promise<VilFile | null> => {
-    try {
-      const result = await window.vialAPI.snapshotStoreLoad(keyboard.uid, entryId)
-      if (!result.success || !result.data) return null
-      const parsed: unknown = JSON.parse(result.data)
-      if (!isVilFile(parsed)) return null
-      return parsed
-    } catch {
-      return null
-    }
-  }, [keyboard.uid])
-
-  const entryExportName = useCallback((entryId: string): string => {
-    const entry = layoutStore.entries.find((e) => e.id === entryId)
-    const suffix = entry?.label || entryId
-    return `${deviceName}_${suffix}`
-  }, [deviceName, layoutStore.entries])
-
-  const buildEntryParams = useCallback((vilData: VilFile) => {
-    const labels = keyboard.definition?.layouts?.labels
-    return {
-      layers: deriveLayerCount(vilData.keymap),
-      keys: keyboard.layout?.keys ?? [],
-      keymap: recordToMap(vilData.keymap),
-      encoderLayout: recordToMap(vilData.encoderLayout),
-      encoderCount: keyboard.encoderCount,
-      layoutOptions: labels
-        ? decodeLayoutOptions(vilData.layoutOptions, labels)
-        : new Map<number, number>(),
-      serializeKeycode,
-      tapDance: vilData.tapDance,
-      combo: vilData.combo,
-      keyOverride: vilData.keyOverride,
-      altRepeatKey: vilData.altRepeatKey,
-      macros: vilData.macroJson
-        ? vilData.macroJson.map((m) => jsonToMacroActions(JSON.stringify(m)) ?? [])
-        : splitMacroBuffer(vilData.macros, keyboard.macroCount)
-            .map((m) => deserializeMacro(m, keyboard.vialProtocol)),
-    }
-  }, [keyboard.definition, keyboard.layout, keyboard.encoderCount,
-      keyboard.macroCount, keyboard.vialProtocol])
-
-  const buildVilExportContext = useCallback((vilData: VilFile) => {
-    const macroActions = splitMacroBuffer(vilData.macros, keyboard.macroCount)
-      .map((m) => JSON.parse(macroActionsToJson(deserializeMacro(m, keyboard.vialProtocol))) as unknown[])
-    return {
-      rows: keyboard.rows,
-      cols: keyboard.cols,
-      layers: deriveLayerCount(vilData.keymap),
-      encoderCount: keyboard.encoderCount,
-      vialProtocol: keyboard.vialProtocol,
-      viaProtocol: keyboard.viaProtocol,
-      macroActions,
-    }
-  }, [keyboard.rows, keyboard.cols, keyboard.macroCount,
-      keyboard.encoderCount, keyboard.vialProtocol, keyboard.viaProtocol])
-
-  const handleExportEntryVil = useCallback(async (entryId: string) => {
-    try {
-      const vilData = await loadEntryVilData(entryId)
-      if (!vilData) return
-      const json = vilToVialGuiJson(vilData, buildVilExportContext(vilData))
-      await window.vialAPI.saveLayout(json, entryExportName(entryId))
-    } catch {
-      // Export errors are non-critical; file dialog handles user feedback
-    }
-  }, [loadEntryVilData, buildVilExportContext, entryExportName])
-
-  const handleExportEntryKeymapC = useCallback(async (entryId: string) => {
-    try {
-      const vilData = await loadEntryVilData(entryId)
-      if (!vilData) return
-      const content = generateKeymapC({ ...buildEntryParams(vilData), serializeKeycode: serializeForCExport })
-      await window.vialAPI.exportKeymapC(content, entryExportName(entryId))
-    } catch {
-      // Export errors are non-critical; file dialog handles user feedback
-    }
-  }, [loadEntryVilData, buildEntryParams, entryExportName])
-
-  const handleExportEntryPdf = useCallback(async (entryId: string) => {
-    try {
-      const vilData = await loadEntryVilData(entryId)
-      if (!vilData) return
-      const exportName = entryExportName(entryId)
-      const base64 = generateKeymapPdf({
-        ...buildEntryParams(vilData),
-        deviceName,
-        keycodeLabel,
-        isMask,
-        findOuterKeycode,
-        findInnerKeycode,
-      })
-      await window.vialAPI.exportPdf(base64, exportName)
-    } catch {
-      // Export errors are non-critical; file dialog handles user feedback
-    }
-  }, [loadEntryVilData, buildEntryParams, entryExportName, deviceName])
-
-  const buildHubPostParams = useCallback(async (entry: { label: string }, vilData: VilFile) => {
-    const params = buildEntryParams(vilData)
-    const pdfBase64 = generateKeymapPdf({
-      ...params,
-      deviceName,
-      keycodeLabel,
-      isMask,
-      findOuterKeycode,
-      findInnerKeycode,
-    })
-    const thumbnailBase64 = await generatePdfThumbnail(pdfBase64)
-    return {
-      title: entry.label || deviceName,
-      keyboardName: deviceName,
-      vilJson: vilToVialGuiJson(vilData, buildVilExportContext(vilData)),
-      keymapC: generateKeymapC({ ...params, serializeKeycode: serializeForCExport }),
-      pdfBase64,
-      thumbnailBase64,
-    }
-  }, [buildEntryParams, buildVilExportContext, deviceName])
-
-  const hubReady = appConfig.config.hubEnabled && sync.authStatus.authenticated && hubConnected
-  const hubCanUpload = hubReady && !!hubDisplayName?.trim()
-
-  const runHubOperation = useCallback(async (
-    entryId: string,
-    findEntry: (entries: SnapshotMeta[]) => SnapshotMeta | undefined,
-    operation: (entry: SnapshotMeta) => Promise<HubUploadResult>,
-    successMsg: string,
-    failMsg: string,
-  ) => {
-    if (hubUploadingRef.current) return
-    hubUploadingRef.current = true
-
-    const entry = findEntry(layoutStore.entries)
-    if (!entry) { hubUploadingRef.current = false; return }
-
-    setHubUploading(entryId)
-    setHubUploadResult(null)
-    try {
-      const result = await operation(entry)
-      if (result.success) {
-        setHubUploadResult({ kind: 'success', message: successMsg, entryId })
-      } else {
-        let message: string
-        if (result.error === HUB_ERROR_ACCOUNT_DEACTIVATED) {
-          markAccountDeactivated()
-          message = t('hub.accountDeactivated')
-        } else if (result.error === HUB_ERROR_RATE_LIMITED) {
-          message = t('hub.rateLimited')
-        } else {
-          message = result.error || failMsg
-        }
-        setHubUploadResult({ kind: 'error', message, entryId })
-      }
-    } catch {
-      setHubUploadResult({ kind: 'error', message: failMsg, entryId })
-    } finally {
-      setHubUploading(null)
-      hubUploadingRef.current = false
-    }
-  }, [layoutStore.entries, markAccountDeactivated, t])
-
-  const handleUploadToHub = useCallback(async (entryId: string) => {
-    await runHubOperation(
-      entryId,
-      (entries) => entries.find((e) => e.id === entryId),
-      async (entry) => {
-        const vilData = await loadEntryVilData(entryId)
-        if (!vilData) return { success: false, error: t('hub.uploadFailed') }
-        const postParams = await buildHubPostParams(entry, vilData)
-        const result = await window.vialAPI.hubUploadPost(postParams)
-        if (result.success) {
-          if (result.postId) await persistHubPostId(entryId, result.postId)
-          await refreshHubPosts()
-        }
-        return result
-      },
-      t('hub.uploadSuccess'),
-      t('hub.uploadFailed'),
-    )
-  }, [runHubOperation, loadEntryVilData, buildHubPostParams, persistHubPostId, refreshHubPosts, t])
-
-  const handleUpdateOnHub = useCallback(async (entryId: string) => {
-    const entry = layoutStore.entries.find((e) => e.id === entryId)
-    const postId = entry ? getHubPostId(entry) : undefined
-    if (!entry || !postId) return
-
-    await runHubOperation(
-      entryId,
-      () => entry,
-      async () => {
-        const vilData = await loadEntryVilData(entryId)
-        if (!vilData) return { success: false, error: t('hub.updateFailed') }
-        const postParams = await buildHubPostParams(entry, vilData)
-        const result = await window.vialAPI.hubUpdatePost({ ...postParams, postId })
-        if (result.success) await refreshHubPosts()
-        return result
-      },
-      t('hub.updateSuccess'),
-      t('hub.updateFailed'),
-    )
-  }, [runHubOperation, layoutStore.entries, loadEntryVilData, buildHubPostParams, getHubPostId, refreshHubPosts, t])
-
-  const handleRemoveFromHub = useCallback(async (entryId: string) => {
-    const entry = layoutStore.entries.find((e) => e.id === entryId)
-    const postId = entry ? getHubPostId(entry) : undefined
-    if (!entry || !postId) return
-
-    await runHubOperation(
-      entryId,
-      () => entry,
-      async () => {
-        const result = await window.vialAPI.hubDeletePost(postId)
-        if (result.success) {
-          await persistHubPostId(entryId, null)
-          await refreshHubPosts()
-        }
-        return result
-      },
-      t('hub.removeSuccess'),
-      t('hub.removeFailed'),
-    )
-  }, [runHubOperation, layoutStore, getHubPostId, persistHubPostId, refreshHubPosts, t])
-
-  const handleReuploadToHub = useCallback(async (entryId: string, orphanedPostId: string) => {
-    await runHubOperation(
-      entryId,
-      (entries) => entries.find((e) => e.id === entryId),
-      async (entry) => {
-        await window.vialAPI.hubDeletePost(orphanedPostId).catch(() => {})
-        const vilData = await loadEntryVilData(entryId)
-        if (!vilData) return { success: false, error: t('hub.uploadFailed') }
-        const postParams = await buildHubPostParams(entry, vilData)
-        const result = await window.vialAPI.hubUploadPost(postParams)
-        if (result.success) {
-          if (result.postId) await persistHubPostId(entryId, result.postId)
-          await refreshHubPosts()
-        }
-        return result
-      },
-      t('hub.uploadSuccess'),
-      t('hub.uploadFailed'),
-    )
-  }, [runHubOperation, loadEntryVilData, buildHubPostParams, persistHubPostId, refreshHubPosts, t])
-
-  const handleDeleteOrphanedHubPost = useCallback(async (entryId: string, orphanedPostId: string) => {
-    await runHubOperation(
-      entryId,
-      (entries) => entries.find((e) => e.id === entryId),
-      async () => {
-        const result = await window.vialAPI.hubDeletePost(orphanedPostId)
-        await refreshHubPosts()
-        return result
-      },
-      t('hub.removeSuccess'),
-      t('hub.removeFailed'),
-    )
-  }, [runHubOperation, refreshHubPosts, t])
-
-  const handleOverwriteSave = useCallback(async (overwriteEntryId: string, label: string) => {
-    const overwriteEntry = layoutStore.entries.find((e) => e.id === overwriteEntryId)
-    const existingPostId = overwriteEntry ? getHubPostId(overwriteEntry) : undefined
-
-    await layoutStore.deleteEntry(overwriteEntryId)
-    const newEntryId = await layoutStore.saveLayout(label)
-    if (!newEntryId) return
-
-    if (existingPostId) {
-      await persistHubPostId(newEntryId, existingPostId)
-
-      if (hubReady) {
-        await runHubOperation(
-          newEntryId,
-          () => ({ id: newEntryId, label, filename: '', savedAt: '', hubPostId: existingPostId }),
-          async () => {
-            const vilData = await loadEntryVilData(newEntryId)
-            if (!vilData) return { success: false, error: t('hub.updateFailed') }
-            const postParams = await buildHubPostParams({ label }, vilData)
-            const result = await window.vialAPI.hubUpdatePost({ ...postParams, postId: existingPostId })
-            if (result.success) await refreshHubPosts()
-            return result
-          },
-          t('hub.updateSuccess'),
-          t('hub.updateFailed'),
-        )
-      }
-    }
-  }, [layoutStore, getHubPostId, persistHubPostId, hubReady, runHubOperation, loadEntryVilData, buildHubPostParams, refreshHubPosts, t])
-
-  // --- Favorite Hub upload handlers ---
-
-  const persistFavHubPostId = useCallback(async (type: FavoriteType, entryId: string, postId: string | null) => {
-    await window.vialAPI.favoriteStoreSetHubPostId(type, entryId, postId)
-  }, [])
-
-  function hubResultErrorMessage(result: HubUploadResult, fallbackKey: string): string {
-    if (result.error === HUB_ERROR_ACCOUNT_DEACTIVATED) {
-      markAccountDeactivated()
-      return t('hub.accountDeactivated')
-    }
-    if (result.error === HUB_ERROR_RATE_LIMITED) return t('hub.rateLimited')
-    return result.error || t(fallbackKey)
-  }
-
-  const runFavHubOperation = useCallback(async (
-    type: FavoriteType,
-    entryId: string,
-    requireHubPostId: boolean,
-    operation: (entry: SavedFavoriteMeta) => Promise<void>,
-  ) => {
-    if (favHubUploadingRef.current) return
-    favHubUploadingRef.current = true
-
-    const listResult = await window.vialAPI.favoriteStoreList(type)
-    const entry = listResult.entries?.find((e: SavedFavoriteMeta) => e.id === entryId)
-    if (!entry || (requireHubPostId && !entry.hubPostId)) {
-      favHubUploadingRef.current = false
-      return
-    }
-
-    setFavHubUploading(entryId)
-    setFavHubUploadResult(null)
-    try {
-      await operation(entry)
-    } finally {
-      setFavHubUploading(null)
-      favHubUploadingRef.current = false
-    }
-  }, [])
-
-  const handleFavUploadToHub = useCallback(async (typeStr: string, entryId: string) => {
-    const type = typeStr as FavoriteType
-    await runFavHubOperation(type, entryId, false, async (entry) => {
-      try {
-        const result = await window.vialAPI.hubUploadFavoritePost({
-          type, entryId, title: entry.label || type,
-        })
-        if (result.success) {
-          if (result.postId) await persistFavHubPostId(type, entryId, result.postId)
-          setFavHubUploadResult({ kind: 'success', message: t('hub.uploadSuccess'), entryId })
-        } else {
-          setFavHubUploadResult({ kind: 'error', message: hubResultErrorMessage(result, 'hub.uploadFailed'), entryId })
-        }
-      } catch {
-        setFavHubUploadResult({ kind: 'error', message: t('hub.uploadFailed'), entryId })
-      }
-    })
-  }, [runFavHubOperation, persistFavHubPostId, markAccountDeactivated, t])
-
-  const handleFavUpdateOnHub = useCallback(async (typeStr: string, entryId: string) => {
-    const type = typeStr as FavoriteType
-    await runFavHubOperation(type, entryId, true, async (entry) => {
-      try {
-        const result = await window.vialAPI.hubUpdateFavoritePost({
-          type, entryId, title: entry.label || type, postId: entry.hubPostId!,
-        })
-        if (result.success) {
-          setFavHubUploadResult({ kind: 'success', message: t('hub.updateSuccess'), entryId })
-        } else {
-          setFavHubUploadResult({ kind: 'error', message: hubResultErrorMessage(result, 'hub.updateFailed'), entryId })
-        }
-      } catch {
-        setFavHubUploadResult({ kind: 'error', message: t('hub.updateFailed'), entryId })
-      }
-    })
-  }, [runFavHubOperation, persistFavHubPostId, markAccountDeactivated, t])
-
-  const handleFavRemoveFromHub = useCallback(async (typeStr: string, entryId: string) => {
-    const type = typeStr as FavoriteType
-    await runFavHubOperation(type, entryId, true, async (entry) => {
-      try {
-        const result = await window.vialAPI.hubDeletePost(entry.hubPostId!)
-        if (result.success) {
-          await persistFavHubPostId(type, entryId, null)
-          setFavHubUploadResult({ kind: 'success', message: t('hub.removeSuccess'), entryId })
-        } else {
-          setFavHubUploadResult({ kind: 'error', message: result.error || t('hub.removeFailed'), entryId })
-        }
-      } catch {
-        setFavHubUploadResult({ kind: 'error', message: t('hub.removeFailed'), entryId })
-      }
-    })
-  }, [runFavHubOperation, persistFavHubPostId, t])
-
-  const handleFavRenameOnHub = useCallback(async (entryId: string, hubPostId: string, newLabel: string) => {
-    // Note: rename is triggered from UI where we already have the type conceptually, but it's not passed here.
-    // However, the signature inside DataModal doesn't need `type` for rename.
-    if (!hubReady || favHubUploadingRef.current) return
-    favHubUploadingRef.current = true
-    setFavHubUploading(entryId)
-    setFavHubUploadResult(null)
-    try {
-      const result = await window.vialAPI.hubPatchPost({ postId: hubPostId, title: newLabel })
-      if (result.success) {
-        setFavHubUploadResult({ kind: 'success', message: t('hub.hubSynced'), entryId })
-      } else {
-        setFavHubUploadResult({ kind: 'error', message: hubResultErrorMessage(result, 'hub.renameFailed'), entryId })
-      }
-    } catch {
-      setFavHubUploadResult({ kind: 'error', message: t('hub.renameFailed'), entryId })
-    } finally {
-      setFavHubUploading(null)
-      favHubUploadingRef.current = false
-    }
-  }, [hubReady, markAccountDeactivated, t])
-
-  // True when keyboard sync is about to trigger but useEffect hasn't fired yet.
-  // Bridges the 1-frame gap between UID publish and setDeviceSyncing(true).
-  const phase2SyncPending = !deviceSyncing &&
-    !!device.connectedDevice && !!keyboard.uid && keyboard.uid !== EMPTY_UID &&
-    hasKeyboardSyncedRef.current !== keyboard.uid &&
-    sync.config.autoSync && sync.authStatus.authenticated && sync.hasPassword && !sync.loading
-
-  const comboSupported = !device.isDummy && keyboard.dynamicCounts.combo > 0
-  const altRepeatKeySupported = !device.isDummy && keyboard.dynamicCounts.altRepeatKey > 0
-  const keyOverrideSupported = !device.isDummy && keyboard.dynamicCounts.keyOverride > 0
-
-  const handleDeleteEntry = useCallback(async (entryId: string) => {
-    const entry = layoutStore.entries.find((e) => e.id === entryId)
-    const postId = entry ? getHubPostId(entry) : undefined
-    const deleted = await layoutStore.deleteEntry(entryId)
-    if (deleted && postId && hubReady) {
-      try {
-        const result = await window.vialAPI.hubDeletePost(postId)
-        if (result.success) await refreshHubPosts()
-      } catch {
-        // Hub deletion is best-effort; local entry is already removed
-      }
-    }
-  }, [layoutStore, getHubPostId, hubReady, refreshHubPosts])
-
-  const handleRenameEntry = useCallback(async (entryId: string, newLabel: string): Promise<boolean> => {
-    const entry = layoutStore.entries.find((e) => e.id === entryId)
-    const postId = entry ? getHubPostId(entry) : undefined
-    const ok = await layoutStore.renameEntry(entryId, newLabel)
-    if (ok && hubReady && postId) {
-      void runHubOperation(
-        entryId,
-        (entries) => entries.find((e) => e.id === entryId),
-        async () => {
-          const result = await window.vialAPI.hubPatchPost({ postId, title: newLabel })
-          if (result.success) await refreshHubPosts()
-          return result
-        },
-        t('hub.hubSynced'),
-        t('hub.renameFailed'),
-      )
-    }
-    return ok
-  }, [layoutStore, getHubPostId, hubReady, runHubOperation, refreshHubPosts, t])
-
-  // Close modals when their feature support is lost
-  useEffect(() => {
-    if (!lightingSupported) setShowLightingModal(false)
-    if (!comboSupported) setShowComboModal(false)
-    if (!altRepeatKeySupported) setShowAltRepeatKeyModal(false)
-    if (!keyOverrideSupported) setShowKeyOverrideModal(false)
-    if (!keychronSupported) setShowKeychronModal(false)
-  }, [lightingSupported, comboSupported, altRepeatKeySupported, keyOverrideSupported, keychronSupported])
-
-  const handleDisconnect = useCallback(async () => {
-    try {
-      await window.vialAPI.lock().catch(() => {})
-      await device.disconnectDevice()
-    } finally {
-      keyboard.reset()
-      setTypingTestMode(false)
-      setPrimaryLayer(0)
-      setSecondaryLayer(0)
-      setDualMode(false)
-      setActivePane('primary')
-      setKeymapScale(1)
-      setShowUnlockDialog(false)
-      setUnlockMacroWarning(false)
-      setFileSuccessKind(null)
-      setLastLoadedLabel('')
-      setMatrixState({ matrixMode: false, hasMatrixTester: false })
-      // setResettingKeyboard(false) // These two are not defined in the original code.
-      // setConfirmingResetKeyboard(false) // I will comment them out to avoid errors.
-      // setResetBusy(false)
-      setDeviceLoadError(null)
-      setHubConnected(false)
-      setHubMyPosts([])
-      setHubKeyboardPosts([])
-    }
-  }, [device.disconnectDevice, keyboard.reset])
-
-  const handleConnect = useCallback(
-    async (dev: DeviceInfo) => {
-      setDummyError(null)
-      setDeviceLoadError(null)
-      const success = await device.connectDevice(dev)
-      if (success) {
-        const uid = await keyboard.reload()
-        if (uid) {
-          await devicePrefs.applyDevicePrefs(uid)
-        } else {
-          try { await handleDisconnect() } catch { /* cleanup best-effort */ }
-          setDeviceLoadError(t('error.notVialCompatible'))
-        }
-      }
-    },
-    [device, keyboard, devicePrefs, handleDisconnect, t],
-  )
-
-  const handleLock = useCallback(async () => {
-    await window.vialAPI.lock()
-    await keyboard.refreshUnlockStatus()
-  }, [keyboard])
-
-  useEffect(() => {
-    async function checkFakeDevice() {
-      const flags = await window.vialAPI.getDebugFlags()
-      if (flags.DEBUG_FAKE_DEVICE) {
-        setDummyError(null)
-        device.connectDummy()
-        keyboard.loadDummy(FAKE_KEYCHRON_JSON)
-      }
-    }
-    checkFakeDevice()
-  }, [])
-
-  useAutoLock({
-    unlocked: keyboard.unlockStatus.unlocked,
-    autoLockMinutes: devicePrefs.autoLockTime,
-    activityCounter: keyboard.activityCount,
-    suspended: matrixState.matrixMode || typingTestMode,
-    onLock: handleLock,
-  })
-
-  const handleOpenDataModal = useCallback(() => {
-    setShowDataModal(true)
-    if (!hasFavSyncedForDataRef.current &&
-        sync.config.autoSync && sync.authStatus.authenticated && sync.hasPassword && !deviceSyncing) {
-      hasFavSyncedForDataRef.current = true
-      void sync.syncNow('download', 'favorites').catch(() => { hasFavSyncedForDataRef.current = false })
-    }
-  }, [sync.config.autoSync, sync.authStatus.authenticated, sync.hasPassword, sync.syncNow, deviceSyncing])
-
-  const handleLoadDummy = useCallback(async () => {
-    setDummyError(null)
-    try {
-      const result = await window.vialAPI.sideloadJson(t('app.loadDummy'))
-      if (!result.success) {
-        if (result.error !== 'cancelled') setDummyError(t('error.sideloadFailed'))
-        return
-      }
-      if (!isKeyboardDefinition(result.data)) {
-        setDummyError(t('error.sideloadInvalidDefinition'))
-        return
-      }
-      device.connectDummy()
-      keyboard.loadDummy(result.data)
-    } catch {
-      setDummyError(t('error.sideloadFailed'))
-    }
-  }, [device, keyboard, t])
-
-  // Not connected: show device selector
+  // --- Disconnected view ---
   if (!device.connectedDevice) {
     return (
       <>
@@ -1218,15 +286,22 @@ export function App() {
         <DeviceSelector
           devices={device.devices}
           connecting={device.connecting}
-          error={dummyError || device.error}
-          onConnect={handleConnect}
-          onLoadDummy={handleLoadDummy}
-          onOpenSettings={() => setShowSettings(true)}
-          onOpenData={handleOpenDataModal}
+          error={lifecycle.fileLoadError || device.error}
+          onConnect={lifecycle.handleConnect}
+          onLoadDummy={lifecycle.handleLoadDummy}
+          onLoadPipetteFile={lifecycle.handleLoadPipetteFile}
+          pipetteFileKeyboards={lifecycle.pipetteFileKeyboards}
+          pipetteFileEntries={lifecycle.pipetteFileEntries}
+          connectedDeviceNames={device.devices.map((d) => d.productName)}
+          onOpenPipetteFileEntry={lifecycle.handleOpenPipetteFileEntry}
+          onRefreshPipetteFileEntries={lifecycle.refreshPipetteFileEntries}
+          onOpenSettings={() => lifecycle.setShowSettings(true)}
+          onOpenData={lifecycle.handleOpenDataModal}
           syncStatus={sync.syncStatus}
-          deviceWarning={deviceLoadError}
+          deviceWarning={lifecycle.deviceLoadError}
+          onClearError={lifecycle.clearFileLoadError}
         />
-        {showSettings && (
+        {lifecycle.showSettings && (
           <SettingsModal
             sync={sync}
             theme={themeCtx.theme}
@@ -1245,37 +320,40 @@ export function App() {
             onDefaultQuickSelectChange={devicePrefs.setDefaultQuickSelect}
             autoLockTime={devicePrefs.autoLockTime}
             onAutoLockTimeChange={devicePrefs.setAutoLockTime}
-            onResetStart={() => setResettingData(true)}
-            onResetEnd={() => setResettingData(false)}
-            onClose={() => setShowSettings(false)}
+            maxKeymapHistory={appConfig.config.maxKeymapHistory}
+            onMaxKeymapHistoryChange={(n) => appConfig.set('maxKeymapHistory', n)}
+            onClose={() => lifecycle.setShowSettings(false)}
             hubEnabled={appConfig.config.hubEnabled}
             onHubEnabledChange={(enabled) => appConfig.set('hubEnabled', enabled)}
             hubAuthenticated={sync.authStatus.authenticated}
-            hubDisplayName={hubDisplayName}
-            onHubDisplayNameChange={handleUpdateHubDisplayName}
-            hubAuthConflict={hubAuthConflict}
-            onResolveAuthConflict={handleResolveAuthConflict}
-            hubAccountDeactivated={hubAccountDeactivated}
+            hubDisplayName={hub.hubDisplayName}
+            onHubDisplayNameChange={hub.handleUpdateHubDisplayName}
+            hubAuthConflict={hub.hubAuthConflict}
+            onResolveAuthConflict={hub.handleResolveAuthConflict}
+            hubAccountDeactivated={hub.hubAccountDeactivated}
           />
         )}
-        {showDataModal && (
+        {lifecycle.showDataModal && (
           <DataModal
-            onClose={() => setShowDataModal(false)}
+            onClose={() => lifecycle.setShowDataModal(false)}
+            sync={sync}
             hubEnabled={appConfig.config.hubEnabled}
             hubAuthenticated={sync.authStatus.authenticated}
-            hubPosts={hubMyPosts}
-            hubPostsPagination={hubMyPostsPagination}
-            onHubRefresh={refreshHubMyPosts}
-            onHubRename={handleHubRenamePost}
-            onHubDelete={handleHubDeletePost}
-            hubOrigin={hubOrigin}
-            hubNeedsDisplayName={hubReady && !hubCanUpload}
-            hubFavUploading={favHubUploading}
-            hubFavUploadResult={favHubUploadResult}
-            onFavUploadToHub={hubCanUpload ? handleFavUploadToHub : undefined}
-            onFavUpdateOnHub={hubCanUpload ? handleFavUpdateOnHub : undefined}
-            onFavRemoveFromHub={hubReady ? handleFavRemoveFromHub : undefined}
-            onFavRenameOnHub={hubReady ? handleFavRenameOnHub : undefined}
+            hubPosts={hub.hubMyPosts}
+            hubPostsPagination={hub.hubMyPostsPagination}
+            onHubRefresh={hub.refreshHubMyPosts}
+            onHubRename={hub.handleHubRenamePost}
+            onHubDelete={hub.handleHubDeletePost}
+            hubOrigin={hub.hubOrigin}
+            hubNeedsDisplayName={hub.hubReady && !hub.hubCanUpload}
+            hubFavUploading={hub.favHubUploading}
+            hubFavUploadResult={hub.favHubUploadResult}
+            onFavUploadToHub={hub.hubCanUpload ? hub.handleFavUploadToHub : undefined}
+            onFavUpdateOnHub={hub.hubCanUpload ? hub.handleFavUpdateOnHub : undefined}
+            onFavRemoveFromHub={hub.hubReady ? hub.handleFavRemoveFromHub : undefined}
+            onFavRenameOnHub={hub.hubReady ? hub.handleFavRenameOnHub : undefined}
+            onResetStart={() => lifecycle.setResettingData(true)}
+            onResetEnd={() => lifecycle.setResettingData(false)}
           />
         )}
         {startupNotification.visible && (
@@ -1288,38 +366,40 @@ export function App() {
     )
   }
 
+  // --- Connected view ---
   const api = window.vialAPI
 
   const importBtnClass = 'rounded-lg border border-edge bg-surface/30 px-3 py-1.5 text-xs font-semibold text-content-muted hover:text-content hover:border-content-muted'
 
   const toolsExtra = (
     <>
-      {/* Import */}
-      <div className={ROW_CLASS} data-testid="overlay-import-row">
-        <span className="text-[13px] font-medium text-content">{t('layoutStore.import')}</span>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className={importBtnClass}
-            onClick={handleImportVil}
-            disabled={fileIO.saving || fileIO.loading}
-            data-testid="overlay-import-vil"
-          >
-            {t('fileIO.loadLayout')}
-          </button>
-          {!device.isDummy && (
+      {(fileHandlers.handleImportVil || (!device.isDummy && sideload.sideloadJson)) && (
+        <div className={ROW_CLASS} data-testid="overlay-import-row">
+          <span className="text-[13px] font-medium text-content">{t('layoutStore.import')}</span>
+          <div className="flex gap-2">
             <button
               type="button"
               className={importBtnClass}
-              onClick={sideload.sideloadJson}
+              onClick={fileHandlers.handleImportVil}
               disabled={fileIO.saving || fileIO.loading}
-              data-testid="overlay-sideload-json"
+              data-testid="overlay-import-vil"
             >
-              {t('fileIO.sideloadJson')}
+              {t('fileIO.loadLayout')}
             </button>
-          )}
+            {!device.isDummy && sideload.sideloadJson && (
+              <button
+                type="button"
+                className={importBtnClass}
+                onClick={sideload.sideloadJson}
+                disabled={fileIO.saving || fileIO.loading}
+                data-testid="overlay-sideload-json"
+              >
+                {t('fileIO.sideloadJson')}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   )
 
@@ -1329,48 +409,54 @@ export function App() {
         entries={layoutStore.entries}
         loading={layoutStore.loading}
         saving={layoutStore.saving}
-        fileStatus={fileStatus}
-        isDummy={device.isDummy}
-        defaultSaveLabel={lastLoadedLabel}
-        onSave={layoutStore.saveLayout}
+        fileStatus={fileHandlers.fileStatus}
+        isDummy={effectiveIsDummy}
+        defaultSaveLabel={lifecycle.lastLoadedLabel}
+        onSave={async (label: string) => {
+          const id = await layoutStore.saveLayout(label)
+          if (id) lifecycle.pipetteFileSavedActivityRef.current = keyboard.activityCount
+          return id
+        }}
         onLoad={handleLoadEntry}
-        onRename={handleRenameEntry}
-        onDelete={handleDeleteEntry}
-        onExportVil={handleExportVil}
-        onExportKeymapC={handleExportKeymapC}
-        onExportPdf={handleExportPdf}
-        onExportEntryVil={!device.isDummy ? handleExportEntryVil : undefined}
-        onExportEntryKeymapC={!device.isDummy ? handleExportEntryKeymapC : undefined}
-        onExportEntryPdf={!device.isDummy ? handleExportEntryPdf : undefined}
-        onOverwriteSave={handleOverwriteSave}
-        onUploadToHub={hubCanUpload ? handleUploadToHub : undefined}
-        onUpdateOnHub={hubCanUpload ? handleUpdateOnHub : undefined}
-        onRemoveFromHub={hubReady ? handleRemoveFromHub : undefined}
-        onReuploadToHub={hubCanUpload ? handleReuploadToHub : undefined}
-        onDeleteOrphanedHubPost={hubReady ? handleDeleteOrphanedHubPost : undefined}
+        onRename={hub.handleRenameEntry}
+        onDelete={hub.handleDeleteEntry}
+        onExportVil={fileHandlers.handleExportVil}
+        onExportKeymapC={fileHandlers.handleExportKeymapC}
+        onExportPdf={fileHandlers.handleExportPdf}
+        onExportEntryVil={!effectiveIsDummy ? entryOps.handleExportEntryVil : undefined}
+        onExportEntryKeymapC={!effectiveIsDummy ? entryOps.handleExportEntryKeymapC : undefined}
+        onExportEntryPdf={!effectiveIsDummy ? entryOps.handleExportEntryPdf : undefined}
+        onOverwriteSave={hub.handleOverwriteSave}
+        onUploadToHub={hub.hubCanUpload ? hub.handleUploadToHub : undefined}
+        onUpdateOnHub={hub.hubCanUpload ? hub.handleUpdateOnHub : undefined}
+        onRemoveFromHub={hub.hubReady ? hub.handleRemoveFromHub : undefined}
+        onReuploadToHub={hub.hubCanUpload ? hub.handleReuploadToHub : undefined}
+        onDeleteOrphanedHubPost={hub.hubReady ? hub.handleDeleteOrphanedHubPost : undefined}
         keyboardName={deviceName}
-        hubOrigin={hubReady ? hubOrigin : undefined}
-        hubMyPosts={hubReady ? hubMyPosts : undefined}
-        hubKeyboardPosts={hubReady ? hubKeyboardPosts : undefined}
-        hubNeedsDisplayName={hubReady && !hubCanUpload}
-        hubUploading={hubUploading}
-        hubUploadResult={hubUploadResult}
+        hubOrigin={hub.hubReady ? hub.hubOrigin : undefined}
+        hubMyPosts={hub.hubReady ? hub.hubMyPosts : undefined}
+        hubKeyboardPosts={hub.hubReady ? hub.hubKeyboardPosts : undefined}
+        hubNeedsDisplayName={hub.hubReady && !hub.hubCanUpload}
+        hubUploading={hub.hubUploading}
+        hubUploadResult={hub.hubUploadResult}
         fileDisabled={fileIO.saving || fileIO.loading}
         listClassName="overflow-y-auto"
       />
     </div>
   )
 
-  // Connected: show editor shell
-  // KeymapEditor stays mounted (even during loading) across keyboard.reload(),
-  // preserving state (e.g. pendingMatrix for deferred matrix mode entry after unlock).
   return (
     <div className="relative flex h-screen flex-col bg-surface text-content">
       {!keyboard.loading && (
         <>
           {device.isDummy && (
-            <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-warning">
-              {t('error.dummyMode')}
+            <div className="flex items-center justify-between border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-warning">
+              <span>{device.isPipetteFile ? t('error.pipetteFileMode') : t('error.dummyMode')}</span>
+              {device.isPipetteFile && keyboard.activityCount > lifecycle.pipetteFileSavedActivityRef.current && (
+                <span className="text-danger" data-testid="unsaved-indicator">
+                  {t('error.unsavedChanges')}
+                </span>
+              )}
             </div>
           )}
 
@@ -1394,17 +480,17 @@ export function App() {
         </>
       )}
 
-      {(keyboard.loading || deviceSyncing || phase2SyncPending) && (
+      {(keyboard.loading || deviceSyncing || phase2SyncPending || migration.migrationChecking || migration.migrating) && (
         <ConnectingOverlay
           deviceName={device.connectedDevice.productName || 'Unknown'}
           deviceId={formatDeviceId(device.connectedDevice)}
-          loadingProgress={keyboard.loading ? keyboard.loadingProgress : undefined}
+          loadingProgress={keyboard.loading ? keyboard.loadingProgress : migration.migrating ? migration.migrationProgress ?? undefined : undefined}
           syncProgress={deviceSyncing ? sync.progress : undefined}
-          syncOnly={!keyboard.loading}
+          syncOnly={!keyboard.loading && !migration.migrating && !migration.migrationChecking}
         />
       )}
 
-      {resettingData && (
+      {lifecycle.resettingData && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-surface" data-testid="resetting-overlay">
           <div className="flex flex-col items-center gap-4">
             <div className="h-1 w-48 overflow-hidden rounded bg-surface-dim">
@@ -1421,10 +507,11 @@ export function App() {
         <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4" data-testid="editor-content">
           <KeymapEditor
             ref={keymapEditorRef}
+            keyboardUid={keyboard.uid}
             layout={keyboard.layout}
             layers={keyboard.layers}
-            currentLayer={currentLayer}
-            onLayerChange={setCurrentLayer}
+            currentLayer={editorUI.currentLayer}
+            onLayerChange={editorUI.setCurrentLayer}
             keymap={keyboard.keymap}
             encoderLayout={keyboard.encoderLayout}
             encoderCount={keyboard.encoderCount}
@@ -1442,8 +529,8 @@ export function App() {
             getMatrixState={!device.isDummy && keyboard.vialProtocol >= 3 ? api.getMatrixState : undefined}
             unlocked={keyboard.unlockStatus.unlocked}
             onUnlock={(options) => {
-              setShowUnlockDialog(true)
-              setUnlockMacroWarning(!!options?.macroWarning)
+              editorUI.setShowUnlockDialog(true)
+              editorUI.setUnlockMacroWarning(!!options?.macroWarning)
             }}
             tapDanceEntries={keyboard.tapDanceEntries}
             onSetTapDanceEntry={keyboard.setTapDanceEntry}
@@ -1453,17 +540,18 @@ export function App() {
             vialProtocol={keyboard.vialProtocol}
             parsedMacros={keyboard.parsedMacros}
             onSaveMacros={keyboard.setMacroBuffer}
-            tapHoldSupported={tapHoldSupported}
-            mouseKeysSupported={mouseKeysSupported}
-            magicSupported={magicSupported}
-            graveEscapeSupported={graveEscapeSupported}
-            autoShiftSupported={autoShiftSupported}
-            oneShotKeysSupported={oneShotKeysSupported}
-            supportedQsids={hasIntegratedSettings ? keyboard.supportedQsids : undefined}
-            qmkSettingsGet={hasIntegratedSettings ? api.qmkSettingsGet : undefined}
-            qmkSettingsSet={hasIntegratedSettings ? api.qmkSettingsSet : undefined}
-            qmkSettingsReset={hasIntegratedSettings ? api.qmkSettingsReset : undefined}
-            onSettingsUpdate={hasIntegratedSettings ? keyboard.updateQmkSettingsValue : undefined}
+            tapHoldSupported={editorUI.tapHoldSupported}
+            mouseKeysSupported={editorUI.mouseKeysSupported}
+            magicSupported={editorUI.magicSupported}
+            graveEscapeSupported={editorUI.graveEscapeSupported}
+            autoShiftSupported={editorUI.autoShiftSupported}
+            oneShotKeysSupported={editorUI.oneShotKeysSupported}
+            comboSettingsSupported={editorUI.comboSettingsSupported}
+            supportedQsids={editorUI.hasAnySettings ? keyboard.supportedQsids : undefined}
+            qmkSettingsGet={editorUI.hasAnySettings ? (device.isPipetteFile ? keyboard.pipetteFileQmkSettingsGet : api.qmkSettingsGet) : undefined}
+            qmkSettingsSet={editorUI.hasAnySettings ? (device.isPipetteFile ? keyboard.pipetteFileQmkSettingsSet : api.qmkSettingsSet) : undefined}
+            qmkSettingsReset={editorUI.hasAnySettings ? (device.isPipetteFile ? keyboard.pipetteFileQmkSettingsReset : api.qmkSettingsReset) : undefined}
+            onSettingsUpdate={editorUI.hasAnySettings ? keyboard.updateQmkSettingsValue : undefined}
             autoAdvance={devicePrefs.autoAdvance}
             onAutoAdvanceChange={devicePrefs.setAutoAdvance}
             basicViewType={devicePrefs.basicViewType}
@@ -1474,37 +562,29 @@ export function App() {
             onQuickSelectChange={devicePrefs.setQuickSelect}
             keyboardLayout={devicePrefs.layout}
             onKeyboardLayoutChange={devicePrefs.setLayout}
-            onLock={handleLock}
-            onMatrixModeChange={handleMatrixModeChange}
-            onOpenLighting={lightingSupported ? () => setShowLightingModal(true) : undefined}
-            onOpenKeychron={keychronSupported ? () => { keyboard.refreshKeychron(); setShowKeychronModal(true) } : undefined}
-            onOpenKeychronRgb={(keyboard.keychron?.hasRgb && keyboard.keychron.rgb) ? () => setShowKeychronRgbModal(true) : undefined}
-            onOpenKeychronFlasher={keychronSupported ? () => setShowKeychronFlasherModal(true) : undefined}
-            onOpenKeychronAnalog={keyboard.keychron?.hasAnalog ? handleOpenKeychronAnalog : undefined}
-            onOpenKeychronSocd={keyboard.keychron?.hasSnapClick ? () => setShowKeychronSocdModal(true) : undefined}
-            comboEntries={comboSupported ? keyboard.comboEntries : undefined}
-            onOpenCombo={comboSupported ? (index?: number) => { setComboInitialIndex(index); setShowComboModal(true) } : undefined}
-            keyOverrideEntries={keyOverrideSupported ? keyboard.keyOverrideEntries : undefined}
-            onOpenKeyOverride={keyOverrideSupported ? (index?: number) => { setKeyOverrideInitialIndex(index); setShowKeyOverrideModal(true) } : undefined}
-            altRepeatKeyEntries={altRepeatKeySupported ? keyboard.altRepeatKeyEntries : undefined}
-            onOpenAltRepeatKey={altRepeatKeySupported ? (index?: number) => { setAltRepeatKeyInitialIndex(index); setShowAltRepeatKeyModal(true) } : undefined}
-            layerNames={!device.isDummy ? keyboard.layerNames : undefined}
-            onSetLayerName={!device.isDummy ? keyboard.setLayerName : undefined}
+            onLock={lifecycle.handleLock}
+            onMatrixModeChange={editorUI.handleMatrixModeChange}
+            onOpenLighting={editorUI.lightingSupported ? () => editorUI.setShowLightingModal(true) : undefined}
+            comboEntries={editorUI.comboSupported ? keyboard.comboEntries : undefined}
+            onOpenCombo={editorUI.comboSupported ? (index: number) => editorUI.setComboInitialIndex(index) : undefined}
+            onSetComboEntry={editorUI.comboSupported ? keyboard.setComboEntry : undefined}
+            keyOverrideEntries={editorUI.keyOverrideSupported ? keyboard.keyOverrideEntries : undefined}
+            onOpenKeyOverride={editorUI.keyOverrideSupported ? (index: number) => editorUI.setKeyOverrideInitialIndex(index) : undefined}
+            onSetKeyOverrideEntry={editorUI.keyOverrideSupported ? keyboard.setKeyOverrideEntry : undefined}
+            altRepeatKeyEntries={editorUI.altRepeatKeySupported ? keyboard.altRepeatKeyEntries : undefined}
+            onOpenAltRepeatKey={editorUI.altRepeatKeySupported ? (index: number) => editorUI.setAltRepeatKeyInitialIndex(index) : undefined}
+            onSetAltRepeatKeyEntry={editorUI.altRepeatKeySupported ? keyboard.setAltRepeatKeyEntry : undefined}
+            layerNames={!effectiveIsDummy ? keyboard.layerNames : undefined}
+            onSetLayerName={!effectiveIsDummy ? keyboard.setLayerName : undefined}
             toolsExtra={toolsExtra}
             dataPanel={dataPanel}
-            onOverlayOpen={!device.isDummy ? layoutStore.refreshEntries : undefined}
+            onOverlayOpen={!effectiveIsDummy ? layoutStore.refreshEntries : undefined}
             layerPanelOpen={devicePrefs.layerPanelOpen}
             onLayerPanelOpenChange={devicePrefs.setLayerPanelOpen}
-            scale={keymapScale}
-            onScaleChange={adjustKeymapScale}
-            dualMode={dualMode}
-            onDualModeChange={handleDualModeChange}
-            activePane={activePane}
-            onActivePaneChange={setActivePane}
-            primaryLayer={primaryLayer}
-            secondaryLayer={secondaryLayer}
-            typingTestMode={typingTestMode}
-            onTypingTestModeChange={handleTypingTestModeChange}
+            scale={editorUI.keymapScale}
+            onScaleChange={editorUI.adjustKeymapScale}
+            typingTestMode={editorUI.typingTestMode}
+            onTypingTestModeChange={editorUI.handleTypingTestModeChange}
             onSaveTypingTestResult={devicePrefs.addTypingTestResult}
             typingTestHistory={devicePrefs.typingTestResults}
             typingTestConfig={devicePrefs.typingTestConfig}
@@ -1512,17 +592,20 @@ export function App() {
             onTypingTestConfigChange={devicePrefs.setTypingTestConfig}
             onTypingTestLanguageChange={devicePrefs.setTypingTestLanguage}
             deviceName={deviceName}
-            isDummy={device.isDummy}
-            onExportLayoutPdfAll={handleExportLayoutPdfAll}
-            onExportLayoutPdfCurrent={handleExportLayoutPdfCurrent}
-            favHubOrigin={hubReady ? hubOrigin : undefined}
-            favHubNeedsDisplayName={hubReady && !hubCanUpload}
-            favHubUploading={favHubUploading}
-            favHubUploadResult={favHubUploadResult}
-            onFavUploadToHub={hubCanUpload ? handleFavUploadToHub : undefined}
-            onFavUpdateOnHub={hubCanUpload ? handleFavUpdateOnHub : undefined}
-            onFavRemoveFromHub={hubReady ? handleFavRemoveFromHub : undefined}
-            onFavRenameOnHub={hubReady ? handleFavRenameOnHub : undefined}
+            isDummy={effectiveIsDummy}
+            onExportLayoutPdfAll={fileHandlers.handleExportLayoutPdfAll}
+            onExportLayoutPdfCurrent={fileHandlers.handleExportLayoutPdfCurrent}
+            favHubOrigin={hub.hubReady ? hub.hubOrigin : undefined}
+            favHubNeedsDisplayName={hub.hubReady && !hub.hubCanUpload}
+            favHubUploading={hub.favHubUploading}
+            favHubUploadResult={hub.favHubUploadResult}
+            onFavUploadToHub={hub.hubCanUpload ? hub.handleFavUploadToHub : undefined}
+            onFavUpdateOnHub={hub.hubCanUpload ? hub.handleFavUpdateOnHub : undefined}
+            onFavRemoveFromHub={hub.hubReady ? hub.handleFavRemoveFromHub : undefined}
+            onFavRenameOnHub={hub.hubReady ? hub.handleFavRenameOnHub : undefined}
+            devices={device.devices}
+            connectedDevice={device.connectedDevice}
+            onDeviceListActiveChange={device.setDeviceListActive}
           />
         </div>
 
@@ -1535,42 +618,49 @@ export function App() {
 
       <StatusBar
         deviceName={device.connectedDevice.productName || 'Unknown'}
-        loadedLabel={lastLoadedLabel}
+        loadedLabel={lifecycle.lastLoadedLabel}
         autoAdvance={devicePrefs.autoAdvance}
         unlocked={keyboard.unlockStatus.unlocked}
         syncStatus={sync.syncStatus}
-        hubConnected={sync.authStatus.authenticated ? hubConnected : undefined}
-        matrixMode={matrixState.matrixMode}
-        typingTestMode={typingTestMode}
-        hasMatrixTester={matrixState.hasMatrixTester}
-        comboActive={comboSupported && keyboard.comboEntries.some((e) => e.output !== 0)}
-        altRepeatKeyActive={altRepeatKeySupported && keyboard.altRepeatKeyEntries.some((e) => e.enabled)}
-        keyOverrideActive={keyOverrideSupported && keyboard.keyOverrideEntries.some((e) => e.enabled)}
+        hubConnected={sync.authStatus.authenticated ? hub.hubConnected : undefined}
+        matrixMode={editorUI.matrixState.matrixMode}
+        typingTestMode={editorUI.typingTestMode}
+        hasMatrixTester={editorUI.matrixState.hasMatrixTester}
+        comboActive={editorUI.comboSupported && keyboard.comboEntries.some((e) => e.output !== 0)}
+        altRepeatKeyActive={editorUI.altRepeatKeySupported && keyboard.altRepeatKeyEntries.some((e) => e.enabled)}
+        keyOverrideActive={editorUI.keyOverrideSupported && keyboard.keyOverrideEntries.some((e) => e.enabled)}
         onTypingTestModeChange={() => keymapEditorRef.current?.toggleTypingTest()}
-        onDisconnect={handleDisconnect}
+        onDisconnect={lifecycle.handleDisconnect}
       />
 
-      {showUnlockDialog && !device.isDummy && (
+      {editorUI.showUnlockDialog && !device.isDummy && (
         <UnlockDialog
           keys={keyboard.layout?.keys ?? []}
           unlockKeys={keyboard.unlockStatus.keys}
           layoutOptions={decodedLayoutOptions}
-          unlockStart={api.unlockStart}
+          unlockStart={() => { device.setPollSuspended(true); return api.unlockStart() }}
           unlockPoll={api.unlockPoll}
           onComplete={async () => {
-            setShowUnlockDialog(false)
-            setUnlockMacroWarning(false)
+            device.setPollSuspended(false)
+            editorUI.setShowUnlockDialog(false)
+            editorUI.setUnlockMacroWarning(false)
             await keyboard.refreshUnlockStatus()
           }}
-          macroWarning={unlockMacroWarning}
+          onDisconnect={() => {
+            device.setPollSuspended(false)
+            editorUI.setShowUnlockDialog(false)
+            editorUI.setUnlockMacroWarning(false)
+            keyboard.rejectPendingUnlock()
+          }}
+          macroWarning={editorUI.unlockMacroWarning}
         />
       )}
 
-      {showLightingModal && lightingSupported && (
+      {editorUI.showLightingModal && editorUI.lightingSupported && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           data-testid="lighting-modal-backdrop"
-          onClick={() => setShowLightingModal(false)}
+          onClick={() => editorUI.setShowLightingModal(false)}
         >
           <div
             className="w-[500px] max-w-[90vw] max-h-[80vh] overflow-y-auto rounded-lg bg-surface-alt p-6 shadow-xl"
@@ -1578,7 +668,7 @@ export function App() {
           >
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold">{t('editor.lighting.title')}</h3>
-              <ModalCloseButton testid="lighting-modal-close" onClick={() => setShowLightingModal(false)} />
+              <ModalCloseButton testid="lighting-modal-close" onClick={() => editorUI.setShowLightingModal(false)} />
             </div>
             <RGBConfigurator
               lightingType={keyboard.definition?.lighting}
@@ -1614,186 +704,76 @@ export function App() {
         </div>
       )}
 
-      {showKeychronRgbModal && keyboard.keychron?.hasRgb && keyboard.keychron.rgb && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowKeychronRgbModal(false)}
-        >
-          <div
-            className="flex h-[80vh] w-[90vw] max-w-4xl flex-col overflow-hidden rounded-lg bg-surface-alt shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between shrink-0 px-6 py-4 border-b border-edge bg-surface">
-              <h3 className="text-lg font-semibold">{t('keymap.keychronRgb', 'Keychron RGB')}</h3>
-              <ModalCloseButton testid="keychron-rgb-modal-close" onClick={() => setShowKeychronRgbModal(false)} />
-            </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              <KeychronRGB 
-                rgb={keyboard.keychron.rgb} 
-                ledMatrix={keyboard.keychron.rgb.ledMatrix}
-                keys={keyboard.layout?.keys ?? []}
-                vialRGBMode={keyboard.vialRGBMode}
-                vialRGBSpeed={keyboard.vialRGBSpeed}
-                vialRGBHue={keyboard.vialRGBHue}
-                vialRGBSat={keyboard.vialRGBSat}
-                vialRGBVal={keyboard.vialRGBVal}
-                vialRGBMaxBrightness={keyboard.vialRGBMaxBrightness}
-                vialRGBSupported={keyboard.vialRGBSupported}
-                onSetVialRGBMode={keyboard.setVialRGBMode}
-                onSetVialRGBSpeed={keyboard.setVialRGBSpeed}
-                onSetVialRGBColor={keyboard.setVialRGBColor}
-                onSetVialRGBBrightness={keyboard.setVialRGBBrightness}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showKeychronFlasherModal && (
-        <KeychronDfuFlasher
-          isOpen={showKeychronFlasherModal}
-          onClose={() => setShowKeychronFlasherModal(false)}
-          onSaveBackup={handleSilentBackup}
-          unlocked={keyboard?.unlockStatus?.unlocked ?? false}
-          onUnlock={() => {
-            setShowUnlockDialog(true)
-            setUnlockMacroWarning(false)
-          }}
-          setSuppressDisconnect={device.setSuppressDisconnect}
-          originalDevice={device.connectedDevice}
-          connectDevice={device.connectDevice}
-          onReload={keyboard.reload}
-        />
-      )}
-
-      {showKeychronAnalogModal && keychronAnalogData && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowKeychronAnalogModal(false)}
-        >
-          <div
-            className="flex h-[85vh] w-[90vw] max-w-5xl flex-col overflow-hidden rounded-lg bg-surface-alt shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between shrink-0 px-6 py-4 border-b border-edge bg-surface">
-              <h3 className="text-lg font-semibold">{t('keychron.analog.title', 'Analog Matrix (HE)')}</h3>
-              <ModalCloseButton testid="keychron-analog-modal-close" onClick={() => setShowKeychronAnalogModal(false)} />
-            </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              <KeychronAnalog
-                analog={keychronAnalogData}
-                keys={keyboard.layout?.keys ?? []}
-                rows={keyboard.rows}
-                cols={keyboard.cols}
-                keymap={keyboard.keymap}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showKeychronSocdModal && keyboard.keychron?.hasSnapClick && (
-        <KeychronSocd
-          keychron={keyboard.keychron}
-          keys={keyboard.layout?.keys ?? []}
-          keymap={keyboard.keymap}
-          onSettingChanged={keyboard.refreshKeychron}
-          onClose={() => setShowKeychronSocdModal(false)}
-        />
-      )}
-
-      {showComboModal && comboSupported && (
+      {editorUI.comboSupported && editorUI.comboInitialIndex !== null && (
         <ComboPanelModal
           entries={keyboard.comboEntries}
           onSetEntry={keyboard.setComboEntry}
-          initialIndex={comboInitialIndex}
+          initialIndex={editorUI.comboInitialIndex}
           unlocked={keyboard.unlockStatus.unlocked}
-          onUnlock={() => setShowUnlockDialog(true)}
-          qmkSettingsGet={comboTimeoutSupported ? api.qmkSettingsGet : undefined}
-          qmkSettingsSet={comboTimeoutSupported ? api.qmkSettingsSet : undefined}
-          onSettingsUpdate={comboTimeoutSupported ? keyboard.updateQmkSettingsValue : undefined}
+          onUnlock={() => editorUI.setShowUnlockDialog(true)}
           tapDanceEntries={keyboard.tapDanceEntries}
           deserializedMacros={deserializedMacros}
           quickSelect={devicePrefs.quickSelect}
           splitKeyMode={devicePrefs.splitKeyMode}
           basicViewType={devicePrefs.basicViewType}
-          onClose={() => { setShowComboModal(false); setComboInitialIndex(undefined) }}
-          hubOrigin={hubReady ? hubOrigin : undefined}
-          hubNeedsDisplayName={hubReady && !hubCanUpload}
-          hubUploading={favHubUploading}
-          hubUploadResult={favHubUploadResult}
-          onUploadToHub={hubCanUpload ? (entryId) => handleFavUploadToHub('combo', entryId) : undefined}
-          onUpdateOnHub={hubCanUpload ? (entryId) => handleFavUpdateOnHub('combo', entryId) : undefined}
-          onRemoveFromHub={hubReady ? (entryId) => handleFavRemoveFromHub('combo', entryId) : undefined}
-          onRenameOnHub={hubReady ? handleFavRenameOnHub : undefined}
+          onClose={() => editorUI.setComboInitialIndex(null)}
+          hubOrigin={hub.hubReady ? hub.hubOrigin : undefined}
+          hubNeedsDisplayName={hub.hubReady && !hub.hubCanUpload}
+          hubUploading={hub.favHubUploading}
+          hubUploadResult={hub.favHubUploadResult}
+          onUploadToHub={hub.hubCanUpload ? (entryId) => hub.handleFavUploadToHub('combo', entryId) : undefined}
+          onUpdateOnHub={hub.hubCanUpload ? (entryId) => hub.handleFavUpdateOnHub('combo', entryId) : undefined}
+          onRemoveFromHub={hub.hubReady ? (entryId) => hub.handleFavRemoveFromHub('combo', entryId) : undefined}
+          onRenameOnHub={hub.hubReady ? hub.handleFavRenameOnHub : undefined}
         />
       )}
 
-      {showAltRepeatKeyModal && altRepeatKeySupported && (
+      {editorUI.altRepeatKeySupported && editorUI.altRepeatKeyInitialIndex !== null && (
         <AltRepeatKeyPanelModal
           entries={keyboard.altRepeatKeyEntries}
           onSetEntry={keyboard.setAltRepeatKeyEntry}
-          initialIndex={altRepeatKeyInitialIndex}
+          initialIndex={editorUI.altRepeatKeyInitialIndex}
           unlocked={keyboard.unlockStatus.unlocked}
-          onUnlock={() => setShowUnlockDialog(true)}
+          onUnlock={() => editorUI.setShowUnlockDialog(true)}
           tapDanceEntries={keyboard.tapDanceEntries}
           deserializedMacros={deserializedMacros}
           quickSelect={devicePrefs.quickSelect}
           splitKeyMode={devicePrefs.splitKeyMode}
           basicViewType={devicePrefs.basicViewType}
-          onClose={() => { setShowAltRepeatKeyModal(false); setAltRepeatKeyInitialIndex(undefined) }}
-          hubOrigin={hubReady ? hubOrigin : undefined}
-          hubNeedsDisplayName={hubReady && !hubCanUpload}
-          hubUploading={favHubUploading}
-          hubUploadResult={favHubUploadResult}
-          onUploadToHub={hubCanUpload ? (entryId) => handleFavUploadToHub('altRepeatKey', entryId) : undefined}
-          onUpdateOnHub={hubCanUpload ? (entryId) => handleFavUpdateOnHub('altRepeatKey', entryId) : undefined}
-          onRemoveFromHub={hubReady ? (entryId) => handleFavRemoveFromHub('altRepeatKey', entryId) : undefined}
-          onRenameOnHub={hubReady ? handleFavRenameOnHub : undefined}
+          onClose={() => editorUI.setAltRepeatKeyInitialIndex(null)}
+          hubOrigin={hub.hubReady ? hub.hubOrigin : undefined}
+          hubNeedsDisplayName={hub.hubReady && !hub.hubCanUpload}
+          hubUploading={hub.favHubUploading}
+          hubUploadResult={hub.favHubUploadResult}
+          onUploadToHub={hub.hubCanUpload ? (entryId) => hub.handleFavUploadToHub('altRepeatKey', entryId) : undefined}
+          onUpdateOnHub={hub.hubCanUpload ? (entryId) => hub.handleFavUpdateOnHub('altRepeatKey', entryId) : undefined}
+          onRemoveFromHub={hub.hubReady ? (entryId) => hub.handleFavRemoveFromHub('altRepeatKey', entryId) : undefined}
+          onRenameOnHub={hub.hubReady ? hub.handleFavRenameOnHub : undefined}
         />
       )}
 
-      {showKeyOverrideModal && keyOverrideSupported && (
+      {editorUI.keyOverrideSupported && editorUI.keyOverrideInitialIndex !== null && (
         <KeyOverridePanelModal
           entries={keyboard.keyOverrideEntries}
           onSetEntry={keyboard.setKeyOverrideEntry}
-          initialIndex={keyOverrideInitialIndex}
+          initialIndex={editorUI.keyOverrideInitialIndex}
           unlocked={keyboard.unlockStatus.unlocked}
-          onUnlock={() => setShowUnlockDialog(true)}
+          onUnlock={() => editorUI.setShowUnlockDialog(true)}
           tapDanceEntries={keyboard.tapDanceEntries}
           deserializedMacros={deserializedMacros}
           quickSelect={devicePrefs.quickSelect}
           splitKeyMode={devicePrefs.splitKeyMode}
           basicViewType={devicePrefs.basicViewType}
-          onClose={() => { setShowKeyOverrideModal(false); setKeyOverrideInitialIndex(undefined) }}
-          hubOrigin={hubReady ? hubOrigin : undefined}
-          hubNeedsDisplayName={hubReady && !hubCanUpload}
-          hubUploading={favHubUploading}
-          hubUploadResult={favHubUploadResult}
-          onUploadToHub={hubCanUpload ? (entryId) => handleFavUploadToHub('keyOverride', entryId) : undefined}
-          onUpdateOnHub={hubCanUpload ? (entryId) => handleFavUpdateOnHub('keyOverride', entryId) : undefined}
-          onRemoveFromHub={hubReady ? (entryId) => handleFavRemoveFromHub('keyOverride', entryId) : undefined}
-          onRenameOnHub={hubReady ? handleFavRenameOnHub : undefined}
+          onClose={() => editorUI.setKeyOverrideInitialIndex(null)}
+          hubOrigin={hub.hubReady ? hub.hubOrigin : undefined}
+          hubNeedsDisplayName={hub.hubReady && !hub.hubCanUpload}
+          hubUploading={hub.favHubUploading}
+          hubUploadResult={hub.favHubUploadResult}
+          onUploadToHub={hub.hubCanUpload ? (entryId) => hub.handleFavUploadToHub('keyOverride', entryId) : undefined}
+          onUpdateOnHub={hub.hubCanUpload ? (entryId) => hub.handleFavUpdateOnHub('keyOverride', entryId) : undefined}
+          onRemoveFromHub={hub.hubReady ? (entryId) => hub.handleFavRemoveFromHub('keyOverride', entryId) : undefined}
+          onRenameOnHub={hub.hubReady ? hub.handleFavRenameOnHub : undefined}
         />
-      )}
-
-      {showKeychronModal && keychronSupported && keyboard.keychron && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          data-testid="keychron-modal-backdrop"
-          onClick={() => setShowKeychronModal(false)}
-        >
-          <div
-            className="w-[540px] max-w-[90vw] max-h-[80vh] overflow-y-auto rounded-lg bg-surface-alt p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">{t('keychron.settings', 'Keychron Settings')}</h3>
-              <ModalCloseButton testid="keychron-modal-close" onClick={() => setShowKeychronModal(false)} />
-            </div>
-            <KeychronSettings keychron={keyboard.keychron} onSettingChanged={keyboard.refreshKeychron} />
-          </div>
-        </div>
       )}
 
       {startupNotification.visible && (

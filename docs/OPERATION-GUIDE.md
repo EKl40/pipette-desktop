@@ -19,26 +19,69 @@ When you launch the app, a list of connected Vial-compatible keyboards is displa
 - If multiple keyboards are connected, select one from the list
 - On Linux, udev rules may need to be configured if no devices are found
 
+**File Tab**
+
+![File Tab](screenshots/file-tab.png)
+
+The File tab allows offline editing of `.pipette` files without a physical keyboard connected:
+
+- Browse previously saved keyboards and select an entry to load
+- Load an external `.pipette` file from disk
+- A virtual keyboard is created from the embedded definition in the file
+- An unsaved changes indicator is shown when edits have not been saved
+
+> **Use case:** You want to tweak your keyboard's keymap, but the keyboard isn't with you right now. If you've previously saved its data, you can load it from the File tab, make your edits offline, and later connect the keyboard and load the modified data to apply your changes.
+
+**Feature Availability: Device vs File Mode**
+
+| Feature | Device (USB) | File (.pipette) |
+|---------|:------------:|:---------------:|
+| Keymap editing | Yes | Yes |
+| Macro / Tap Dance editing | Yes | Yes |
+| Combo / Key Override / Alt Repeat Key | Yes | Yes |
+| QMK Settings | Yes (device) | Yes (local data) |
+| Typing Test | Yes | Yes |
+| Export (.vil / .c / .pdf) | Yes | Yes |
+| Lighting control | Yes | No |
+| Matrix Tester | Yes | No |
+| Lock / Unlock | Yes | No |
+| Snapshot save / load | Yes | No |
+| Hub upload | Yes | No |
+| JSON sideload | Yes | No |
+| Device probe (Keyboard tab) | Yes | No |
+| Cloud Sync | Yes | No |
+
 ### 1.2 Connecting a Keyboard
 
 Click a keyboard name in the list to open the keymap editor. A connecting overlay shows loading progress while the keyboard data is read.
 
 If Cloud Sync is configured, sync progress is also displayed during connection (favorites first, then keyboard-specific data).
 
-### 1.3 Data Modal
+### 1.3 Data
 
-The Data button on the device selection screen opens the Data modal for centralized management of favorites and Hub posts.
+The Data button on the device selection screen opens the Data panel for centralized management of keyboards, favorites, sync data, and Hub posts.
 
-![Data Modal — Favorites](screenshots/02-data-modal.png)
+![Data — Favorites](screenshots/data-sidebar-favorites.png)
 
-- **Favorites tabs**: Tap Dance, Macro, Combo, Key Override, Alt Repeat Key — each type has its own tab
-- Per-entry actions: click to rename, delete, or **Export** individual entries
-- **Hub actions**: When Hub is connected, each entry shows **Upload to Hub** / **Update on Hub** / **Remove from Hub** buttons (same as the inline favorites panel)
+The left sidebar provides a **tree navigation** with the following structure:
+
+- **Local**
+  - **Keyboards**: Browse saved keyboard snapshots. Click a keyboard to view, load, export, or delete entries
+  - **Favorites**: Tap Dance, Macro, Combo, Key Override, Alt Repeat Key — each type shows its saved entries with rename, delete, export, and Hub actions
+  - **Application**: Import/export local data or reset selected targets (keyboard data, favorites, app settings)
+- **Sync** (when Cloud Sync is configured): Shows remote-only data not available locally. Scan and delete orphaned sync data from Google Drive
+- **Hub** (when Hub is connected): Manage Hub posts grouped by keyboard name
+
+![Data — Keyboard Saves](screenshots/data-sidebar-keyboard-saves.png)
+
+![Data — Application](screenshots/data-sidebar-application.png)
+
+Per-entry actions in the favorites list:
+- Click to rename, delete, or **Export** individual entries
+- **Hub actions**: When Hub is connected, each entry shows **Upload to Hub** / **Update on Hub** / **Remove from Hub** buttons
 - **Import** / **Export All** buttons at the footer for bulk operations
 
-![Data Modal — Hub Posts](screenshots/02-data-modal-hub-posts.png)
-
-- **Hub Posts** tab: Manage your Pipette Hub uploads (visible when Hub is connected)
+A **breadcrumb navigation** at the top of the content area shows the current path (e.g., "Local › Favorites › Tap Dance")
 
 ---
 
@@ -48,10 +91,10 @@ The Data button on the device selection screen opens the Data modal for centrali
 
 The keymap editor consists of two main areas: the keyboard layout display and the keycode palette.
 
-![Keymap Editor Overview](screenshots/03-keymap-editor-overview.png)
+![Keymap Editor Overview](screenshots/02-keymap-editor-overview.png)
 
 - Top area: Physical keyboard layout (shows the current keycode assigned to each key)
-- Left side: Toolbar (dual mode, zoom, etc.)
+- Left side: Toolbar (zoom, undo/redo, etc.)
 - Bottom area: Keycode palette (tabbed interface) with overlay panel toggle
 - Right side (when open): Keycodes Overlay Panel (tools, save, layout options)
 - Bottom bar: Status bar
@@ -72,17 +115,17 @@ The keymap editor consists of two main areas: the keyboard layout display and th
 - **ON** (default): A single click on a keycode immediately assigns it and closes the selection. Fast workflow for quick edits.
 - **OFF**: A single click selects a keycode (highlighted), double-click or press Enter to confirm and assign. A hint is shown at the bottom of the palette. Useful when you want to browse keycodes before committing.
 
-This setting can be toggled per-keyboard in the Keycodes Overlay Panel (§3.13), and the global default can be set in Settings → Defaults (§6.1).
+This setting can be toggled per-keyboard in the Keycodes Overlay Panel (§3.14), and the global default can be set in Settings → Defaults (§6.1).
 
 ### 2.3 Layer Switching
 
 Layer switching buttons are located on the left side of the keyboard layout.
 
-![Layer 0](screenshots/04-layer-0.png)
+![Layer 0](screenshots/03-layer-0.png)
 
-![Layer 1](screenshots/05-layer-1.png)
+![Layer 1](screenshots/04-layer-1.png)
 
-![Layer 2](screenshots/06-layer-2.png)
+![Layer 2](screenshots/05-layer-2.png)
 
 - Click layer number buttons to switch between layers
 - Layer 0 is the default layer
@@ -105,7 +148,7 @@ Double-click a key on the keyboard layout to open the Key Popover — a quick wa
 ![Key Popover — Key Tab](screenshots/key-popover-key.png)
 
 - The search input is pre-filled with the current keycode name
-- Type to search by name, QMK ID, or alias — results are ranked by relevance
+- Type to search by name, keycode name, or alias — results are ranked by relevance
 - Click a result to assign it immediately
 - The popover also appears when double-clicking key fields in detail editors (Tap Dance, Combo, Key Override, etc.)
 
@@ -136,7 +179,10 @@ Both modes show the modifier checkbox strip to select Left/Right Ctrl, Shift, Al
 
 Click an active mode button to toggle it off and revert to a basic keycode.
 
-**Undo**: If the selected key already has a keycode assigned, the popover shows an **Undo** button that displays the previous keycode. Click it to revert to the previous assignment.
+**Undo / Redo**: The popover footer shows context-sensitive **Undo** and **Redo** buttons. Undo displays the previous keycode and reverts to it; Redo displays the next keycode and re-applies it. These buttons only appear when the most recent undo/redo history entry matches the key currently open in the popover (i.e., the last single change). For multi-step history navigation, use the toolbar buttons or keyboard shortcuts (see §4.2).
+
+![Key Popover — Undo](screenshots/key-popover-undo.png)
+![Key Popover — Redo](screenshots/key-popover-redo.png)
 
 **Confirmation**: Press **Enter** to confirm the current selection and close the popover. Press **Escape** or click outside the popover to close it without changes.
 
@@ -167,7 +213,7 @@ Select keycodes from different categories using the tabbed palette at the bottom
 
 ### 3.1 Basic
 
-Standard character keys, function keys, modifier keys, and navigation keys. The Basic tab supports four view types, selectable from the Keycodes Overlay Panel (§3.13):
+Standard character keys, function keys, modifier keys, and navigation keys. The Basic tab supports four view types, selectable from the Keycodes Overlay Panel (§3.14):
 
 **ANSI Keyboard View** (default)
 
@@ -247,7 +293,7 @@ Keycodes for mouse control, media playback, system utilities, and audio/haptic f
 
 Keycodes for backlight and RGB lighting controls.
 
-![Lighting Tab](screenshots/tab-backlight.png)
+![Lighting Tab](screenshots/tab-lighting.png)
 
 - RGB Matrix controls
 - RGB Lighting controls
@@ -268,6 +314,7 @@ The Tap Dance section displays a **tile grid preview** showing all entries at a 
 - Configured entries display their tap/hold actions; unconfigured tiles show the number only
 - Click a tile to open the Tap Dance edit modal directly to that entry
 - Configure tap, hold, double-tap, and other actions for each entry
+- **Edit JSON** button at the bottom opens a JSON editor for bulk editing all entries (see §5.6)
 
 ### 3.7 Macro
 
@@ -283,6 +330,7 @@ The Macro section displays a **tile grid preview** showing all entries at a glan
 - Configured entries display a summary of key actions; unconfigured tiles show the number only
 - Click a tile to open the Macro edit modal directly to that entry
 - Record sequences of key inputs as macros
+- **Edit JSON** button at the bottom opens a JSON editor for bulk editing all entries (see §5.6)
 
 ### 3.8 Combo
 
@@ -290,11 +338,13 @@ Combo keycodes for simultaneous key-press combinations.
 
 ![Combo Tab](screenshots/tab-combo.png)
 
-The Combo tab displays a **tile grid preview** showing all entries and a settings area with a note: "These features apply to the entire keyboard, not just the current layer."
+The Combo tab displays a **tile grid preview** showing all entries. A note reads: "These features apply to the entire keyboard, not just the current layer."
 
 - Each tile shows the combo number and a summary (e.g., "A + B → C")
 - Click a tile to open the Combo edit modal directly to that entry (§5.2)
 - Combo keycodes (CMB_000–CMB_031) can be assigned to keys for triggering combos
+- **Settings: Configuration** button at the bottom opens a settings modal for combo-related timeout configuration (e.g., Combo time out period)
+- **Edit JSON** button at the bottom opens a JSON editor for bulk editing all entries (see §5.6)
 
 ### 3.9 Key Override
 
@@ -306,6 +356,7 @@ The Key Override tab displays a **tile grid preview** showing all entries and a 
 
 - Each tile shows the override number and a summary
 - Click a tile to open the Key Override edit modal directly to that entry (§5.3)
+- **Edit JSON** button at the bottom opens a JSON editor for bulk editing all entries (see §5.6)
 
 ### 3.10 Alt Repeat Key
 
@@ -317,6 +368,7 @@ The Alt Repeat Key tab displays a **tile grid preview** showing all entries and 
 
 - Each tile shows the entry number and a summary
 - Click a tile to open the Alt Repeat Key edit modal directly to that entry (§5.4)
+- **Edit JSON** button at the bottom opens a JSON editor for bulk editing all entries (see §5.6)
 
 ### 3.11 Behavior
 
@@ -334,9 +386,42 @@ User-defined keycodes.
 
 ![User Tab](screenshots/tab-user.png)
 
-- Custom keycodes defined in firmware
+- Custom keycodes defined in firmware (e.g., `CUSTOM_1`, `CUSTOM_2`)
+- When exporting `keymap.c`, custom keycodes use their configured names instead of generic `USER00`/`USER01` identifiers, and an `enum custom_keycodes` block is generated automatically
 
-### 3.13 Keycodes Overlay Panel
+### 3.13 Keyboard (Device Picker)
+
+The Keyboard tab lets you copy keycodes from other connected keyboards or from saved files.
+
+> **Use case:** While editing a keyboard, you wonder how another keyboard's keymap is set up — but that keyboard isn't connected right now. If you've previously saved its data (via the Save panel), you can load it from the **File** source in this tab to browse its keymap and copy keycodes directly into your current layout.
+
+**Device List**
+
+![Keyboard Tab — Device List](screenshots/keyboard-tab-device-list.png)
+
+When you open the Keyboard tab, a list of all connected Vial-compatible keyboards is displayed. This list updates in real time as you plug in or unplug devices.
+
+- Click a device to load its keymap — the currently connected keyboard shows its live keymap instantly; other devices are probed via a temporary USB connection
+
+![Keyboard Tab — Keymap View](screenshots/keyboard-tab-keymap.png)
+
+- Once loaded, click any key on the displayed keyboard to assign that keycode to the selected key on the main keymap
+- Use Ctrl+click for multi-select, Shift+click for range select
+- Layer buttons at the bottom right let you browse different layers
+- Zoom controls (+ / numeric input / −) adjust the picker keyboard size (30%–200%). When viewing another keyboard, its saved zoom level is loaded automatically
+- Press Escape to clear the picker selection
+
+**File Source**
+
+Click the **File** button at the bottom to switch to the file source. This shows saved keyboard snapshots and allows loading `.pipette` files — the same keycode picking workflow applies.
+
+**Composite Keycodes**
+
+When clicking a composite key (e.g., `LT1(KC_SPC)`) in the picker, the full keycode is assigned as-is. Inner/outer parts are not split — the complete keycode is copied to the target key.
+
+> **Note**: The Keyboard tab is hidden when editing the inner part of a mask key (e.g., choosing the `KC_SPC` inside `LT1(KC_SPC)`), since composite keycodes cannot be assigned to the inner byte.
+
+### 3.14 Keycodes Overlay Panel
 
 The Keycodes Overlay Panel provides quick access to editor tools and save functions. Toggle it with the panel button at the right end of the keycode tab bar.
 
@@ -375,24 +460,30 @@ The toolbar on the left side of the keymap editor provides the following feature
 
 ![Toolbar](screenshots/toolbar.png)
 
-### 4.1 Dual Mode (Split Edit)
+### 4.1 Zoom
 
-Displays two keyboard layouts side by side for comparing and copying keys between layers.
-
-![Dual Mode](screenshots/dual-mode.png)
-
-- Click the button to toggle dual mode
-- Useful for copying key settings between layers
-
-### 4.2 Zoom
-
-Adjusts the keyboard layout display scale.
+Adjusts the keyboard layout display scale. Range: 30%–200% (default 100%).
 
 ![Zoom In](screenshots/zoom-in.png)
 
 - (+) button to zoom in
 - (-) button to zoom out
 - Can also be adjusted in editor settings
+- Zoom level is saved per keyboard and restored automatically on reconnect
+
+### 4.2 Undo / Redo (Keymap History)
+
+The keymap editor automatically records a history of keycode changes. You can navigate through this history to undo or redo changes.
+
+| Method | Scope | How to use |
+|--------|-------|------------|
+| **Keyboard shortcuts** | Full history (up to Max Keymap History, default 100) | Ctrl/Cmd+Z (Undo), Ctrl+Y / Ctrl/Cmd+Shift+Z (Redo) |
+| **Toolbar buttons** | Full history | Undo / Redo buttons in the left toolbar |
+| **Popover buttons** | Last single change only (must match the open key) | Undo / Redo buttons in the popover footer (see §2.4) |
+
+- History is cleared when switching keyboards or disconnecting
+- The maximum history size can be configured in Settings → Defaults → **Max Keymap History** (see §6.1)
+- All keymap mutation paths are tracked: single key edits, popover selections, mod-mask changes, paste, and copy-layer operations
 
 ### 4.3 Typing Test
 
@@ -457,11 +548,11 @@ Correctly typed words turn green. Incorrect characters are highlighted in red wi
 
 ## 5. Detail Setting Editors
 
-Open detail setting modals from their dedicated keycode tabs. Lighting opens via its settings button; Combo, Key Override, and Alt Repeat Key open by clicking a tile on their respective tabs.
+Open detail setting modals from their dedicated keycode tabs. Lighting opens via a **Settings: Configuration** button at the bottom of its tab; Combo, Key Override, and Alt Repeat Key detail editors open by clicking an entry on their respective tabs.
 
 ### 5.1 Lighting Settings
 
-Open from the Lighting tab settings button. Configure RGB lighting colors and effects.
+Open from the **Settings: Configuration** button on the Lighting tab. Configure RGB lighting colors and effects.
 
 ![Lighting Settings](screenshots/lighting-modal.png)
 
@@ -472,33 +563,32 @@ Open from the Lighting tab settings button. Configure RGB lighting colors and ef
 
 ### 5.2 Combo
 
-Configure simultaneous key press combinations to trigger different keys. The Combo tab displays an inline tile grid overview; clicking a tile opens the detail editor modal.
+Configure simultaneous key press combinations to trigger different keys. The Combo tab displays an inline tile grid; clicking an entry opens the detail editor modal directly.
 
-**Tile Grid Overview (Combo tab)**
+**Tile Grid (Combo tab)**
 
 ![Combo List](screenshots/combo-modal.png)
 
-The Combo tab shows a grid of numbered tiles (0--31). Configured entries display a summary. Click a tile to open the detail editor. Combo keycodes (Combo On, Combo Off, Combo Toggle) are shown below the grid.
+The Combo tab shows entries as a numbered list (0--31). Configured entries display a summary (e.g., "A + B → C"). Click an entry to open the detail editor. Combo keycodes (Combo On, Combo Off, Combo Toggle) are shown below the list. A **Settings: Configuration** button at the bottom opens a settings modal for QMK Combo timeout configuration (e.g., Combo time out period).
 
 **Detail Editor**
 
 ![Combo Detail](screenshots/combo-detail.png)
 
-- Left panel: Combo editor with Key 1--4 and Output fields. Timeout (ms) and Save button for the global combo timeout.
+- Left panel: Combo editor with Key 1--4 and Output fields.
 - Right panel: Inline favorites panel (Save Current State / Synced Data / Import / Export All)
 - **Clear** resets all fields; **Revert** restores the last saved state. Both use two-step confirmation.
 - **Save** writes changes to the keyboard
-- **Back** returns to the tile grid overview within the modal
 
 ### 5.3 Key Override
 
-Replace specific key inputs with different keys. The Key Override tab displays an inline tile grid overview; clicking a tile opens the detail editor modal.
+Replace specific key inputs with different keys. The Key Override tab displays an inline tile grid; clicking an entry opens the detail editor modal directly.
 
-**Tile Grid Overview (Key Override tab)**
+**Tile Grid (Key Override tab)**
 
 ![Key Override List](screenshots/key-override-modal.png)
 
-Shows a grid of numbered tiles. Configured entries display a summary. Click a tile to open the detail editor.
+Shows entries as a numbered list. Configured entries display a summary. Click an entry to open the detail editor.
 
 **Detail Editor**
 
@@ -508,17 +598,16 @@ Shows a grid of numbered tiles. Configured entries display a summary. Click a ti
 - Right panel: Inline favorites panel (Save Current State / Synced Data / Import / Export All)
 - **Clear** resets all fields; **Revert** restores the last saved state. Both use two-step confirmation.
 - **Save** writes changes to the keyboard
-- **Back** returns to the tile grid overview within the modal
 
 ### 5.4 Alt Repeat Key
 
-Configure alternative actions for the Repeat Key. The Alt Repeat Key tab displays an inline tile grid overview; clicking a tile opens the detail editor modal.
+Configure alternative actions for the Repeat Key. The Alt Repeat Key tab displays an inline tile grid; clicking an entry opens the detail editor modal directly.
 
-**Tile Grid Overview (Alt Repeat Key tab)**
+**Tile Grid (Alt Repeat Key tab)**
 
 ![Alt Repeat Key List](screenshots/alt-repeat-key-modal.png)
 
-Shows a grid of numbered tiles. Configured entries display a summary. Click a tile to open the detail editor.
+Shows entries as a numbered list. Configured entries display a summary. Click an entry to open the detail editor.
 
 **Detail Editor**
 
@@ -528,7 +617,6 @@ Shows a grid of numbered tiles. Configured entries display a summary. Click a ti
 - Right panel: Inline favorites panel (Save Current State / Synced Data / Import / Export All)
 - **Clear** resets all fields; **Revert** restores the last saved state. Both use two-step confirmation.
 - **Save** writes changes to the keyboard
-- **Back** returns to the tile grid overview within the modal
 
 ### 5.5 Favorites
 
@@ -539,6 +627,7 @@ Each editor modal (Tap Dance, Macro, Combo, Key Override, Alt Repeat Key) includ
 The inline favorites panel provides:
 
 - **Save Current State**: Enter a label and click Save to store the current entry configuration
+  - **Import** / **Export** buttons: Import a `.pipette-fav` file to apply to the current entry, or export the current entry settings as a `.pipette-fav` file without saving to the store. Inline "Imported" / "Exported" feedback is shown after each action.
 - **Synced Data**: Previously saved entries are listed with Load, Rename, Delete, and Export actions
 - **Import** / **Export All**: Footer buttons for bulk import/export of favorites
 
@@ -558,24 +647,41 @@ When Pipette Hub is connected, each saved entry also shows Hub actions:
 - **Remove from Hub**: Delete the entry from Pipette Hub (two-step confirmation)
 - **Open in Browser**: Open the individual Hub post page in your browser
 
+### 5.6 JSON Editor
+
+Each feature tab (Tap Dance, Macro, Combo, Key Override, Alt Repeat Key) provides an **Edit JSON** button at the bottom of the tab. This opens a JSON editor modal for bulk editing all entries as raw JSON text.
+
+![JSON Editor — Tap Dance](screenshots/json-editor-tap-dance.png)
+
+- **Text area**: Edit all entries as a JSON array. Changes are validated in real time — parse errors are shown below the editor
+- **Export** (left): Save the current JSON as a `.pipette-fav` file for backup or sharing
+- **Cancel** (right): Close without saving
+- **Save** (right): Apply the parsed JSON and write changes to the keyboard
+
+![JSON Editor — Macro](screenshots/json-editor-macro.png)
+
+For Macros, a warning is displayed indicating that keyboard unlock is required to save changes.
+
+> **Note**: The JSON editor modifies all entries at once. Use with caution — invalid JSON will be rejected, but valid JSON with incorrect values may cause unexpected behavior.
+
 > **Note**: Favorites are not tied to a specific keyboard — saved entries can be loaded on any compatible keyboard. When Cloud Sync is enabled, favorites are also synced across devices (see §6.1). Favorites can also be managed from the Data modal on the device selection screen (see §1.3).
 
 ---
 
 ## 6. Editor Settings Panel
 
-Open the editor settings panel from the save button (floppy disk icon) in the keycode tab bar, or use the Save tab in the Keycodes Overlay Panel (§3.13).
+Open the editor settings panel from the save button (floppy disk icon) in the keycode tab bar, or use the Save tab in the Keycodes Overlay Panel (§3.14).
 
 ![Editor Settings — Save](screenshots/editor-settings-save.png)
 
 The editor settings panel now provides a single **Save** panel with the following features:
 
-- **Export Current State**: Download keymap as `.vil`, `keymap.c`, PDF keymap cheat sheet, or PDF layout export (key outlines with summary pages for Tap Dance, Macro, Combo, Key Override, and Alt Repeat Key entries)
+- **Export Current State**: Download keymap as `.vil`, `keymap.c`, PDF keymap cheat sheet, or PDF layout export (key outlines with summary pages for Tap Dance, Macro, Combo, Key Override, and Alt Repeat Key entries). An "Exported" inline feedback message appears after a successful export.
 - **Save Current State**: Save a snapshot of the current keyboard state with a label. Enter a name in the Label field and click Save. If the Label field is left empty, the Save button is disabled. Saved snapshots appear in the Synced Data list below and can be loaded or deleted later
 - **Synced Data**: List of saved snapshots. Click to load, rename, or delete entries
 - **Reset Keyboard Data**: Reset keyboard to factory defaults (use with caution)
 
-> **Note**: Tool settings (keyboard layout, auto advance, key tester, security) have moved to the Keycodes Overlay Panel (§3.13). Zoom is available in the toolbar (§4.2). Layer settings are now managed directly via the layer panel on the left side of the editor.
+> **Note**: Tool settings (keyboard layout, auto advance, key tester, security) have moved to the Keycodes Overlay Panel (§3.14). Zoom is available in the toolbar (§4.1). Layer settings are now managed directly via the layer panel on the left side of the editor.
 
 ### 6.1 Cloud Sync (Google Drive appDataFolder)
 
@@ -585,7 +691,7 @@ Sync is configured in the **Settings** modal (gear icon on the device selection 
 
 ![Data Tab](screenshots/hub-settings-data-sync.png)
 
-The Data tab contains the following sections: Google Account, Data Sync, Pipette Hub, and Troubleshooting.
+The Data tab contains the following sections: Google Account, Data Sync, and Pipette Hub. Additional troubleshooting and data management options are available in the separate Troubleshooting tab (see below).
 
 #### Google Account
 
@@ -617,26 +723,18 @@ The Data tab contains the following sections: Google Account, Data Sync, Pipette
 
 - Displayed when the sync backend cannot be reached. Click **Retry** to attempt reconnection
 
-#### Reset Sync Data / Local Data
-
-- **Reset Sync Data**: Select targets (keyboard data, favorite data) and delete them from Google Drive
-- **Local Data**: Import/export local data, or reset selected local targets (keyboard data, favorites, app settings)
-
 #### Data Storage
 
 Synced data is stored in [Google Drive appDataFolder](https://developers.google.com/workspace/drive/api/guides/appdata) — a hidden, app-specific folder that only Pipette can access. Your personal Drive files are never touched.
 
 See the [Data Guide](Data.md) for details on what is synced and how your data is protected.
 
-#### Settings — Troubleshooting
+#### Data Management
 
-![Settings — Troubleshooting](screenshots/settings-troubleshooting.png)
+Troubleshooting and data management functions are available in the **Data** panel (see §1.3):
 
-The Troubleshooting tab in the Settings modal (on the device selection screen) provides:
-
-- **Scan Remote Data**: Scan Google Drive for all sync files, with counts and details
-- **Per-keyboard Reset**: Select and delete specific keyboard sync data from Google Drive
-- **Local Data**: Import/export local data or reset selected targets (keyboard data, favorites, app settings)
+- **Local > Application**: Import/export local data or reset selected targets (keyboard data, favorites, app settings)
+- **Sync**: Scan remote data on Google Drive and delete orphaned sync files
 
 #### Settings — Defaults
 
@@ -650,6 +748,7 @@ The Tools tab in the Settings modal includes a **Defaults** section for setting 
 - **Layer Panel Open**: Whether the layer panel starts expanded or collapsed
 - **Basic View Type**: Default view type for the Basic tab (ANSI/ISO/JIS/List)
 - **Separate Shift in Key Picker**: Default setting for separating Shift in the key picker
+- **Max Keymap History**: Maximum number of keymap changes to keep in the current keyboard's edit history (default: 100). History is cleared on disconnect or keyboard switch. See §4.2 for details.
 
 ---
 
@@ -684,6 +783,8 @@ To upload a keymap to Hub:
 - **Open in Browser**: Opens the Hub page for this keymap
 - **Update**: Re-uploads the current keyboard state to update the existing Hub post
 - **Remove**: Removes the keymap from Hub
+
+> **Note**: Hub uploads include a `.pipette` file alongside the standard export formats, allowing other users to load the full keyboard state directly.
 
 ### 7.3 Uploading Favorite Entries
 

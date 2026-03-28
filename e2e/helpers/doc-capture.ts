@@ -155,11 +155,74 @@ async function connectDevice(page: Page): Promise<boolean> {
   return true
 }
 
+// --- Dummy snapshot data for File tab ---
+
+const DUMMY_SNAPSHOTS = [
+  {
+    uid: 'doc-dummy-uid-1',
+    name: 'Corne',
+    entries: [
+      { id: 'doc-snap-1', label: 'Default', filename: 'Corne_2026-03-10T12-00-00.pipette', savedAt: '2026-03-10T12:00:00.000Z', updatedAt: '2026-03-15T09:30:00.000Z', vilVersion: 2 },
+      { id: 'doc-snap-2', label: 'Gaming', filename: 'Corne_2026-03-12T14-30-00.pipette', savedAt: '2026-03-12T14:30:00.000Z', vilVersion: 2 },
+    ],
+  },
+  {
+    uid: 'doc-dummy-uid-2',
+    name: 'Sofle',
+    entries: [
+      { id: 'doc-snap-3', label: 'Work', filename: 'Sofle_2026-03-08T09-00-00.pipette', savedAt: '2026-03-08T09:00:00.000Z', vilVersion: 2 },
+    ],
+  },
+]
+
+function seedDummySnapshots(snapshotBase: string): Map<string, string | null> {
+  const backups = new Map<string, string | null>()
+  for (const kb of DUMMY_SNAPSHOTS) {
+    const dir = join(snapshotBase, kb.uid, 'snapshots')
+    mkdirSync(dir, { recursive: true })
+    const indexPath = join(dir, 'index.json')
+    backups.set(indexPath, existsSync(indexPath) ? readFileSync(indexPath, 'utf-8') : null)
+    writeFileSync(indexPath, JSON.stringify({ uid: kb.uid, entries: kb.entries }, null, 2), 'utf-8')
+  }
+  return backups
+}
+
+function restoreSnapshots(backups: Map<string, string | null>): void {
+  for (const [path, original] of backups) {
+    if (original != null) {
+      writeFileSync(path, original, 'utf-8')
+    } else {
+      try { unlinkSync(path) } catch { /* ignore */ }
+    }
+  }
+}
+
 // --- Phase 1: Device Selection ---
 
 async function captureDeviceSelection(page: Page): Promise<void> {
   console.log('\n--- Phase 1: Device Selection ---')
   await capture(page, 'device-selection', { fullPage: true })
+
+  // File tab
+  const fileTab = page.locator('[data-testid="tab-file"]')
+  if (await isAvailable(fileTab)) {
+    await fileTab.click()
+    // Wait for keyboard list to load (async IPC fetch)
+    const kbList = page.locator('[data-testid="pipette-keyboard-list"]')
+    try {
+      await kbList.waitFor({ state: 'visible', timeout: 5000 })
+    } catch {
+      console.log('  [warn] File tab keyboard list did not appear')
+    }
+    await page.waitForTimeout(500)
+    await captureNamed(page, 'file-tab', { fullPage: true })
+    // Switch back to keyboard tab
+    const kbTab = page.locator('[data-testid="tab-keyboard"]')
+    if (await isAvailable(kbTab)) {
+      await kbTab.click()
+      await page.waitForTimeout(300)
+    }
+  }
 }
 
 // --- Phase 1.5: Data Modal (from device selector) ---
@@ -219,7 +282,7 @@ function restoreFavorites(backups: Map<string, string | null>, favBase: string):
 }
 
 async function captureDataModal(page: Page): Promise<void> {
-  console.log('\n--- Phase 1.5: Data Modal ---')
+  console.log('\n--- Phase 1.5: Data Modal (Tree Sidebar) ---')
 
   const dataBtn = page.locator('[data-testid="data-button"]')
   if (!(await isAvailable(dataBtn))) {
@@ -238,15 +301,62 @@ async function captureDataModal(page: Page): Promise<void> {
     return
   }
 
-  // Wait for entries to load
-  const entries = page.locator('[data-testid="data-modal-fav-entry"]')
-  try {
-    await entries.first().waitFor({ state: 'visible', timeout: 5000 })
-  } catch {
-    console.log('  [warn] No favorite entries loaded')
+  // Expand Local branch and navigate to Favorites > Tap Dance
+  const navLocal = page.locator('[data-testid="nav-local"]')
+  if (await isAvailable(navLocal)) {
+    await navLocal.click()
+    await page.waitForTimeout(300)
+
+    const navFavorites = page.locator('[data-testid="nav-local-favorites"]')
+    if (await isAvailable(navFavorites)) {
+      await navFavorites.click()
+      await page.waitForTimeout(300)
+
+      const navTd = page.locator('[data-testid="nav-fav-tapDance"]')
+      if (await isAvailable(navTd)) {
+        await navTd.click()
+        await page.waitForTimeout(500)
+      }
+    }
+  }
+  await captureNamed(page, 'data-sidebar-favorites', { fullPage: true })
+
+  // Navigate to Keyboards (first keyboard if available)
+  const navKeyboards = page.locator('[data-testid="nav-local-keyboards"]')
+  if (await isAvailable(navKeyboards)) {
+    await navKeyboards.click()
+    await page.waitForTimeout(300)
+
+    // Click first keyboard leaf if available
+    const kbLeaf = page.locator('[data-testid^="nav-kb-"]').first()
+    if (await isAvailable(kbLeaf)) {
+      await kbLeaf.click()
+      await page.waitForTimeout(500)
+      await captureNamed(page, 'data-sidebar-keyboard-saves', { fullPage: true })
+    }
   }
 
-  await capture(page, 'data-modal', { fullPage: true })
+  // Navigate to Application
+  const navApp = page.locator('[data-testid="nav-local-application"]')
+  if (await isAvailable(navApp)) {
+    await navApp.click()
+    await page.waitForTimeout(500)
+    await captureNamed(page, 'data-sidebar-application', { fullPage: true })
+  }
+
+  // Navigate to Hub (if available)
+  const navHub = page.locator('[data-testid="nav-cloud-hub"]')
+  if (await isAvailable(navHub)) {
+    await navHub.click()
+    await page.waitForTimeout(300)
+
+    const hubKbs = page.locator('[data-testid="nav-hub-keyboards"]')
+    if (await isAvailable(hubKbs)) {
+      await hubKbs.click()
+      await page.waitForTimeout(300)
+    }
+    await captureNamed(page, 'data-sidebar-hub', { fullPage: true })
+  }
 
   await page.locator('[data-testid="data-modal-close"]').click()
   await page.waitForTimeout(300)
@@ -270,16 +380,6 @@ async function captureSettingsModal(page: Page): Promise<void> {
   if (!(await isAvailable(settingsModal))) {
     console.log('  [skip] settings-modal not found')
     return
-  }
-
-  // Switch to Troubleshooting tab
-  const troubleshootingTab = page.locator('[data-testid="settings-tab-troubleshooting"]')
-  if (await isAvailable(troubleshootingTab)) {
-    await troubleshootingTab.click()
-    await page.waitForTimeout(300)
-    await captureNamed(page, 'settings-troubleshooting', { fullPage: true })
-  } else {
-    console.log('  [skip] troubleshooting tab not found')
   }
 
   // Switch to Tools tab to capture defaults section
@@ -321,20 +421,18 @@ async function captureLayerNavigation(page: Page): Promise<void> {
 
   await capture(page, 'layer-0', { fullPage: true })
 
-  const editorContent = page.locator('[data-testid="editor-content"]')
-
   for (const layerNum of [1, 2]) {
-    const btn = editorContent.locator('button', { hasText: new RegExp(`^${layerNum}$`) })
+    const btn = page.locator(`[data-testid="layer-panel-layer-num-${layerNum}"]`)
     if (await isAvailable(btn)) {
-      await btn.first().click()
-      await page.waitForTimeout(500)
+      await btn.click()
+      await page.waitForTimeout(1000)
       await capture(page, `layer-${layerNum}`, { fullPage: true })
     }
   }
 
-  const layer0Btn = editorContent.locator('button', { hasText: /^0$/ })
+  const layer0Btn = page.locator('[data-testid="layer-panel-layer-num-0"]')
   if (await isAvailable(layer0Btn)) {
-    await layer0Btn.first().click()
+    await layer0Btn.click()
     await page.waitForTimeout(500)
   }
 }
@@ -347,7 +445,7 @@ const KEYCODE_TABS = [
   { id: 'modifiers', label: 'Modifiers' },
   { id: 'system', label: 'System' },
   { id: 'midi', label: 'MIDI' },
-  { id: 'backlight', label: 'Lighting' },
+  { id: 'lighting', label: 'Lighting' },
   { id: 'tapDance', label: 'Tap-Hold / Tap Dance' },
   { id: 'macro', label: 'Macro' },
   { id: 'combo', label: 'Combo' },
@@ -380,23 +478,45 @@ async function captureKeycodeCategories(page: Page): Promise<void> {
   }
 }
 
+// --- Phase 4.5: Keyboard Tab (Device Picker) ---
+
+async function captureKeyboardTab(page: Page): Promise<void> {
+  console.log('\n--- Phase 4.5: Keyboard Tab (Device Picker) ---')
+
+  const editorContent = page.locator('[data-testid="editor-content"]')
+  const keyboardTabBtn = editorContent.locator('button', { hasText: /^Keyboard$/ })
+  if (!(await isAvailable(keyboardTabBtn))) {
+    console.log('  [skip] Keyboard tab not found')
+    return
+  }
+  await keyboardTabBtn.first().click()
+  await page.waitForTimeout(500)
+
+  // Capture device list view
+  await captureNamed(page, 'keyboard-tab-device-list', { fullPage: true })
+
+  // Click the connected device to show its keymap
+  const deviceBtn = editorContent.locator('button', { hasText: new RegExp(escapeRegex(DEVICE_NAME)) })
+  if (await isAvailable(deviceBtn)) {
+    await deviceBtn.first().click()
+    await page.waitForTimeout(500)
+    await captureNamed(page, 'keyboard-tab-keymap', { fullPage: true })
+  }
+
+  // Switch back to Basic tab
+  const basicBtn = editorContent.locator('button', { hasText: /^Basic$/ })
+  if (await isAvailable(basicBtn)) {
+    await basicBtn.first().click()
+    await page.waitForTimeout(300)
+  }
+}
+
 // --- Phase 5: Toolbar / Sidebar ---
 
 async function captureSidebarTools(page: Page): Promise<void> {
   console.log('\n--- Phase 5: Toolbar ---')
 
   await captureNamed(page, 'toolbar', { fullPage: true })
-
-  const dualModeBtn = page.locator('[data-testid="dual-mode-button"]')
-  if (await isAvailable(dualModeBtn)) {
-    await dualModeBtn.click()
-    await page.waitForTimeout(500)
-    await captureNamed(page, 'dual-mode', { fullPage: true })
-    await dualModeBtn.click()
-    await page.waitForTimeout(500)
-  } else {
-    console.log('  [skip] dual-mode-button not found')
-  }
 
   const zoomInBtn = page.locator('[data-testid="zoom-in-button"]')
   if (await isAvailable(zoomInBtn)) {
@@ -443,8 +563,8 @@ async function captureSidebarTools(page: Page): Promise<void> {
 // --- Phase 6: Modal Editors ---
 
 // Tile-based editor captures (Combo, Key Override, Alt Repeat Key)
-// Overview: inline tile grid on the dedicated tab (no modal)
-// Detail: modal that opens when clicking a tile
+// Tab view: inline tile grid on the dedicated tab (no modal)
+// Detail: clicking a tile opens the detail editor modal directly (no back button or internal tile grid)
 interface TileEditorCapture {
   name: string
   keycodeTab: string
@@ -522,8 +642,8 @@ async function captureModalEditors(page: Page): Promise<void> {
   }
 
   // Tile-based editors: Combo, Key Override, Alt Repeat Key
-  // Overview = inline tile grid on the dedicated tab (no modal)
-  // Detail = modal that opens when clicking a tile
+  // Tab view = inline tile grid on the dedicated tab
+  // Detail = clicking a tile opens the detail editor modal directly
   const editorContent = page.locator('[data-testid="editor-content"]')
   for (const editor of TILE_EDITOR_CAPTURES) {
     const tabBtn = editorContent.locator('button', { hasText: new RegExp(`^${escapeRegex(editor.keycodeTab)}$`) })
@@ -534,7 +654,7 @@ async function captureModalEditors(page: Page): Promise<void> {
     await tabBtn.first().click()
     await page.waitForTimeout(300)
 
-    // Capture the tab view (inline tile grid overview — no modal)
+    // Capture the tab view (inline tile grid)
     await captureNamed(page, `${editor.name}-modal`, { fullPage: true })
 
     // Click tile to open detail editor modal
@@ -561,6 +681,57 @@ async function captureModalEditors(page: Page): Promise<void> {
       await page.keyboard.press('Escape')
     }
     await page.waitForTimeout(300)
+  }
+}
+
+// --- Phase 6.5: JSON Editor Modals ---
+
+async function captureJsonEditors(page: Page): Promise<void> {
+  console.log('\n--- Phase 6.5: JSON Editor Modals ---')
+
+  // Dismiss any lingering modals/overlays
+  await dismissNotificationModal(page)
+  await page.evaluate(() => {
+    document.querySelectorAll('.fixed.inset-0').forEach((el) => el.remove())
+  })
+  await page.waitForTimeout(300)
+
+  const editorContent = page.locator('[data-testid="editor-content"]')
+
+  // Tap Dance JSON editor
+  const tdTab = editorContent.locator('button', { hasText: /^Tap-Hold \/ Tap Dance$/ })
+  if (await isAvailable(tdTab)) {
+    await tdTab.first().click()
+    await page.waitForTimeout(300)
+
+    const jsonBtn = page.locator('[data-testid="tap-dance-json-editor-btn"]')
+    if (await isAvailable(jsonBtn)) {
+      await jsonBtn.click()
+      await page.waitForTimeout(500)
+      await captureNamed(page, 'json-editor-tap-dance', { fullPage: true })
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(300)
+    } else {
+      console.log('  [skip] tap-dance-json-editor-btn not found')
+    }
+  }
+
+  // Macro JSON editor (shows unlock warning)
+  const macroTab = editorContent.locator('button', { hasText: /^Macro$/ })
+  if (await isAvailable(macroTab)) {
+    await macroTab.first().click()
+    await page.waitForTimeout(300)
+
+    const jsonBtn = page.locator('[data-testid="macro-json-editor-btn"]')
+    if (await isAvailable(jsonBtn)) {
+      await jsonBtn.click()
+      await page.waitForTimeout(500)
+      await captureNamed(page, 'json-editor-macro', { fullPage: true })
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(300)
+    } else {
+      console.log('  [skip] macro-json-editor-btn not found')
+    }
   }
 }
 
@@ -883,8 +1054,11 @@ async function main(): Promise<void> {
   const favBase = join(userDataPath, 'sync', 'favorites')
   console.log(`userData: ${userDataPath}`)
 
-  // Seed dummy favorites into the correct directory and reload renderer to pick them up
+  // Seed dummy data into the correct directories
   const favBackups = seedDummyFavorites(favBase)
+  const kbBase = join(userDataPath, 'sync', 'keyboards')
+  const snapBackups = seedDummySnapshots(kbBase)
+  console.log(`Seeded dummy data: fav=${favBackups.size} entries, snap=${DUMMY_SNAPSHOTS.length} keyboards`)
 
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
@@ -906,8 +1080,10 @@ async function main(): Promise<void> {
     await captureKeymapEditor(page)          // 03
     await captureLayerNavigation(page)       // 04-06
     await captureKeycodeCategories(page)     // 07+ (count varies by keyboard features)
-    await captureSidebarTools(page)          // toolbar, dual-mode, zoom, typing-test
+    await captureKeyboardTab(page)           // keyboard-tab-device-list, keyboard-tab-keymap
+    await captureSidebarTools(page)          // toolbar, zoom, typing-test
     await captureModalEditors(page)          // lighting, combo, ko, ar (when available)
+    await captureJsonEditors(page)           // json-editor-tap-dance, json-editor-macro
     await captureEditorSettings(page)        // editor-settings-save
     await captureOverlayPanel(page)          // overlay-tools, overlay-save
     await captureStatusBar(page)             // status-bar
@@ -921,6 +1097,7 @@ async function main(): Promise<void> {
   } finally {
     await app.close()
     restoreFavorites(favBackups, favBase)
+    restoreSnapshots(snapBackups)
   }
 }
 
