@@ -431,6 +431,34 @@ const vialAPI = {
     ipcRenderer.invoke(IpcChannels.SYNC_LIST_UNDECRYPTABLE),
   syncScanRemote: (): Promise<SyncDataScanResult> =>
     ipcRenderer.invoke(IpcChannels.SYNC_SCAN_REMOTE),
+    syncDeleteFiles: (fileIds: string[]): Promise<{ success: boolean; error?: string }> =>
+        ipcRenderer.invoke(IpcChannels.SYNC_DELETE_FILES, fileIds),
+          syncCheckPasswordExists: (): Promise<boolean> =>
+              ipcRenderer.invoke(IpcChannels.SYNC_CHECK_PASSWORD_EXISTS),
+                hubUploadPost: (params: HubUploadPostParams): Promise<HubUploadResult> =>
+                    ipcRenderer.invoke(IpcChannels.HUB_UPLOAD_POST, params),
+                      hubUpdatePost: (params: HubUpdatePostParams): Promise<HubUploadResult> =>
+                          ipcRenderer.invoke(IpcChannels.HUB_UPDATE_POST, params),
+                            hubPatchPost: (params: HubPatchPostParams): Promise<HubDeleteResult> =>
+                                ipcRenderer.invoke(IpcChannels.HUB_PATCH_POST, params),
+                                  hubDeletePost: (postId: string): Promise<HubDeleteResult> =>
+                                      ipcRenderer.invoke(IpcChannels.HUB_DELETE_POST, postId),
+                                        hubFetchMyPosts: (params?: HubFetchMyPostsParams): Promise<HubFetchMyPostsResult> =>
+                                            ipcRenderer.invoke(IpcChannels.HUB_FETCH_MY_POSTS, params),
+                                              hubFetchMyKeyboardPosts: (keyboardName: string): Promise<HubFetchMyKeyboardPostsResult> =>
+                                                  ipcRenderer.invoke(IpcChannels.HUB_FETCH_MY_KEYBOARD_POSTS, keyboardName),
+                                                    hubFetchAuthMe: (): Promise<HubUserResult> =>
+                                                        ipcRenderer.invoke(IpcChannels.HUB_FETCH_AUTH_ME),
+                                                          hubPatchAuthMe: (displayName: string): Promise<HubUserResult> =>
+                                                              ipcRenderer.invoke(IpcChannels.HUB_PATCH_AUTH_ME, displayName),
+                                                                hubSetAuthDisplayName: (displayName: string | null): Promise<void> =>
+                                                                    ipcRenderer.invoke(IpcChannels.HUB_SET_AUTH_DISPLAY_NAME, displayName),
+                                                                      hubGetOrigin: (): Promise<string> =>
+                                                                          ipcRenderer.invoke(IpcChannels.HUB_GET_ORIGIN),
+                                                                            hubUploadFavoritePost: (params: HubUploadFavoritePostParams): Promise<HubUploadResult> =>
+                                                                                ipcRenderer.invoke(IpcChannels.HUB_UPLOAD_FAVORITE_POST, params),
+                                                                                  hubUpdateFavoritePost: (params: HubUpdateFavoritePostParams): Promise<HubUploadResult> =>
+                                                                                      ipcRenderer.invoke(IpcChannels.HUB_UPDATE_FAVORITE_POST, params),
   favoriteStoreSetHubPostId: (type: string, entryId: string, hubPostId: string | null): Promise<{ success: boolean; error?: string }> =>    ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID, type, entryId, hubPostId),
 
   // --- Snapshot Store extensions ---
