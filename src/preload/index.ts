@@ -418,6 +418,13 @@ const vialAPI = {
     ipcRenderer.on(IpcChannels.SYNC_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IpcChannels.SYNC_PROGRESS, handler)
   },
+    syncOnPendingChange: (callback: (pending: boolean) => void): (() => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, pending: boolean): void => {
+              callback(pending)
+                  }
+                      ipcRenderer.on(IpcChannels.SYNC_PENDING_STATUS, handler)
+                          return () => ipcRenderer.removeListener(IpcChannels.SYNC_PENDING_STATUS, handler)
+                            },
   syncHasPendingChanges: (): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.SYNC_PENDING_STATUS),
   syncListUndecryptable: (): Promise<UndecryptableFile[]> =>
