@@ -117,6 +117,23 @@ export async function listDevices(): Promise<DeviceInfo[]> {
     })
   }
   if (bridge) {
+    // If bridge is already open (active wireless connection), just report the connected device
+    if (bridgeService.isBridgeOpen()) {
+      const connInfo = bridgeService.getConnectedDeviceInfo()
+      if (connInfo) {
+        const productName =
+          devices.find((d) => d.vendorId === connInfo.vid && d.productId === connInfo.pid)
+            ?.product ?? 'Keychron (wireless)'
+        result.push({
+          vendorId: connInfo.vid,
+          productId: connInfo.pid,
+          productName: `${productName} [2.4 GHz]`,
+          serialNumber: `bridge:${bridge.viaPath}`,
+          type: 'vial',
+        })
+      }
+      return result
+    }
     // Try to initialize the bridge and find connected keyboards
     const state = await bridgeService.openBridge(bridge.viaPath)
     if (state && state.connectedSlot !== null) {

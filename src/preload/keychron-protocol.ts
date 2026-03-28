@@ -1366,6 +1366,7 @@ export async function setKeychronAnalogAdvanceModeToggle(
 export async function reloadKeychron(): Promise<KeychronState | null> {
   // Step 1: Check if this is a Keychron keyboard
   const protocolVersion = await getKeychronProtocolVersion()
+  console.log("[KC] protocolVersion:", protocolVersion)
   if (protocolVersion < 0) return null
 
   const state = emptyKeychronState()
@@ -1373,6 +1374,7 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
 
   // Step 2: Get feature flags
   state.features = await getKeychronSupportFeature()
+  console.log("[KC] features:", state.features.toString(16))
   if (state.features === 0) return null
 
   // Step 3: Get firmware version

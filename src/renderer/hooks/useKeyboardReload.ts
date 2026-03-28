@@ -345,8 +345,8 @@ export function useKeyboardReload(
         if (kcState) {
           newState.keychron = kcState as import("../../shared/types/keychron").KeychronState
         }
-      } catch {
-        // Not a Keychron board — ignore
+      } catch (kcErr) {
+        console.warn("[KB] Keychron reload failed:", kcErr)
       }
       newState.loading = false
       setState(newState)
