@@ -33,10 +33,10 @@ const SHIFTED_MAP: Record<string, string> = {
   KC_JYEN: 'KC_PIPE',
 }
 
-/** Set of all QMK IDs that appear as shifted counterparts */
+/** Set of all keycode names that appear as shifted counterparts */
 const SHIFTED_IDS: ReadonlySet<string> = new Set(Object.values(SHIFTED_MAP))
 
-/** Check if a QMK ID is a shifted keycode (e.g. KC_AT, KC_EXLM) */
+/** Check if a keycode name is a shifted keycode (e.g. KC_AT, KC_EXLM) */
 export function isShiftedKeycode(qmkId: string): boolean {
   return SHIFTED_IDS.has(qmkId)
 }
@@ -44,36 +44,36 @@ export function isShiftedKeycode(qmkId: string): boolean {
 /** Look up the shifted counterpart of a base keycode, if any */
 export function getShiftedKeycode(qmkId: string): Keycode | null {
   const shiftedId = SHIFTED_MAP[qmkId]
-  return shiftedId ? (findKeycode(shiftedId) ?? null) : null
+  return shiftedId ? findKeycode(shiftedId) ?? null : null
 }
+
+export type SplitKeySelectedPart = 'base' | 'shifted' | 'both'
 
 export interface SplitKeyProps {
   base: Keycode
   shifted: Keycode
-  onClick?: (keycode: Keycode, event: React.MouseEvent) => void
+  onClick?: (keycode: Keycode, event: React.MouseEvent, index: number) => void
   onDoubleClick?: (keycode: Keycode) => void
   onHover?: (keycode: Keycode, rect: DOMRect) => void
   onHoverEnd?: () => void
   highlightedKeycodes?: Set<string>
-  pickerSelectedKeycodes?: Set<string>
+  /** Which half of the split key is selected */
+  selectedPart?: SplitKeySelectedPart
+  /** Index of the base (bottom half) keycode in the expanded list */
+  index: number
+  /** Index of the shifted (top half) keycode in the expanded list */
+  shiftedIndex: number
   baseDisplayLabel?: string
   shiftedDisplayLabel?: string
 }
 
 function splitHalfClass(highlighted?: boolean, selected?: boolean, remapped?: boolean): string {
-  const text = selected
-    ? 'text-accent'
-    : highlighted
-      ? 'text-accent'
-      : remapped
-        ? 'text-key-label-remap'
-        : 'text-picker-item-text'
+  const text = selected ? 'text-accent' : highlighted ? 'text-accent' : remapped ? 'text-key-label-remap' : 'text-picker-item-text'
   const bg = selected ? 'bg-accent/20' : highlighted ? 'bg-accent/10' : ''
   return `${text} ${bg}`
 }
 
-const SPLIT_HALF_BASE =
-  'flex-1 cursor-pointer flex items-center justify-center text-[10px] leading-tight whitespace-nowrap transition-colors hover:bg-picker-item-hover'
+const SPLIT_HALF_BASE = 'flex-1 cursor-pointer flex items-center justify-center text-[10px] leading-tight whitespace-nowrap transition-colors hover:bg-picker-item-hover'
 
 function SplitKeyInner({
   base,
@@ -83,22 +83,22 @@ function SplitKeyInner({
   onHover,
   onHoverEnd,
   highlightedKeycodes,
-  pickerSelectedKeycodes,
+  selectedPart,
+  index,
+  shiftedIndex,
   baseDisplayLabel,
   shiftedDisplayLabel,
 }: SplitKeyProps) {
   const baseHighlighted = highlightedKeycodes?.has(base.qmkId)
-  const baseSelected = pickerSelectedKeycodes?.has(base.qmkId)
+  const baseSelected = selectedPart === 'base' || selectedPart === 'both'
   const shiftHighlighted = highlightedKeycodes?.has(shifted.qmkId)
-  const shiftSelected = pickerSelectedKeycodes?.has(shifted.qmkId)
+  const shiftSelected = selectedPart === 'shifted' || selectedPart === 'both'
 
   const anySelected = baseSelected || shiftSelected
   const anyHighlighted = baseHighlighted || shiftHighlighted
   const outerBorder = anySelected
     ? 'border-accent'
-    : anyHighlighted
-      ? 'border-accent/50'
-      : 'border-picker-item-border'
+    : anyHighlighted ? 'border-accent/50' : 'border-picker-item-border'
   const outerBg = !anySelected && !anyHighlighted ? 'bg-picker-item-bg' : ''
 
   const rawBaseLabel = base.label.includes('\n') ? base.label.split('\n')[1] : base.label
@@ -107,15 +107,14 @@ function SplitKeyInner({
 
   // When display labels are remapped, find the keycode matching the displayed symbol for tooltip
   const hoverBase = (baseDisplayLabel ? findKeycodeByLabel(baseDisplayLabel) : undefined) ?? base
-  const hoverShifted =
-    (shiftedDisplayLabel ? findKeycodeByLabel(shiftedDisplayLabel) : undefined) ?? shifted
+  const hoverShifted = (shiftedDisplayLabel ? findKeycodeByLabel(shiftedDisplayLabel) : undefined) ?? shifted
 
   return (
     <div className={`flex h-full w-full flex-col rounded border ${outerBorder} ${outerBg}`}>
       <button
         type="button"
         className={`${SPLIT_HALF_BASE} rounded-t ${splitHalfClass(shiftHighlighted, shiftSelected, shiftedDisplayLabel != null)}`}
-        onClick={(e) => onClick?.(shifted, e)}
+        onClick={(e) => onClick?.(shifted, e, shiftedIndex)}
         onDoubleClick={() => onDoubleClick?.(shifted)}
         onMouseEnter={(e) => onHover?.(hoverShifted, e.currentTarget.getBoundingClientRect())}
         onMouseLeave={onHoverEnd}
@@ -125,7 +124,7 @@ function SplitKeyInner({
       <button
         type="button"
         className={`${SPLIT_HALF_BASE} rounded-b ${splitHalfClass(baseHighlighted, baseSelected, baseDisplayLabel != null)}`}
-        onClick={(e) => onClick?.(base, e)}
+        onClick={(e) => onClick?.(base, e, index)}
         onDoubleClick={() => onDoubleClick?.(base)}
         onMouseEnter={(e) => onHover?.(hoverBase, e.currentTarget.getBoundingClientRect())}
         onMouseLeave={onHoverEnd}

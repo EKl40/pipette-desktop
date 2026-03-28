@@ -9,6 +9,7 @@ export interface DeviceConnectionState {
   connecting: boolean
   error: string | null
   isDummy: boolean
+  isPipetteFile: boolean
 }
 
 /** Polling interval for device auto-detection and disconnect monitoring (ms) */
@@ -20,7 +21,9 @@ export const POLL_TIMEOUT_MS = 5000
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Poll timeout')), ms)),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Poll timeout')), ms),
+    ),
   ])
 }
 
@@ -31,11 +34,16 @@ export function useDeviceConnection() {
     connecting: false,
     error: null,
     isDummy: false,
+    isPipetteFile: false,
   })
   const mountedRef = useRef(true)
   const connectedDeviceRef = useRef<DeviceInfo | null>(null)
   const isDummyRef = useRef(false)
-  const suppressDisconnectRef = useRef(false)
+    const suppressDisconnectRef = useRef(false)
+  const deviceListActiveRef = useRef(false)
+  // Skip all USB activity when suspended (e.g. during unlock dialog).
+  // USB device enumeration disrupts firmware operations like unlock counter.
+  const pollSuspendedRef = useRef(false)
 
   useEffect(() => {
     mountedRef.current = true
@@ -69,7 +77,6 @@ export function useDeviceConnection() {
       const success = await window.vialAPI.openDevice(
         device.vendorId,
         device.productId,
-        device.serialNumber,
       )
       if (mountedRef.current) {
         if (success) {
@@ -111,6 +118,30 @@ export function useDeviceConnection() {
         ...s,
         connectedDevice: dummyDevice,
         isDummy: true,
+        isPipetteFile: false,
+        connecting: false,
+        error: null,
+      }))
+    }
+  }, [])
+
+  const connectPipetteFile = useCallback((deviceName: string) => {
+    const pipetteFileDevice: DeviceInfo = {
+      vendorId: 0,
+      productId: 0,
+      productName: deviceName,
+      serialNumber: '',
+      type: 'vial',
+    }
+    // Update refs immediately to avoid stale-ref races
+    connectedDeviceRef.current = pipetteFileDevice
+    isDummyRef.current = true
+    if (mountedRef.current) {
+      setState((s) => ({
+        ...s,
+        connectedDevice: pipetteFileDevice,
+        isDummy: true,
+        isPipetteFile: true,
         connecting: false,
         error: null,
       }))
@@ -128,18 +159,9 @@ export function useDeviceConnection() {
       }
     } finally {
       if (mountedRef.current) {
-        setState((s) => ({ ...s, connectedDevice: null, isDummy: false }))
+        setState((s) => ({ ...s, connectedDevice: null, isDummy: false, isPipetteFile: false }))
       }
     }
-  }, [])
-
-  /**
-   * Suppress disconnect detection during DFU flashing.
-   * While suppressed, the health-check poll is skipped so the keyboard
-   * editor stays visible even though the HID device is gone.
-   */
-  const setSuppressDisconnect = useCallback((suppress: boolean) => {
-    suppressDisconnectRef.current = suppress
   }, [])
 
   // Initial device list fetch
@@ -159,7 +181,7 @@ export function useDeviceConnection() {
       connectedDeviceRef.current = null
       isDummyRef.current = false
       if (mountedRef.current) {
-        setState((s) => ({ ...s, connectedDevice: null, isDummy: false }))
+        setState((s) => ({ ...s, connectedDevice: null, isDummy: false, isPipetteFile: false }))
       }
     }
 
@@ -169,23 +191,35 @@ export function useDeviceConnection() {
     async function poll(): Promise<void> {
       if (!mountedRef.current || cancelled) return
 
-      if (connectedDeviceRef.current) {
-        // Skip health check for dummy keyboards and when disconnect is suppressed (DFU flashing)
-        if (!isDummyRef.current && !suppressDisconnectRef.current) {
-          const open = await withTimeout(window.vialAPI.isDeviceOpen(), POLL_TIMEOUT_MS).catch(
-            () => false,
-          )
-          if (!open) await handleDisconnect()
-        }
-      } else {
-        // Refresh device list for auto-detection
+      // Skip all USB activity while suspended (e.g. during unlock dialog)
+      if (pollSuspendedRef.current) {
+        if (!cancelled) timerId = setTimeout(poll, POLL_INTERVAL_MS)
+        return
+      }
+
+      // Refresh device list only when device picker is actively browsing
+      if (deviceListActiveRef.current || !connectedDeviceRef.current) {
         try {
-          const devices = await withTimeout(window.vialAPI.listDevices(), POLL_TIMEOUT_MS)
+          const devices = await withTimeout(
+            window.vialAPI.listDevices(),
+            POLL_TIMEOUT_MS,
+          )
           if (mountedRef.current) {
             setState((s) => ({ ...s, devices, error: null }))
           }
         } catch {
           // Ignore polling errors (including timeouts) to avoid flooding the UI
+        }
+      }
+
+      if (connectedDeviceRef.current) {
+        // Health check for connected device (skip for dummy keyboards)
+        if (!isDummyRef.current && !suppressDisconnectRef.current) {
+          const open = await withTimeout(
+            window.vialAPI.isDeviceOpen(),
+            POLL_TIMEOUT_MS,
+          ).catch(() => false)
+          if (!open) await handleDisconnect()
         }
       }
 
@@ -203,12 +237,21 @@ export function useDeviceConnection() {
     }
   }, []) // stable — uses refs internally
 
+    const setSuppressDisconnect = useCallback((suppress: boolean) => {
+        suppressDisconnectRef.current = suppress
+          }, [])
+  const setDeviceListActive = useCallback((active: boolean) => { deviceListActiveRef.current = active }, [])
+  const setPollSuspended = useCallback((suspended: boolean) => { pollSuspendedRef.current = suspended }, [])
+
   return {
     ...state,
     refreshDevices,
     connectDevice,
     connectDummy,
+    connectPipetteFile,
     disconnectDevice,
-    setSuppressDisconnect,
+    setDeviceListActive,
+    setPollSuspended,
+        setSuppressDisconnect,
   }
 }

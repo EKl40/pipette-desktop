@@ -3,26 +3,25 @@
 import type { Keycode } from '../../../shared/keycodes/keycodes'
 import type { SplitKeyMode } from '../../../shared/types/app-config'
 import { KeycodeButton } from './KeycodeButton'
-import { SplitKey, getShiftedKeycode } from './SplitKey'
+import { SplitKey, getShiftedKeycode, type SplitKeySelectedPart } from './SplitKey'
 
 interface Props {
   keycodes: Keycode[]
-  onClick?: (keycode: Keycode, event: React.MouseEvent) => void
+  onClick?: (keycode: Keycode, event: React.MouseEvent, index: number) => void
   onDoubleClick?: (keycode: Keycode) => void
   onHover?: (keycode: Keycode, rect: DOMRect) => void
   onHoverEnd?: () => void
   highlightedKeycodes?: Set<string>
-  pickerSelectedKeycodes?: Set<string>
+  pickerSelectedIndices?: Set<number>
   isVisible?: (kc: Keycode) => boolean
   splitKeyMode?: SplitKeyMode
   remapLabel?: (qmkId: string) => string
+  /** Global index map: base qmkId → { baseIdx, shiftedIdx } */
+  keycodeIndexMap?: Map<string, { baseIdx: number; shiftedIdx?: number }>
 }
 
 /** Return remapped display label for a keycode, or undefined if unchanged */
-export function getRemapDisplayLabel(
-  qmkId: string,
-  remapLabel?: (qmkId: string) => string,
-): string | undefined {
+export function getRemapDisplayLabel(qmkId: string, remapLabel?: (qmkId: string) => string): string | undefined {
   if (!remapLabel) return undefined
   const remapped = remapLabel(qmkId)
   return remapped !== qmkId ? remapped : undefined
@@ -39,6 +38,21 @@ export function getSplitRemapProps(qmkId: string, remapLabel?: (qmkId: string) =
   return { baseDisplayLabel: remapped }
 }
 
+/** Compute the selectedPart for a split key by checking expanded indices */
+export function computeSplitSelectedPart(
+  pickerSelectedIndices: Set<number> | undefined,
+  baseIdx: number,
+  shiftedIdx: number,
+): SplitKeySelectedPart | undefined {
+  if (!pickerSelectedIndices) return undefined
+  const baseSel = pickerSelectedIndices.has(baseIdx)
+  const shiftSel = pickerSelectedIndices.has(shiftedIdx)
+  if (baseSel && shiftSel) return 'both'
+  if (baseSel) return 'base'
+  if (shiftSel) return 'shifted'
+  return undefined
+}
+
 export function KeycodeGrid({
   keycodes,
   onClick,
@@ -46,22 +60,27 @@ export function KeycodeGrid({
   onHover,
   onHoverEnd,
   highlightedKeycodes,
-  pickerSelectedKeycodes,
+  pickerSelectedIndices,
   isVisible,
   splitKeyMode,
   remapLabel,
+  keycodeIndexMap,
 }: Props): React.ReactNode {
   const visible = isVisible ? keycodes.filter(isVisible) : keycodes
   const useSplit = splitKeyMode !== 'flat'
 
   return (
     <div className="flex flex-wrap gap-1">
-      {visible.map((kc) => {
+      {visible.map((kc, visibleIdx) => {
+        const entry = keycodeIndexMap?.get(kc.qmkId)
+        const baseIdx = entry?.baseIdx ?? visibleIdx
         const shifted = useSplit ? getShiftedKeycode(kc.qmkId) : null
-        if (shifted) {
+        const shiftedIdx = shifted ? entry?.shiftedIdx : undefined
+
+        if (shifted && shiftedIdx != null) {
           const splitRemap = getSplitRemapProps(kc.qmkId, remapLabel)
           return (
-            <div key={kc.qmkId} className="w-[44px] h-[44px]">
+            <div key={`${baseIdx}-${kc.qmkId}`} className="w-[44px] h-[44px]">
               <SplitKey
                 base={kc}
                 shifted={shifted}
@@ -70,7 +89,9 @@ export function KeycodeGrid({
                 onHover={onHover}
                 onHoverEnd={onHoverEnd}
                 highlightedKeycodes={highlightedKeycodes}
-                pickerSelectedKeycodes={pickerSelectedKeycodes}
+                selectedPart={computeSplitSelectedPart(pickerSelectedIndices, baseIdx, shiftedIdx)}
+                index={baseIdx}
+                shiftedIndex={shiftedIdx}
                 {...splitRemap}
               />
             </div>
@@ -79,14 +100,14 @@ export function KeycodeGrid({
         const displayLabel = getRemapDisplayLabel(kc.qmkId, remapLabel)
         return (
           <KeycodeButton
-            key={kc.qmkId}
+            key={`${baseIdx}-${kc.qmkId}`}
             keycode={kc}
-            onClick={onClick}
+            onClick={onClick ? (k, e) => onClick(k, e, baseIdx) : undefined}
             onDoubleClick={onDoubleClick}
             onHover={onHover}
             onHoverEnd={onHoverEnd}
             highlighted={highlightedKeycodes?.has(kc.qmkId)}
-            selected={pickerSelectedKeycodes?.has(kc.qmkId)}
+            selected={pickerSelectedIndices?.has(baseIdx)}
             displayLabel={displayLabel}
           />
         )
