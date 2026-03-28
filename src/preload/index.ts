@@ -459,6 +459,10 @@ const vialAPI = {
                                                                                 ipcRenderer.invoke(IpcChannels.HUB_UPLOAD_FAVORITE_POST, params),
                                                                                   hubUpdateFavoritePost: (params: HubUpdateFavoritePostParams): Promise<HubUploadResult> =>
                                                                                       ipcRenderer.invoke(IpcChannels.HUB_UPDATE_FAVORITE_POST, params),
+    syncFetchRemoteBundle: (syncUnit: string): Promise<unknown> =>
+        ipcRenderer.invoke(IpcChannels.SYNC_FETCH_REMOTE_BUNDLE, syncUnit),
+          notificationFetch: (): Promise<NotificationFetchResult> =>
+              ipcRenderer.invoke(IpcChannels.NOTIFICATION_FETCH),
   favoriteStoreSetHubPostId: (type: string, entryId: string, hubPostId: string | null): Promise<{ success: boolean; error?: string }> =>    ipcRenderer.invoke(IpcChannels.FAVORITE_STORE_SET_HUB_POST_ID, type, entryId, hubPostId),
 
   // --- Snapshot Store extensions ---
