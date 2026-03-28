@@ -88,17 +88,7 @@ export function useKeyboard() {
     pipetteFileQmkSettingsGet, pipetteFileQmkSettingsSet, pipetteFileQmkSettingsReset,
   } = useKeyboardPersistence(setState, refs, bumpActivity, bootGuardRef, waitForUnlock)
 
-    /** Reload keychron state from the keyboard. Call after GUI setting changes. */
-      const refreshKeychron = useCallback(async () => {
-          try {
-                const kcState = await window.vialAPI.keychronReload()
-                      if (kcState) {
-                              setState((s) => ({ ...s, keychron: kcState as KeychronState }))
-                                    }
-                                        } catch (err) {
-                                              console.error('[KB] refreshKeychron failed:', err)
-                                                  }
-                                                    }, [])
+  const refreshKeychron = useCallback(async () => { try { const kcState = await window.vialAPI.keychronReload(); if (kcState) { setState((s) => ({ ...s, keychron: kcState as KeychronState })) } } catch (err) { console.error("[KB] refreshKeychron failed:", err) } }, [])
   return {
     ...state,
     activityCount,
@@ -139,6 +129,7 @@ export function useKeyboard() {
     updateQmkSettingsValue,
     setLayerName,
     setSaveLayerNamesCallback,
-        refreshKeychron,
+    refreshKeychron,
+    setSuppressDisconnect: (v) => { suppressDisconnectRef.current = v },
   }
 }

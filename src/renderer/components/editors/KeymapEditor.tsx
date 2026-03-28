@@ -91,7 +91,7 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   basicViewType, onBasicViewTypeChange, splitKeyMode, onSplitKeyModeChange,
   quickSelect, onQuickSelectChange, keyboardLayout = 'qwerty', onKeyboardLayoutChange,
   onLock, onMatrixModeChange, onOpenLighting,
-    onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronFlasher,
+    onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronSocd, onOpenKeychronFlasher,
   comboEntries, onOpenCombo, onSetComboEntry,
   keyOverrideEntries, onOpenKeyOverride, onSetKeyOverrideEntry,
   altRepeatKeyEntries, onOpenAltRepeatKey, onSetAltRepeatKeyEntry,
@@ -605,10 +605,11 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
       { tab: 'keyOverride', key: 'koJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => setShowKoJsonEditor(true), testId: 'ko-json-editor-btn', enabled: !!keyOverrideEntries && keyOverrideEntries.length > 0 },
       { tab: 'altRepeatKey', key: 'arkJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => setShowArkJsonEditor(true), testId: 'ark-json-editor-btn', enabled: !!altRepeatKeyEntries && altRepeatKeyEntries.length > 0 },
       { tab: 'lighting', key: 'lighting', label: t('common.configuration'), onClick: onOpenLighting, testId: 'lighting-settings-btn', enabled: !!onOpenLighting },
-      { tab: 'quantum', key: 'keychron', label: t('keychron.settings', 'Keychron'), onClick: onOpenKeychron, testId: 'keychron-settings-btn', enabled: Boolean(onOpenKeychron) },
-      { tab: 'lighting', key: 'keychron-rgb', label: t('keychron.rgb', 'Keychron RGB'), onClick: onOpenKeychronRgb, testId: 'keychron-rgb-settings-btn', enabled: Boolean(onOpenKeychronRgb) },
-      { tab: 'quantum', key: 'keychron-analog', label: t('keychron.analog.title', 'Keychron HE'), onClick: onOpenKeychronAnalog, testId: 'keychron-analog-settings-btn', enabled: Boolean(onOpenKeychronAnalog) },
-      { tab: 'quantum', key: 'keychron-flasher', label: t('keychron.flasher.title', 'Keychron Flasher'), onClick: onOpenKeychronFlasher, testId: 'keychron-flasher-btn', enabled: Boolean(onOpenKeychronFlasher) },
+            { tab: 'quantum', key: 'keychron', label: t('keychron.settings', 'Keychron'), onClick: onOpenKeychron, testId: 'keychron-settings-btn', enabled: Boolean(onOpenKeychron) },
+                  { tab: 'lighting', key: 'keychron-rgb', label: t('keychron.rgb', 'Keychron RGB'), onClick: onOpenKeychronRgb, testId: 'keychron-rgb-settings-btn', enabled: Boolean(onOpenKeychronRgb) },
+                        { tab: 'quantum', key: 'keychron-analog', label: t('keychron.analog.title', 'Keychron HE'), onClick: onOpenKeychronAnalog, testId: 'keychron-analog-settings-btn', enabled: Boolean(onOpenKeychronAnalog) },
+                              { tab: 'quantum', key: 'keychron-socd', label: t('keychron.socd.title', 'Snap Click (SOCD)'), onClick: onOpenKeychronSocd, testId: 'keychron-socd-settings-btn', enabled: Boolean(onOpenKeychronSocd) },
+                                    { tab: 'quantum', key: 'keychron-flasher', label: t('keychron.flasher.title', 'Keychron Flasher'), onClick: onOpenKeychronFlasher, testId: 'keychron-flasher-btn', enabled: Boolean(onOpenKeychronFlasher) },
     ]
     const content: Record<string, React.ReactNode> = {}
     const grouped = new Map<string, typeof buttonDefs>()
@@ -622,7 +623,7 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
       )
     }
     return content
-  }, [tapDanceEntries, comboEntries, keyOverrideEntries, altRepeatKeyEntries, deserializedMacros, tapHoldSupported, mouseKeysSupported, magicSupported, autoShiftSupported, graveEscapeSupported, oneShotKeysSupported, comboSettingsSupported, onOpenLighting, onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronFlasher, t, openSettings])
+  }, [tapDanceEntries, comboEntries, keyOverrideEntries, altRepeatKeyEntries, deserializedMacros, tapHoldSupported, mouseKeysSupported, magicSupported, autoShiftSupported, graveEscapeSupported, oneShotKeysSupported, comboSettingsSupported, onOpenLighting, onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronSocd, onOpenKeychronFlasher, t, openSettings])
 
   const tabContentOverride = useTileContentOverride(tapDanceEntries, deserializedMacros, handleKeycodeSelect, {
     comboEntries, onOpenCombo, keyOverrideEntries, onOpenKeyOverride, altRepeatKeyEntries, onOpenAltRepeatKey,

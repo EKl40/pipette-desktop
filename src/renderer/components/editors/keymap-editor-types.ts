@@ -98,6 +98,7 @@ export interface KeymapEditorProps {
   onOpenKeychron?: () => void
   onOpenKeychronRgb?: () => void
   onOpenKeychronAnalog?: () => void
+    onOpenKeychronSocd?: () => void
   onOpenKeychronFlasher?: () => void
   comboEntries?: ComboEntry[]
   onOpenCombo?: (index: number) => void
