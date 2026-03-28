@@ -77,6 +77,7 @@ export function useDeviceConnection() {
       const success = await window.vialAPI.openDevice(
         device.vendorId,
         device.productId,
+        device.serialNumber,
       )
       if (mountedRef.current) {
         if (success) {

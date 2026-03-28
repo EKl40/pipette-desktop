@@ -1442,11 +1442,6 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
     state.wirelessBacklitTime = lpm.backlitTime
     state.wirelessIdleTime = lpm.idleTime
   }
-  if (state.hasWireless) {
-    const lpm = await getKeychronWirelessLpm()
-    state.wirelessBacklitTime = lpm.backlitTime
-    state.wirelessIdleTime = lpm.idleTime
-  }
 
   if (state.hasRgb) {
     state.rgb = await reloadKeychronRGB()
