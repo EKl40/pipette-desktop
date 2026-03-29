@@ -46,7 +46,7 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-            arch: arm64
+            arch: universal
           - os: windows-latest
             platform: win
             arch: x64
