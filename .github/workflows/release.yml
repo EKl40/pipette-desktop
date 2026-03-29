@@ -83,11 +83,12 @@ jobs:
       # macOS: build with Apple code signing & notarization
       - name: Build Electron app (macOS)
         if: matrix.platform == 'mac'
-        run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
+        run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.notarize=${{ secrets.APPLE_ID != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -114,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download unsigned Windows artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v7
         with:
           name: artifact-win
           path: unsigned
@@ -152,26 +153,36 @@ jobs:
     if: always() && startsWith(github.ref, 'refs/tags/') && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v7
         with:
           name: artifact-mac
+          path: .
+          merge-multiple: true
+        continue-on-error: true
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v7
         with:
           name: artifact-linux
+          path: .
+          merge-multiple: true
+        continue-on-error: true
 
       # Use signed artifact if available, otherwise fall back to unsigned
       - name: Download signed Windows artifact
         if: needs.sign-windows.result == 'success'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v7
         with:
           name: artifact-win-signed
+          path: .
+          merge-multiple: true
 
       - name: Download unsigned Windows artifact
         if: needs.sign-windows.result != 'success'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v7
         with:
           name: artifact-win
+          path: .
+          merge-multiple: true
 
       - uses: softprops/action-gh-release@v2
         with:
