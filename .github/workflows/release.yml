@@ -111,7 +111,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: artifact-${{ matrix.platform }}
+          name: artifact-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.exe
@@ -126,7 +126,7 @@ jobs:
       - name: Download unsigned Windows artifact
         uses: actions/download-artifact@v7
         with:
-          name: artifact-win
+          name: artifact-win-x64
           path: unsigned
 
       - name: Upload unsigned exe for SignPath
@@ -164,32 +164,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: artifact-mac
-          path: .
-          merge-multiple: true
-        continue-on-error: true
-
-      - uses: actions/download-artifact@v7
-        with:
-          name: artifact-linux
-          path: .
-          merge-multiple: true
-        continue-on-error: true
-
-      # Use signed artifact if available, otherwise fall back to unsigned
-      - name: Download signed Windows artifact
-        if: needs.sign-windows.result == 'success'
-        uses: actions/download-artifact@v7
-        with:
-          name: artifact-win-signed
-          path: .
-          merge-multiple: true
-
-      - name: Download unsigned Windows artifact
-        if: needs.sign-windows.result != 'success'
-        uses: actions/download-artifact@v7
-        with:
-          name: artifact-win
+          pattern: artifact-*
           path: .
           merge-multiple: true
 
