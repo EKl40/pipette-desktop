@@ -115,7 +115,11 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "universalOptions": {
+        "x64ArchFiles": "**/node-hid/prebuilds/HID-darwin-x64/*",
+        "arm64ArchFiles": "**/node-hid/prebuilds/HID-darwin-arm64/*"
+      }
     },
     "dmg": {
       "contents": [
