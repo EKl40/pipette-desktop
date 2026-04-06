@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { Fragment } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TapDanceEntry, ComboEntry, KeyOverrideEntry, AltRepeatKeyEntry } from '../../../shared/types/protocol'
 import { codeToLabel, findKeycode, type Keycode } from '../../../shared/keycodes/keycodes'
 import type { MacroAction } from '../../../preload/macro'
 
-const TILE_CONFIGURED =
-  'justify-start border-accent bg-accent/20 text-accent font-semibold hover:bg-accent/30'
-const TILE_EMPTY =
-  'justify-center border-accent/30 bg-accent/5 text-content-secondary hover:bg-accent/10'
+const MIN_VISIBLE_MACRO_ACTIONS = 6
+const GRID_COLUMNS = 12
+const GRID_GAP_PX = 4
+const TILE_PADDING_TOP = 4
+const TILE_LABEL_HEIGHT = 12
+const TILE_CONTENT_MT = 8
+const MACRO_LINE_HEIGHT = 12
+const MACRO_MORE_ROW_HEIGHT = 12
+
+const TILE_ENABLED = 'justify-start border-accent bg-accent/20 text-accent font-semibold hover:bg-accent/30'
+const TILE_DISABLED = 'justify-start border-accent/50 bg-accent/10 text-accent/70 font-semibold hover:bg-accent/15'
+const TILE_EMPTY = 'justify-center border-accent/30 bg-accent/5 text-content-secondary hover:bg-accent/10'
 
 function SettingsNote() {
   const { t } = useTranslation()
@@ -20,23 +28,32 @@ interface SettingsTileGridProps<T extends Record<string, unknown>> {
   entries: T[]
   fields: ReadonlyArray<{ key: keyof T & string; prefix: string }>
   isConfigured: (entry: T) => boolean
-  onOpen: (index?: number) => void
+  /** Optional enabled check for 3-state tiles (enabled / disabled / empty) */
+  isEnabled?: (entry: T) => boolean
+  onOpen: (index: number) => void
   testIdPrefix: string
 }
 
-function SettingsTileGrid<T extends Record<string, unknown>>({ entries, fields, isConfigured, onOpen, testIdPrefix }: SettingsTileGridProps<T>) {
+function tileStyle(configured: boolean, enabled?: boolean): string {
+  if (!configured) return TILE_EMPTY
+  if (enabled === false) return TILE_DISABLED
+  return TILE_ENABLED
+}
+
+function SettingsTileGrid<T extends Record<string, unknown>>({ entries, fields, isConfigured, isEnabled, onOpen, testIdPrefix }: SettingsTileGridProps<T>) {
   const { t } = useTranslation()
   return (
     <div>
       <div className="grid grid-cols-12 auto-rows-fr gap-1">
         {entries.map((entry, i) => {
           const configured = isConfigured(entry)
+          const enabled = configured && isEnabled ? isEnabled(entry) : undefined
           return (
             <button
               key={i}
               type="button"
               data-testid={`${testIdPrefix}-tile-${i}`}
-              className={`relative flex aspect-square min-h-0 flex-col items-start rounded-md border p-1 pl-1.5 text-[9px] leading-snug transition-colors ${configured ? TILE_CONFIGURED : TILE_EMPTY}`}
+              className={`relative flex aspect-square min-h-0 flex-col items-start rounded-md border p-1 pl-1.5 text-[9px] leading-snug transition-colors ${tileStyle(configured, enabled)}`}
               onClick={() => onOpen(i)}
             >
               <span className="absolute top-0.5 left-1 text-[8px] text-content-secondary/60">{i}</span>
@@ -98,12 +115,9 @@ const MACRO_PREFIX: Record<MacroAction['type'], string> = {
 
 function macroActionLabel(action: MacroAction): string {
   switch (action.type) {
-    case 'text':
-      return action.text
-    case 'delay':
-      return `${action.delay}ms`
-    default:
-      return action.keycodes.map(codeToLabel).join(' ')
+    case 'text': return action.text
+    case 'delay': return `${action.delay}ms`
+    default: return action.keycodes.map(codeToLabel).join(' ')
   }
 }
 
@@ -117,33 +131,22 @@ export function TdTileGrid({ entries, onSelect }: TdTileGridProps) {
   return (
     <div className="grid grid-cols-12 auto-rows-fr gap-1">
       {entries.map((entry, i) => {
-        const configured =
-          entry.onTap !== 0 ||
-          entry.onHold !== 0 ||
-          entry.onDoubleTap !== 0 ||
-          entry.onTapHold !== 0
+        const configured = entry.onTap !== 0 || entry.onHold !== 0 || entry.onDoubleTap !== 0 || entry.onTapHold !== 0
         return (
           <button
             key={i}
             type="button"
             data-testid={`td-tile-${i}`}
-            className={`relative flex aspect-square min-h-0 flex-col items-start rounded-md border p-1 pl-1.5 text-[9px] leading-snug transition-colors ${configured ? TILE_CONFIGURED : TILE_EMPTY}`}
-            onClick={() => {
-              const kc = findKeycode(`TD(${i})`)
-              if (kc) onSelect(kc)
-            }}
+            className={`relative flex aspect-square min-h-0 flex-col items-start rounded-md border p-1 pl-1.5 text-[9px] leading-snug transition-colors ${configured ? TILE_ENABLED : TILE_EMPTY}`}
+            onClick={() => { const kc = findKeycode(`TD(${i})`); if (kc) onSelect(kc) }}
           >
-            <span className="absolute top-0.5 left-1 text-[8px] text-content-secondary/60">
-              TD({i})
-            </span>
+            <span className="absolute top-0.5 left-1 text-[8px] text-content-secondary/60">TD({i})</span>
             {configured ? (
               <span className="mt-2 inline-grid grid-cols-[auto_1fr] gap-x-1 gap-y-px">
                 {TD_FIELDS.map(({ key, prefix }) => (
                   <Fragment key={key}>
                     <span className="text-left text-content-secondary/60">{prefix}</span>
-                    <span className="truncate text-left">
-                      {entry[key] !== 0 ? codeToLabel(entry[key]) : ''}
-                    </span>
+                    <span className="truncate text-left">{entry[key] !== 0 ? codeToLabel(entry[key]) : ''}</span>
                   </Fragment>
                 ))}
               </span>
@@ -164,10 +167,36 @@ interface MacroTileGridProps {
   onSelect: (keycode: Keycode) => void
 }
 
+function useMacroVisibleLines(gridRef: React.RefObject<HTMLDivElement | null>): number {
+  const [visibleLines, setVisibleLines] = useState(MIN_VISIBLE_MACRO_ACTIONS)
+
+  useEffect(() => {
+    const el = gridRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const gridWidth = entry.contentRect.width
+        const tileWidth = (gridWidth - GRID_GAP_PX * (GRID_COLUMNS - 1)) / GRID_COLUMNS
+        const tileHeight = tileWidth
+        const contentHeight = tileHeight - TILE_PADDING_TOP - TILE_LABEL_HEIGHT - TILE_CONTENT_MT
+        const actionLines = Math.floor((contentHeight - MACRO_MORE_ROW_HEIGHT) / MACRO_LINE_HEIGHT)
+        const next = Math.max(MIN_VISIBLE_MACRO_ACTIONS, actionLines)
+        setVisibleLines((prev) => prev !== next ? next : prev)
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [gridRef])
+
+  return visibleLines
+}
+
 export function MacroTileGrid({ macros, onSelect }: MacroTileGridProps) {
   const { t } = useTranslation()
+  const gridRef = useRef<HTMLDivElement>(null)
+  const maxVisible = useMacroVisibleLines(gridRef)
   return (
-    <div className="grid grid-cols-12 auto-rows-fr gap-1">
+    <div ref={gridRef} className="grid grid-cols-12 auto-rows-fr gap-1">
       {macros.map((actions, i) => {
         const configured = actions.length > 0
         return (
@@ -175,30 +204,20 @@ export function MacroTileGrid({ macros, onSelect }: MacroTileGridProps) {
             key={i}
             type="button"
             data-testid={`macro-tile-${i}`}
-            className={`relative flex aspect-square min-h-0 flex-col items-start rounded-md border p-1 pl-1.5 text-[9px] leading-snug transition-colors ${configured ? TILE_CONFIGURED : TILE_EMPTY}`}
-            onClick={() => {
-              const kc = findKeycode(`M${i}`)
-              if (kc) onSelect(kc)
-            }}
+            className={`relative flex aspect-square min-h-0 flex-col items-start rounded-md border p-1 pl-1.5 text-[9px] leading-snug transition-colors ${configured ? TILE_ENABLED : TILE_EMPTY}`}
+            onClick={() => { const kc = findKeycode(`M${i}`); if (kc) onSelect(kc) }}
           >
-            <span className="absolute top-0.5 left-1 text-[8px] text-content-secondary/60">
-              M{i}
-            </span>
+            <span className="absolute top-0.5 left-1 text-[8px] text-content-secondary/60">M{i}</span>
             {configured ? (
-              <span className="mt-2 inline-grid grid-cols-[auto_1fr] gap-x-1 gap-y-px overflow-hidden">
-                {actions.slice(0, 4).map((action, j) => (
+              <span className="mt-2 inline-grid grid-cols-[auto_1fr] gap-x-1 gap-y-0 overflow-hidden">
+                {actions.slice(0, maxVisible).map((action, j) => (
                   <Fragment key={j}>
-                    <span className="text-left text-content-secondary/60">
-                      {MACRO_PREFIX[action.type]}
-                    </span>
+                    <span className="text-left text-content-secondary/60">{MACRO_PREFIX[action.type]}</span>
                     <span className="truncate text-left">{macroActionLabel(action)}</span>
                   </Fragment>
                 ))}
-                {actions.length > 4 && (
-                  <>
-                    <span />
-                    <span className="text-content-secondary/60">+{actions.length - 4}</span>
-                  </>
+                {actions.length > maxVisible && (
+                  <span className="col-span-2 text-center text-content-secondary/60">{t('keycodes.macroMoreActions', { count: actions.length - maxVisible })}</span>
                 )}
               </span>
             ) : (
@@ -213,14 +232,14 @@ export function MacroTileGrid({ macros, onSelect }: MacroTileGridProps) {
   )
 }
 
-export function ComboTileGrid({ entries, onOpenCombo }: { entries: ComboEntry[]; onOpenCombo: (index?: number) => void }) {
+export function ComboTileGrid({ entries, onOpenCombo }: { entries: ComboEntry[]; onOpenCombo: (index: number) => void }) {
   return <SettingsTileGrid entries={entries} fields={COMBO_FIELDS} isConfigured={(e) => e.key1 !== 0 || e.key2 !== 0} onOpen={onOpenCombo} testIdPrefix="combo" />
 }
 
-export function KeyOverrideTileGrid({ entries, onOpen }: { entries: KeyOverrideEntry[]; onOpen: (index?: number) => void }) {
-  return <SettingsTileGrid entries={entries} fields={KEY_OVERRIDE_FIELDS} isConfigured={(e) => e.enabled || e.triggerKey !== 0 || e.replacementKey !== 0} onOpen={onOpen} testIdPrefix="ko" />
+export function KeyOverrideTileGrid({ entries, onOpen }: { entries: KeyOverrideEntry[]; onOpen: (index: number) => void }) {
+  return <SettingsTileGrid entries={entries} fields={KEY_OVERRIDE_FIELDS} isConfigured={(e) => e.enabled || e.triggerKey !== 0 || e.replacementKey !== 0} isEnabled={(e) => e.enabled} onOpen={onOpen} testIdPrefix="ko" />
 }
 
-export function AltRepeatKeyTileGrid({ entries, onOpen }: { entries: AltRepeatKeyEntry[]; onOpen: (index?: number) => void }) {
-  return <SettingsTileGrid entries={entries} fields={ALT_REPEAT_KEY_FIELDS} isConfigured={(e) => e.enabled || e.lastKey !== 0 || e.altKey !== 0} onOpen={onOpen} testIdPrefix="arep" />
+export function AltRepeatKeyTileGrid({ entries, onOpen }: { entries: AltRepeatKeyEntry[]; onOpen: (index: number) => void }) {
+  return <SettingsTileGrid entries={entries} fields={ALT_REPEAT_KEY_FIELDS} isConfigured={(e) => e.enabled || e.lastKey !== 0 || e.altKey !== 0} isEnabled={(e) => e.enabled} onOpen={onOpen} testIdPrefix="arep" />
 }

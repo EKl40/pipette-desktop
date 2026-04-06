@@ -102,6 +102,9 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   typingTestMode, onTypingTestModeChange, onSaveTypingTestResult, typingTestHistory,
   typingTestConfig: savedTypingTestConfig, typingTestLanguage: savedTypingTestLanguage,
   onTypingTestConfigChange, onTypingTestLanguageChange,
+  typingTestViewOnly, onTypingTestViewOnlyChange,
+  typingTestViewOnlyWindowSize, onTypingTestViewOnlyWindowSizeChange,
+  typingTestViewOnlyAlwaysOnTop, onTypingTestViewOnlyAlwaysOnTopChange,
   deviceName, isDummy, onExportLayoutPdfAll, onExportLayoutPdfCurrent,
   favHubOrigin, favHubNeedsDisplayName, favHubUploading, favHubUploadResult,
   onFavUploadToHub, onFavUpdateOnHub, onFavRemoveFromHub, onFavRenameOnHub,
@@ -120,6 +123,7 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   const [selectedFileUid, setSelectedFileUid] = useState<string | null>(null)
   const [storedEntries, setStoredEntries] = useState<SnapshotMeta[]>([])
   const [fileBrowseView, setFileBrowseView] = useState<'list' | 'entries'>('list')
+  const [pickerLoadError, setPickerLoadError] = useState<string | null>(null)
   const [probeStatus, setProbeStatus] = useState<'idle' | 'probing' | 'error'>('idle')
   const [deviceBrowsing, setDeviceBrowsing] = useState(true)
   const [pickerScale, setPickerScale] = useState<number | undefined>(undefined)
@@ -148,6 +152,7 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
     rows, cols, getMatrixState, unlocked, onUnlock, onMatrixModeChange, keymap,
     typingTestMode, onTypingTestModeChange, savedTypingTestConfig, savedTypingTestLanguage,
     onTypingTestConfigChange, onTypingTestLanguageChange, onSaveTypingTestResult, typingTestHistory,
+    typingTestViewOnly,
   })
 
   // --- Layout options ---
@@ -239,8 +244,14 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   const loadPickerFromJson = useCallback((jsonStr: string) => {
     try {
       const parsed = JSON.parse(jsonStr)
-      if (!isVilFile(parsed)) return false
-      if (isVilFileV1(parsed) || !parsed.definition) return false
+      if (!isVilFile(parsed)) {
+        setPickerLoadError(t('error.loadFailed'))
+        return false
+      }
+      if (isVilFileV1(parsed) || !parsed.definition) {
+        setPickerLoadError(t('error.vilV1NotSupported'))
+        return false
+      }
       const fileLayout = parseKle(parsed.definition.layouts.keymap)
       const fileKeymap = recordToMap(parsed.keymap)
       const fileLayers = deriveLayerCount(parsed.keymap)
@@ -274,20 +285,31 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
       setPickerLayer(0)
       setFileBrowseView('list')
       return true
-    } catch { return false }
-  }, [remapLabel])
+    } catch {
+      setPickerLoadError(t('error.loadFailed'))
+      return false
+    }
+  }, [remapLabel, t])
 
   const handleLoadPickerFile = useCallback(async () => {
+    setPickerLoadError(null)
     const result = await window.vialAPI.loadLayout(t('editor.keymap.pickerLoadFile'), ['.pipette', '.vil'])
-    if (!result.success || !result.data) return
+    if (!result.success || !result.data) {
+      if (result.error !== 'cancelled') setPickerLoadError(t('error.loadFailed'))
+      return
+    }
     loadPickerFromJson(result.data)
   }, [t, loadPickerFromJson])
 
   const handleLoadSnapshotEntry = useCallback(async (uid: string, entryId: string) => {
+    setPickerLoadError(null)
     const result = await window.vialAPI.snapshotStoreLoad(uid, entryId)
-    if (!result.success || !result.data) return
+    if (!result.success || !result.data) {
+      setPickerLoadError(t('error.loadFailed'))
+      return
+    }
     loadPickerFromJson(result.data)
-  }, [loadPickerFromJson])
+  }, [t, loadPickerFromJson])
 
   // --- Device probe handler ---
   const handleProbeDevice = useCallback(async (vendorId: number, productId: number, serialNumber: string) => {
@@ -711,12 +733,17 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
           /* --- File browse view --- */
           <div className="mx-auto flex w-full max-w-md flex-col px-3 py-3">
             <div className="flex min-h-[340px] max-h-[340px] flex-col gap-1.5 overflow-y-auto pb-2 pr-1">
+            {pickerLoadError && (
+              <div className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
+                {pickerLoadError}
+              </div>
+            )}
             {fileBrowseView === 'list' && (
               <span className="mb-1 text-xs text-content-secondary">{t('editor.keymap.pickerSavedFiles')}</span>
             )}
             {fileBrowseView === 'entries' && (
               <button type="button" className="mb-2 self-start text-xs text-content-secondary hover:text-content"
-                onClick={() => { setFileBrowseView('list'); setSelectedFileUid(null) }}>
+                onClick={() => { setFileBrowseView('list'); setSelectedFileUid(null); setPickerLoadError(null) }}>
                 ← {t('common.back')}
               </button>
             )}
@@ -724,7 +751,7 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
               storedKeyboards.length > 0 ? storedKeyboards.map((kb) => (
                 <button key={kb.uid} type="button"
                   className="flex items-center justify-between rounded-lg border border-edge px-3 py-2 text-left text-sm transition-colors hover:bg-surface-dim"
-                  onClick={() => { setSelectedFileUid(kb.uid); setFileBrowseView('entries') }}>
+                  onClick={() => { setSelectedFileUid(kb.uid); setFileBrowseView('entries'); setPickerLoadError(null) }}>
                   <span className="font-medium text-content">{kb.name}</span>
                   <span className="text-xs text-content-muted">›</span>
                 </button>
@@ -779,14 +806,14 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
         <div className="flex items-center gap-1">
           <button type="button" className={sourceBtnClass(pickerSource === 'device')}
             onClick={() => {
-              setPickerSource('device'); setPickerLayer(0); setPickerFileData(null); setPickerScale(undefined); setDeviceBrowsing(true); setProbeStatus('idle')
+              setPickerSource('device'); setPickerLayer(0); setPickerFileData(null); setPickerScale(undefined); setDeviceBrowsing(true); setProbeStatus('idle'); setPickerLoadError(null)
             }}>
             {pickerSource === 'device' && !deviceBrowsing
               ? t('editor.keymap.pickerBackToDevices')
               : t('editor.keymap.pickerSourceDevice')}
           </button>
           <button type="button" className={sourceBtnClass(pickerSource === 'file')}
-            onClick={() => { setPickerSource('file'); setPickerLayer(0); setPickerFileData(null); setPickerScale(undefined); setFileBrowseView('list'); setDeviceBrowsing(false) }}>
+            onClick={() => { setPickerSource('file'); setPickerLayer(0); setPickerFileData(null); setPickerScale(undefined); setFileBrowseView('list'); setDeviceBrowsing(false); setPickerLoadError(null) }}>
             {pickerSource === 'file' && pickerFileData ? t('editor.keymap.pickerBackToFiles') : t('editor.keymap.pickerSourceFile')}
           </button>
         </div>
@@ -863,13 +890,13 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   )
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className={`flex min-h-0 flex-1 flex-col ${typingTestMode && typingTestViewOnly ? '' : 'gap-3'}`}>
       <div
-        className="flex items-start gap-2 overflow-auto"
+        className={typingTestMode && typingTestViewOnly ? 'flex flex-1 items-stretch gap-2' : 'flex items-start gap-2 overflow-auto'}
         style={!typingTestMode && keyboardAreaMinHeight ? { minHeight: keyboardAreaMinHeight } : undefined}
         onClick={!typingTestMode ? handleDeselectClick : undefined}
       >
-        {toolbar}
+        {!(typingTestMode && typingTestViewOnly) && toolbar}
         <div className={typingTestMode ? 'flex min-w-0 flex-1 flex-col gap-3' : 'flex min-w-0 flex-1 items-center justify-center gap-4 overflow-auto'}>
           {typingTestMode ? (
             <TypingTestPane
@@ -889,6 +916,12 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
               keys={layout.keys}
               layerLabel={layerLabel(typingTest.effectiveLayer)}
               contentRef={keyboardContentRef}
+              viewOnly={typingTestViewOnly}
+              onViewOnlyChange={onTypingTestViewOnlyChange}
+              viewOnlyWindowSize={typingTestViewOnlyWindowSize}
+              onViewOnlyWindowSizeChange={onTypingTestViewOnlyWindowSizeChange}
+              viewOnlyAlwaysOnTop={typingTestViewOnlyAlwaysOnTop}
+              onViewOnlyAlwaysOnTopChange={onTypingTestViewOnlyAlwaysOnTopChange}
             />
           ) : (
             <KeyboardPane

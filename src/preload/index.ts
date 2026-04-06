@@ -507,6 +507,17 @@ const vialAPI = {
 
   // --- Special Commands ---
   jumpToBootloader: (): Promise<void> => protocol.jumpToBootloader(),
+  // --- Window Management ---
+  setWindowCompactMode: (enabled: boolean, compactSize?: { width: number; height: number }): Promise<{ width: number; height: number } | null> =>
+    ipcRenderer.invoke(IpcChannels.WINDOW_SET_COMPACT_MODE, enabled, compactSize),
+  setWindowAspectRatio: (ratio: number): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.WINDOW_SET_ASPECT_RATIO, ratio),
+  setWindowAlwaysOnTop: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.WINDOW_SET_ALWAYS_ON_TOP, enabled),
+  setWindowMinSize: (width: number, height: number): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.WINDOW_SET_MIN_SIZE, width, height),
+  isAlwaysOnTopSupported: (): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.WINDOW_IS_ALWAYS_ON_TOP_SUPPORTED),
 }
 
 contextBridge.exposeInMainWorld('vialAPI', vialAPI)

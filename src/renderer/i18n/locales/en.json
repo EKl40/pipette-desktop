@@ -238,8 +238,8 @@
     },
     "typingTest": {
       "title": "Typing Test",
-      "switchToTypingMode": "Switch to Typing Mode",
-      "exitTypingMode": "Exit Typing Mode",
+      "switchToTypingMode": "Typing Test",
+      "exitTypingMode": "Exit Typing Test",
       "restart": "Restart",
       "wpm": "WPM",
       "accuracy": "Accuracy",
@@ -264,7 +264,14 @@
         "all": "all"
       },
       "quoteSource": "-- {{source}}",
+      "viewOnly": "Typing View",
+      "exitViewOnly": "Exit Typing View",
+      "alwaysOnTop": "top",
+      "closeHint": "Click to open menu",
+      "resetSize": "Default Size",
+      "fitSize": "Fit Size",
       "baseLayer": "Base Layer",
+      "baseLayerShort": "Base",
       "paused": "Window lost focus",
       "layerNote": "Only MO / LT / LM layer switches are tracked. Other layer keys and advanced features may not be reflected.",
       "language": {
@@ -330,6 +337,7 @@
     "keyOverride": "Key Override",
     "altRepeatKey": "Alt Repeat Key",
     "settingsNote": "These features apply to the entire keyboard and cannot be assigned to individual keys.",
+    "macroMoreActions": "+{{count}} more",
     "user": "User",
     "midi": "MIDI",
     "group": {

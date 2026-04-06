@@ -237,8 +237,8 @@
     },
     "typingTest": {
       "title": "タイピングテスト",
-      "switchToTypingMode": "タイピングモードに切替",
-      "exitTypingMode": "タイピングモードを終了",
+      "switchToTypingMode": "タイピングテスト",
+      "exitTypingMode": "タイピングテスト終了",
       "restart": "やり直す",
       "wpm": "WPM",
       "accuracy": "正確性",
@@ -263,7 +263,14 @@
         "all": "全て"
       },
       "quoteSource": "-- {{source}}",
+      "viewOnly": "タイピングビュー",
+      "exitViewOnly": "タイピングビュー終了",
+      "alwaysOnTop": "最前面",
+      "closeHint": "クリックでメニューを開く",
+      "resetSize": "初期サイズ",
+      "fitSize": "フィット",
       "baseLayer": "Base Layer",
+      "baseLayerShort": "Base",
       "paused": "ウィンドウがフォーカスを失いました",
       "layerNote": "レイヤー切替の追随は MO / LT / LM のみ対応しています。その他のレイヤーキーや特殊機能は反映されない場合があります。",
       "language": {
@@ -329,6 +336,7 @@
     "keyOverride": "Key Override",
     "altRepeatKey": "Alt Repeat Key",
     "settingsNote": "この機能はキーボード全体に適用され、個別のキーに割り当てることはできません。",
+    "macroMoreActions": "残り {{count}} 行",
     "user": "User",
     "midi": "MIDI",
     "group": {
@@ -414,7 +422,7 @@
     "uidMismatchConfirm": "このレイアウトファイルは別のキーボード用に作成されました。読み込みますか？"
   },
   "statusBar": {
-    "autoAdvance": "Auto Move",
+    "autoAdvance": "自動移動",
     "locked": "ロック中",
     "unlocked": "アンロック",
     "keyTester": "キーテスター",
