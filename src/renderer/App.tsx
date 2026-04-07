@@ -574,29 +574,48 @@ export function App() {
   const handleSilentBackup = useCallback(async (): Promise<boolean> => {
     const entryId = await layoutStore.saveLayout('Pre-Flash Auto-Backup')
     if (entryId) {
-      localStorage.setItem('pendingDeviceRestore', JSON.stringify({ uid: keyboard.uid, entryId }))
+      localStorage.setItem('pendingDeviceRestore', JSON.stringify({
+        uid: keyboard.uid,
+        entryId,
+        vendorId: device.connectedDevice?.vendorId ?? null,
+        productId: device.connectedDevice?.productId ?? null,
+      }))
       return true
     }
     return false
-  }, [layoutStore, keyboard.uid])
+  }, [layoutStore, keyboard.uid, device.connectedDevice])
 
   useEffect(() => {
-    if (device.isDummy || !layoutStore) return
+    if (device.isDummy || keyboard.loading || !keyboard.uid) return
     const pendingRestoreStr = localStorage.getItem('pendingDeviceRestore')
     if (pendingRestoreStr) {
       try {
-        const pendingRestore = JSON.parse(pendingRestoreStr)
-        if (pendingRestore.uid === keyboard.uid && pendingRestore.entryId) {
-          localStorage.removeItem('pendingDeviceRestore')
+        const pendingRestore = JSON.parse(pendingRestoreStr) as {
+          uid?: string
+          entryId?: string
+          vendorId?: number | null
+          productId?: number | null
+        }
+        const sameUid = pendingRestore.uid === keyboard.uid
+        const sameDevice =
+          pendingRestore.vendorId != null &&
+          pendingRestore.productId != null &&
+          device.connectedDevice?.vendorId === pendingRestore.vendorId &&
+          device.connectedDevice?.productId === pendingRestore.productId
+
+        if ((sameUid || sameDevice) && pendingRestore.entryId && pendingRestore.uid) {
           console.log(`Auto-restoring layout for flashed device ${keyboard.uid} from backup ${pendingRestore.entryId}`)
-          // We fire and forget loading the layout so it quietly applies in the background
-          layoutStore.loadLayout(pendingRestore.entryId).catch(() => {})
+          layoutStore.loadLayout(pendingRestore.entryId, pendingRestore.uid)
+            .then((ok) => {
+              if (ok) localStorage.removeItem('pendingDeviceRestore')
+            })
+            .catch(() => {})
         }
       } catch {
         localStorage.removeItem('pendingDeviceRestore')
       }
     }
-  }, [device.isDummy, keyboard.uid, layoutStore.loadLayout])
+  }, [device.isDummy, device.connectedDevice, keyboard.loading, keyboard.uid, layoutStore.loadLayout])
 
   const handleExportKeymapC = useCallback(async () => {
     const ok = await fileIO.exportKeymapC()

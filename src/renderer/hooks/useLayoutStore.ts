@@ -60,11 +60,11 @@ export function useLayoutStore({
     }
   }, [deviceUid, deviceName, serialize, refreshEntries, t])
 
-  const loadLayout = useCallback(async (entryId: string): Promise<boolean> => {
+  const loadLayout = useCallback(async (entryId: string, sourceUid = deviceUid): Promise<boolean> => {
     setError(null)
     setLoading(true)
     try {
-      const result = await window.vialAPI.snapshotStoreLoad(deviceUid, entryId)
+      const result = await window.vialAPI.snapshotStoreLoad(sourceUid, entryId)
       if (!result.success || !result.data) {
         setError(t('layoutStore.loadFailed'))
         return false
@@ -87,7 +87,7 @@ export function useLayoutStore({
         })
         // Fire-and-forget: persist migrated file without blocking the load
         window.vialAPI.snapshotStoreUpdate(
-          deviceUid,
+          sourceUid,
           entryId,
           JSON.stringify(migrated, null, 2),
           migrated.version,
@@ -104,7 +104,7 @@ export function useLayoutStore({
     } finally {
       setLoading(false)
     }
-  }, [deviceUid, applyVilFile, currentDefinition, t])
+  }, [deviceUid, applyVilFile, currentDefinition, serialize, t])
 
   const renameEntry = useCallback(async (entryId: string, newLabel: string): Promise<boolean> => {
     setError(null)

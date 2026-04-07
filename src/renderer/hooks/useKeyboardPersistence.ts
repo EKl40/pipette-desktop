@@ -4,8 +4,10 @@ import { useCallback } from 'react'
 import type { KeyboardDefinition, VilFile } from '../../shared/types/protocol'
 import { mapToRecord, recordToMap, VILFILE_CURRENT_VERSION } from '../../shared/vil-file'
 import { vilToVialGuiJson } from '../../shared/vil-compat'
+import { serializeKeychronState, restoreKeychronSettings } from '../../shared/keychron-serialize'
 import { splitMacroBuffer, deserializeMacro, macroActionsToJson, jsonToMacroActions } from '../../preload/macro'
 import { parseKle } from '../../shared/kle/kle-parser'
+import type { KeychronState } from '../../shared/types/keychron'
 import type { SetState, KeyboardRefs, BootGuardRef } from './keyboard-types'
 import { emptyState } from './keyboard-types'
 
@@ -22,6 +24,18 @@ export function useKeyboardPersistence(
     const s = stateRef.current
     const macrosSrc = s.parsedMacros
       ?? splitMacroBuffer(s.macroBuffer, s.macroCount).map((m) => deserializeMacro(m, s.vialProtocol))
+    const keychron = serializeKeychronState(
+      s.keychron,
+      s.vialRGBSupported.length > 0
+        ? {
+            mode: s.vialRGBMode,
+            speed: s.vialRGBSpeed,
+            hue: s.vialRGBHue,
+            sat: s.vialRGBSat,
+            val: s.vialRGBVal,
+          }
+        : null,
+    )
     return {
       version: VILFILE_CURRENT_VERSION,
       uid: s.uid,
@@ -36,6 +50,7 @@ export function useKeyboardPersistence(
       altRepeatKey: s.altRepeatKeyEntries,
       qmkSettings: s.qmkSettingsValues,
       layerNames: s.layerNames,
+      keychron,
       viaProtocol: s.viaProtocol,
       vialProtocol: s.vialProtocol,
       featureFlags: s.dynamicCounts.featureFlags,
@@ -135,6 +150,24 @@ export function useKeyboardPersistence(
       // Apply QMK settings
       for (const [qsid, data] of Object.entries(vil.qmkSettings)) {
         await api.qmkSettingsSet(Number(qsid), data)
+      }
+
+      if (vil.keychron && stateRef.current.keychron) {
+        try {
+          await restoreKeychronSettings(
+            vil.keychron,
+            stateRef.current.keychron,
+            api,
+            stateRef.current.rows,
+            stateRef.current.cols,
+          )
+          const kcState = await api.keychronReload()
+          if (kcState) {
+            setState((s) => ({ ...s, keychron: kcState as KeychronState }))
+          }
+        } catch (err) {
+          console.error('[KB] Keychron settings restore failed:', err)
+        }
       }
     }
 

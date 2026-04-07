@@ -167,6 +167,24 @@ describe('useLayoutStore – loadLayout', () => {
     expect(opts.applyVilFile).toHaveBeenCalledWith(VALID_VIL)
   })
 
+  it('can load from a different source uid than the current device', async () => {
+    mockSnapshotStoreLoad.mockResolvedValueOnce({
+      success: true,
+      data: VALID_VIL_JSON,
+    })
+    const opts = createHookOptions({ deviceUid: 'new-device-uid' })
+    const { result } = renderHook(() => useLayoutStore(opts))
+
+    let ok: boolean | undefined
+    await act(async () => {
+      ok = await result.current.loadLayout('entry-1', VALID_VIL.uid)
+    })
+
+    expect(ok).toBe(true)
+    expect(mockSnapshotStoreLoad).toHaveBeenCalledWith(VALID_VIL.uid, 'entry-1')
+    expect(opts.applyVilFile).toHaveBeenCalledOnce()
+  })
+
   it('returns false when IPC fails', async () => {
     mockSnapshotStoreLoad.mockResolvedValueOnce({
       success: false,

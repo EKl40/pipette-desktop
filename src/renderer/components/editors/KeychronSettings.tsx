@@ -216,11 +216,13 @@ export function KeychronSettings({ keychron, onSettingChanged }: Props) {
               checked={nkroEnabled}
               onChange={handleNkro}
               disabled={keychron.nkroAdaptive || !keychron.nkroSupported}
-              className="h-4 w-4"
+              className="h-4 w-4 disabled:cursor-not-allowed disabled:opacity-50"
               data-testid="keychron-nkro"
             />
-            <span className="text-sm">{t('keychron.enableNkro', 'Enable NKRO')}</span>
-            <span className="text-xs text-content-muted">
+            <span className={`text-sm ${keychron.nkroAdaptive || !keychron.nkroSupported ? 'text-content-muted' : ''}`}>
+              {t('keychron.enableNkro', 'Enable NKRO')}
+            </span>
+            <span className={`text-xs ${keychron.nkroAdaptive || !keychron.nkroSupported ? 'text-content-muted' : 'text-content-muted'}`}>
               {keychron.nkroAdaptive
                 ? t('keychron.nkroAdaptive', '(Adaptive — controlled by firmware)')
                 : keychron.nkroSupported
