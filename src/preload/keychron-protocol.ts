@@ -225,6 +225,17 @@ export async function getKeychronDefaultLayer(): Promise<number> {
   return -1
 }
 
+/**
+ * Get battery level percentage (0-100).
+ * Request: [0xAC]. Response: data[1]=battery percent (0 if on USB or unsupported).
+ * Only returns meaningful values when keyboard is on wireless (BT or 2.4 GHz).
+ */
+export async function getKeychronBatteryLevel(): Promise<number> {
+  const resp = await sendReceive(cmd(KC_GET_BATTERY_LEVEL))
+  if (resp[0] === KC_GET_BATTERY_LEVEL) return resp[1]
+  return 0
+}
+
 // =====================================================================
 // Debounce
 // =====================================================================
@@ -1452,6 +1463,10 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
       const lpm = await getKeychronWirelessLpm()
       state.wirelessBacklitTime = lpm.backlitTime
       state.wirelessIdleTime = lpm.idleTime
+    })())
+
+    featurePromises.push((async () => {
+      state.batteryLevel = await getKeychronBatteryLevel()
     })())
   }
 

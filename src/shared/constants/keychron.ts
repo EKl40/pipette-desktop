@@ -16,6 +16,7 @@ export const KC_GET_PROTOCOL_VERSION = 0xa0
 export const KC_GET_FIRMWARE_VERSION = 0xa1
 export const KC_GET_SUPPORT_FEATURE = 0xa2
 export const KC_GET_DEFAULT_LAYER = 0xa3
+export const KC_GET_BATTERY_LEVEL = 0xac
 export const KC_MISC_CMD_GROUP = 0xa7
 export const KC_KEYCHRON_RGB = 0xa8
 export const KC_ANALOG_MATRIX = 0xa9

@@ -133,6 +133,9 @@ export interface KeychronState {
   wirelessBacklitTime: number
   wirelessIdleTime: number
 
+  // Battery level (0-100%, only meaningful when on wireless)
+  batteryLevel: number
+
   // Feature detection helpers (computed from flags)
   hasDebounce: boolean
   hasNkro: boolean
@@ -177,6 +180,7 @@ export function emptyKeychronState(): KeychronState {
     snapClickEntries: [],
     wirelessBacklitTime: 30,
     wirelessIdleTime: 300,
+    batteryLevel: 0,
     hasDebounce: false,
     hasNkro: false,
     hasReportRate: false,

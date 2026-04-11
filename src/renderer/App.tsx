@@ -1636,6 +1636,7 @@ export function App() {
           comboActive={comboSupported && keyboard.comboEntries.some((e) => e.output !== 0)}
           altRepeatKeyActive={altRepeatKeySupported && keyboard.altRepeatKeyEntries.some((e) => e.enabled)}
           keyOverrideActive={keyOverrideSupported && keyboard.keyOverrideEntries.some((e) => e.enabled)}
+          batteryLevel={keyboard.keychron?.hasWireless ? keyboard.keychron?.batteryLevel : undefined}
           viewOnly={devicePrefs.typingTestViewOnly}
           onViewOnlyChange={() => {
             if (typingTestMode && devicePrefs.typingTestViewOnly) {

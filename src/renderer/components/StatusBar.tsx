@@ -22,6 +22,7 @@ interface Props {
   comboActive?: boolean
   altRepeatKeyActive?: boolean
   keyOverrideActive?: boolean
+  batteryLevel?: number
   viewOnly?: boolean
   onViewOnlyChange?: () => void
   onTypingTestModeChange?: () => void
@@ -41,6 +42,7 @@ export function StatusBar({
   comboActive,
   altRepeatKeyActive,
   keyOverrideActive,
+  batteryLevel,
   viewOnly,
   onViewOnlyChange,
   onTypingTestModeChange,
@@ -55,6 +57,11 @@ export function StatusBar({
     >
       <div className="flex items-center gap-3">
         <span>{deviceName}</span>
+        {batteryLevel !== undefined && batteryLevel > 0 && (
+          <span className="text-accent" data-testid="battery-level">
+            🔋{batteryLevel}%
+          </span>
+        )}
         {loadedLabel && (
           <>
             <span className="text-edge">|</span>
