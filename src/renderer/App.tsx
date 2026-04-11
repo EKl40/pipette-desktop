@@ -1556,7 +1556,7 @@ export function App() {
             onOpenLighting={lightingSupported ? () => setShowLightingModal(true) : undefined}
             onOpenKeychron={keychronSupported ? () => { keyboard.refreshKeychron(); setShowKeychronModal(true) } : undefined}
             onOpenKeychronRgb={(keyboard.keychron?.hasRgb && keyboard.keychron.rgb) ? () => setShowKeychronRgbModal(true) : undefined}
-            onOpenKeychronFlasher={keychronSupported ? () => setShowKeychronFlasherModal(true) : undefined}
+            onOpenKeychronFlasher={keychronSupported && !isBridge ? () => setShowKeychronFlasherModal(true) : undefined}
             onOpenKeychronAnalog={keyboard.keychron?.hasAnalog ? handleOpenKeychronAnalog : undefined}
             onOpenKeychronSocd={keyboard.keychron?.hasSnapClick ? () => setShowKeychronSocdModal(true) : undefined}
             comboEntries={comboSupported ? keyboard.comboEntries : undefined}

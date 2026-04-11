@@ -157,6 +157,14 @@ export const KeychronDfuFlasher = ({
   const handleFlash = async () => {
     if (!selectedFile) return
 
+    // Safety check: prevent flashing over wireless connection
+    if (originalDevice?.serialNumber?.startsWith('bridge:')) {
+      setLogs(['Error: DFU flashing over wireless (2.4 GHz) is not supported.',
+               'Wireless connections are unreliable for firmware updates.',
+               'Please connect the keyboard via USB cable to flash.'])
+      return
+    }
+
     setIsFlashing(true)
     setFlashSuccess(null)
     setProgress(0)
