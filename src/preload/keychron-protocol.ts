@@ -18,6 +18,7 @@ import {
   KC_GET_FIRMWARE_VERSION,
   KC_GET_SUPPORT_FEATURE,
   KC_GET_DEFAULT_LAYER,
+  KC_GET_BATTERY_LEVEL,
   KC_MISC_CMD_GROUP,
   KC_KEYCHRON_RGB,
   KC_SUCCESS,
@@ -232,6 +233,7 @@ export async function getKeychronDefaultLayer(): Promise<number> {
  */
 export async function getKeychronBatteryLevel(): Promise<number> {
   const resp = await sendReceive(cmd(KC_GET_BATTERY_LEVEL))
+  console.log("[KC] battery raw response:", Array.from(resp.slice(0, 8)))
   if (resp[0] === KC_GET_BATTERY_LEVEL) return resp[1]
   return 0
 }
@@ -1402,6 +1404,7 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
   state.miscFeatures = misc.features
 
   // Compute feature detection flags
+  console.log("[KC] features hex:", state.features.toString(16), "miscFeatures hex:", state.miscFeatures.toString(16))
   state.hasDebounce =
     !!(state.features & FEATURE_DYNAMIC_DEBOUNCE) || !!(state.miscFeatures & MISC_DEBOUNCE)
   state.hasNkro = !!(state.features & FEATURE_NKRO) || !!(state.miscFeatures & MISC_NKRO)
@@ -1411,6 +1414,7 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
   state.hasWireless =
     !!(state.features & (FEATURE_BLUETOOTH | FEATURE_P24G)) ||
     !!(state.miscFeatures & MISC_WIRELESS_LPM)
+  console.log("[KC] hasWireless:", state.hasWireless, "wireless flags:", !!(state.features & (FEATURE_BLUETOOTH | FEATURE_P24G)))
   state.hasRgb = !!(state.features & FEATURE_KEYCHRON_RGB)
   state.hasAnalog = !!(state.features & FEATURE_ANALOG_MATRIX)
   state.hasDfu = !!(state.miscFeatures & MISC_DFU_INFO) || state.mcuInfo.includes('STM32')
@@ -1466,7 +1470,13 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
     })())
 
     featurePromises.push((async () => {
-      state.batteryLevel = await getKeychronBatteryLevel()
+      try {
+        const bat = await getKeychronBatteryLevel()
+        console.log("[KC] battery level:", bat)
+        state.batteryLevel = bat
+      } catch (e) {
+        console.warn("[KC] battery fetch failed:", e)
+      }
     })())
   }
 
