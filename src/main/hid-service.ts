@@ -279,9 +279,10 @@ export function validateHidData(data: unknown, maxLen: number): number[] {
 /**
  * Send a 32-byte packet and receive a 32-byte response.
  * Serialized via mutex; retries on timeout up to HID_RETRY_COUNT times.
+ * For bridge devices, routing is handled by bridgeService which has its own retry logic.
  */
 export function sendReceive(data: number[]): Promise<number[]> {
-  // Route through bridge if active
+  // Route through bridge if active — bridge has its own retry logic (8 retries, 150ms delay, 1000ms timeout)
   if (usingBridge) {
     const { prev, release } = acquireMutex()
     return prev.then(async () => {
@@ -296,7 +297,7 @@ export function sendReceive(data: number[]): Promise<number[]> {
     })
   }
 
-  // Standard direct device path
+  // Standard direct device path — aggressive retries for USB stability
   const { prev, release } = acquireMutex()
 
   return prev.then(async () => {
@@ -375,10 +376,28 @@ export function send(data: number[]): Promise<void> {
 /**
  * Check if a device is currently open and physically present.
  * Re-enumerates USB devices to detect physical disconnection.
+ * For bridge devices, performs a more resilient check to avoid false disconnects.
  */
 export async function isDeviceOpen(): Promise<boolean> {
   if (usingBridge) {
-    return bridgeService.isBridgePresent()
+    // Bridge health check: try multiple times to account for wireless latency
+    // This prevents false disconnect detection due to temporary wireless interference
+    const HEALTH_CHECK_RETRIES = 3
+    const HEALTH_CHECK_DELAY_MS = 500
+    
+    for (let attempt = 0; attempt < HEALTH_CHECK_RETRIES; attempt++) {
+      const present = bridgeService.isBridgePresent()
+      if (present) return true
+      
+      // Wait before retry (except on last attempt)
+      if (attempt < HEALTH_CHECK_RETRIES - 1) {
+        await delay(HEALTH_CHECK_DELAY_MS)
+      }
+    }
+    
+    // All retries failed — bridge is truly gone
+    await closeHidDevice()
+    return false
   }
   if (!openDevice || !openDevicePath) return false
   const devices = await HID.devicesAsync()

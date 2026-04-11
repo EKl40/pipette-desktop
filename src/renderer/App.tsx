@@ -249,7 +249,15 @@ export function App() {
     ],
   )
 
-  const deviceName = device.connectedDevice?.productName || 'keyboard'
+  // Use the keyboard definition name when available (especially important for bridge/wireless devices)
+  // For bridge devices, the initial productName is a placeholder like "Keychron (wireless via ...)"
+  // After definition loads, we should use the real name from the definition JSON
+  // Preserve the [2.4 GHz] suffix for wireless connections
+  const isBridge = device.connectedDevice?.serialNumber?.startsWith('bridge:') ?? false
+  const baseName = keyboard.definition?.name || device.connectedDevice?.productName || 'keyboard'
+  const deviceName = isBridge && keyboard.definition?.name && !baseName.includes('[2.4 GHz]')
+    ? `${baseName} [2.4 GHz]`
+    : baseName
 
   const pdfGenerator = useCallback(
     () => generateKeymapPdf({
@@ -1465,7 +1473,7 @@ export function App() {
 
       {(keyboard.loading || deviceSyncing || phase2SyncPending) && (
         <ConnectingOverlay
-          deviceName={device.connectedDevice.productName || 'Unknown'}
+          deviceName={deviceName}
           deviceId={formatDeviceId(device.connectedDevice)}
           loadingProgress={keyboard.loading ? keyboard.loadingProgress : undefined}
           syncProgress={deviceSyncing ? sync.progress : undefined}
@@ -1616,7 +1624,7 @@ export function App() {
 
       {!(typingTestMode && devicePrefs.typingTestViewOnly) && (
         <StatusBar
-          deviceName={device.connectedDevice.productName || 'Unknown'}
+          deviceName={deviceName}
           loadedLabel={lastLoadedLabel}
           autoAdvance={devicePrefs.autoAdvance}
           unlocked={keyboard.unlockStatus.unlocked}

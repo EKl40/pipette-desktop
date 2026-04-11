@@ -27,8 +27,12 @@ import {
   HID_USAGE_PAGE,
   HID_USAGE,
   HID_REPORT_ID,
-  HID_TIMEOUT_MS,
 } from '../shared/constants/protocol'
+
+// Bridge-specific timing parameters (more lenient than USB due to wireless latency)
+const BRIDGE_READ_TIMEOUT_MS = 1000  // 1s read timeout (matches vial-gui)
+const BRIDGE_SEND_RETRY_COUNT = 8    // Increased from 3 to handle wireless latency spikes
+const BRIDGE_SEND_RETRY_DELAY_MS = 150  // 150ms between retries
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -88,8 +92,9 @@ let bridgeState: BridgeState | null = null
 /**
  * Send a raw 32-byte message to the bridge and read a 32-byte response.
  * Filters out unsolicited state notifications (0xBC / 0xE2).
+ * Uses increased retries and timeout to handle wireless latency spikes.
  */
-async function sendRaw(msg: number[], retries = 3): Promise<number[]> {
+async function sendRaw(msg: number[], retries = BRIDGE_SEND_RETRY_COUNT): Promise<number[]> {
   if (!bridgeDevice) throw new Error('Bridge device not open')
 
   const padded = padToMsgLen(msg)
@@ -98,12 +103,12 @@ async function sendRaw(msg: number[], retries = 3): Promise<number[]> {
 
   while (retries > 0) {
     retries--
-    if (!firstAttempt) await delay(100)
+    if (!firstAttempt) await delay(BRIDGE_SEND_RETRY_DELAY_MS)
     firstAttempt = false
 
     try {
       bridgeDevice.write([HID_REPORT_ID, ...padded])
-      const response = await bridgeDevice.read(HID_TIMEOUT_MS)
+      const response = await bridgeDevice.read(BRIDGE_READ_TIMEOUT_MS)
       if (!response || response.length === 0) {
         continue
       }
@@ -114,7 +119,7 @@ async function sendRaw(msg: number[], retries = 3): Promise<number[]> {
       if (data[0] === FR_STATE_NOTIFY || data[0] === FR_STATE_NOTIFY_ALT) {
         handleStateNotify(data)
         // Re-read for actual response
-        const response2 = await bridgeDevice.read(HID_TIMEOUT_MS)
+        const response2 = await bridgeDevice.read(BRIDGE_READ_TIMEOUT_MS)
         if (!response2 || response2.length === 0) continue
         data = normalizeResponse(response2, MSG_LEN)
       }
@@ -323,7 +328,7 @@ export async function bridgeSendReceive(data: number[]): Promise<number[]> {
 
   const padded = padToMsgLen(data)
   const encoded = xorEncode(padded)
-  const rawResp = await sendRaw(encoded, 3)
+  const rawResp = await sendRaw(encoded)  // Uses BRIDGE_SEND_RETRY_COUNT
   return xorEncode(rawResp)
 }
 
@@ -335,7 +340,7 @@ export async function bridgeSend(data: number[]): Promise<void> {
 
   const padded = padToMsgLen(data)
   const encoded = xorEncode(padded)
-  bridgeDevice.write([HID_REPORT_ID, ...padded.map((_, i) => encoded[i])])
+  bridgeDevice.write([HID_REPORT_ID, ...encoded])
 }
 
 /**

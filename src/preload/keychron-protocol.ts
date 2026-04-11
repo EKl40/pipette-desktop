@@ -1377,14 +1377,16 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
   console.log("[KC] features:", state.features.toString(16))
   if (state.features === 0) return null
 
-  // Step 3: Get firmware version
-  state.firmwareVersion = await getKeychronFirmwareVersion()
-
-  // Step 4: Get MCU info
-  state.mcuInfo = await getKeychronDfuInfo()
-
-  // Step 5: Get misc protocol version and features
-  const misc = await getKeychronMiscProtocol()
+  // Step 3-5: Get firmware version, MCU info, and misc protocol IN PARALLEL
+  // These commands are independent and can run simultaneously
+  const [firmwareVer, mcuInfo, misc] = await Promise.all([
+    getKeychronFirmwareVersion(),
+    getKeychronDfuInfo(),
+    getKeychronMiscProtocol(),
+  ])
+  
+  state.firmwareVersion = firmwareVer
+  state.mcuInfo = mcuInfo
   state.miscProtocolVersion = misc.version
   state.miscFeatures = misc.features
 
@@ -1403,31 +1405,62 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
   state.hasDfu = !!(state.miscFeatures & MISC_DFU_INFO) || state.mcuInfo.includes('STM32')
   state.hasDefaultLayer = !!(state.features & FEATURE_DEFAULT_LAYER)
 
-  // Step 6: Load individual features
+  // Step 6: Load individual features IN PARALLEL where possible
+  // Group independent features into parallel batches
+  
+  // Batch 1: Simple features (debounce, NKRO, report rate, default layer, wireless LPM)
+  const featurePromises: Promise<void>[] = []
+  
   if (state.hasDebounce) {
-    const deb = await getKeychronDebounce()
-    state.debounceType = deb.type
-    state.debounceTime = deb.time
+    featurePromises.push((async () => {
+      const deb = await getKeychronDebounce()
+      state.debounceType = deb.type
+      state.debounceTime = deb.time
+    })())
   }
 
   if (state.hasNkro) {
-    const nkro = await getKeychronNkro()
-    state.nkroEnabled = nkro.enabled
-    state.nkroSupported = nkro.supported
-    state.nkroAdaptive = nkro.adaptive
+    featurePromises.push((async () => {
+      const nkro = await getKeychronNkro()
+      state.nkroEnabled = nkro.enabled
+      state.nkroSupported = nkro.supported
+      state.nkroAdaptive = nkro.adaptive
+    })())
   }
 
   if (state.hasReportRate) {
-    const rr = await getKeychronReportRate(state.miscProtocolVersion)
-    state.pollRateVersion = rr.pollRateVersion
-    state.reportRate = rr.reportRate
-    state.reportRateMask = rr.reportRateMask
-    state.pollRateUsb = rr.pollRateUsb
-    state.pollRateUsbMask = rr.pollRateUsbMask
-    state.pollRate24g = rr.pollRate24g
-    state.pollRate24gMask = rr.pollRate24gMask
+    featurePromises.push((async () => {
+      const rr = await getKeychronReportRate(state.miscProtocolVersion)
+      state.pollRateVersion = rr.pollRateVersion
+      state.reportRate = rr.reportRate
+      state.reportRateMask = rr.reportRateMask
+      state.pollRateUsb = rr.pollRateUsb
+      state.pollRateUsbMask = rr.pollRateUsbMask
+      state.pollRate24g = rr.pollRate24g
+      state.pollRate24gMask = rr.pollRate24gMask
+    })())
   }
 
+  if (state.hasDefaultLayer) {
+    featurePromises.push((async () => {
+      state.defaultLayer = await getKeychronDefaultLayer()
+    })())
+  }
+
+  if (state.hasWireless) {
+    featurePromises.push((async () => {
+      const lpm = await getKeychronWirelessLpm()
+      state.wirelessBacklitTime = lpm.backlitTime
+      state.wirelessIdleTime = lpm.idleTime
+    })())
+  }
+
+  // Execute Batch 1 features in parallel
+  if (featurePromises.length > 0) {
+    await Promise.allSettled(featurePromises)
+  }
+  
+  // Batch 2: Snap Click (requires info first, then entries)
   if (state.hasSnapClick) {
     state.snapClickCount = await getKeychronSnapClickInfo()
     if (state.snapClickCount > 0) {
@@ -1435,16 +1468,7 @@ export async function reloadKeychron(): Promise<KeychronState | null> {
     }
   }
 
-  if (state.hasDefaultLayer) {
-    state.defaultLayer = await getKeychronDefaultLayer()
-  }
-
-  if (state.hasWireless) {
-    const lpm = await getKeychronWirelessLpm()
-    state.wirelessBacklitTime = lpm.backlitTime
-    state.wirelessIdleTime = lpm.idleTime
-  }
-
+  // Batch 3: RGB (complex, many sub-commands, run after simple features)
   if (state.hasRgb) {
     state.rgb = await reloadKeychronRGB()
   }
