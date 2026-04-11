@@ -1,6 +1,10 @@
-# Pipette
+# Pipette (Keychron Edition)
 
 Refining the way you interact with your Vial-powered keyboards.
+
+This is a fork of [darakuneko/pipette-desktop](https://github.com/darakuneko/pipette-desktop) with full Keychron keyboard support.
+
+This is part of the [Keychron Vial ecosystem](https://github.com/tymon3310/keychron-vial) — see the central repo for an overview of all projects, supported keyboards, and documentation.
 
 Pipette is an independent, Electron-based keymap editor compatible with [Vial](https://get.vial.today/).  \
 Communicates with Vial keyboards via USB HID to configure keymaps, macros, lighting, and more.
@@ -20,31 +24,49 @@ Communicates with Vial keyboards via USB HID to configure keymaps, macros, light
   <img width="1200" alt="keymap-editor" src="docs/screenshots/layer-panel-collapsed.png" />
 </p>
 
+### Keychron Edition
+
+The Keychron fork adds a **Keychron Settings** panel (shown below) with debounce, NKRO, report rate, wireless power management, and factory reset controls:
+
+<p align="center">
+  <img width="1200" alt="keychron-settings" src="docs/screenshots/keychron-settings.png" />
+</p>
+
 ## Installation
 
 Download the latest release for your platform:
 
-- **Windows (x64)**  
-  https://github.com/darakuneko/pipette-desktop/releases/latest/download/Pipette-win-x64.exe
+- **Windows (x64)**
+  https://github.com/tymon3310/pipette-desktop/releases/latest/download/Pipette-win-x64.exe
 
-- **macOS (Apple Silicon)**  
-  https://github.com/darakuneko/pipette-desktop/releases/latest/download/Pipette-mac-arm64.dmg
+- **macOS (Apple Silicon)**
+  https://github.com/tymon3310/pipette-desktop/releases/latest/download/Pipette-mac-arm64.dmg
 
-- **Linux (x86_64 AppImage)**  
-  https://github.com/darakuneko/pipette-desktop/releases/latest/download/Pipette-linux-x86_64.AppImage
+- **macOS (Intel)**
+  https://github.com/tymon3310/pipette-desktop/releases/latest/download/Pipette-mac-x64.dmg
+
+- **Linux (x86_64 AppImage)**
+  https://github.com/tymon3310/pipette-desktop/releases/latest/download/Pipette-linux-x64.AppImage
 
 > Linux users: make the AppImage executable before launching.
 > ```bash
-> chmod +x Pipette-linux-x86_64.AppImage
+> chmod +x Pipette-linux-x64.AppImage
 > ```
+
+### Arch Linux (AUR)
+
+Two AUR packages are available for Arch-based distributions:
+
+- **[pipette-desktop-keychron-bin](https://aur.archlinux.org/packages/pipette-desktop-keychron-bin)** — Pre-built binary (recommended)
+- **[pipette-desktop-keychron-git](https://aur.archlinux.org/packages/pipette-desktop-keychron-git)** — Builds from source
 
 ---
 
 ### Distribution Policy
 
-Pipette is officially distributed only as an AppImage on Linux.
+The **upstream** Pipette project is officially distributed only as an AppImage on Linux and does not provide distro-specific packages.
 
-We do not provide or document distro-specific packages (.deb, .rpm, AUR, Flatpak, Snap, etc.) in order to keep the maintenance and support scope focused on the AppImage release.
+For this **Keychron fork**, we provide official AUR packages for Arch-based distributions (see above). We do not provide or document other distro-specific packages (.deb, .rpm, Flatpak, Snap, etc.) in order to keep the maintenance and support scope focused on the AppImage and AUR releases.
 
 Community-maintained packages may exist, but they are not officially supported.
 
@@ -111,6 +133,50 @@ See [Data Guide](docs/Data.md) for details on how Hub authentication works.
 - **Configurable panel side** (left / right)
 - **Auto-lock timer**
 
+## Keychron-Specific Features
+
+This fork adds full Keychron keyboard support while retaining all of Pipette's core features:
+
+### Keychron Settings
+- **Debounce** — Adjust key debounce time (1–20ms)
+- **NKRO** — Toggle N-Key Rollover
+- **Report Rate** — 125Hz / 250Hz / 500Hz / 1000Hz (8000Hz on supported models)
+- **Wireless Low Power Mode** — Battery optimization for wireless keyboards
+
+### Keychron RGB
+- **Per-Key RGB** — Set individual key colors
+- **Mixed RGB** — Combine global effects with per-key overrides
+- **OS Indicators** — Customize Caps Lock, Num Lock, Scroll Lock LED colors
+
+### Snap Click (SOCD)
+Configure Simultaneous Opposite Cardinal Direction resolution for **non-HE** keyboards:
+- Define key pairs (e.g., A+D, W+S)
+- Choose resolution mode: Last Input, First Key, Second Key, Neutral, etc.
+
+### Analog Matrix (Hall Effect keyboards only)
+Full HE keyboard support including:
+- **Profiles** — Multiple named profiles with independent configurations
+- **Actuation Modes** — Global, Regular, Rapid Trigger, Dynamic Keystroke (DKS), Gamepad, Toggle
+- **Actuation Point** — Per-key or global, 0.1mm–4.0mm
+- **Rapid Trigger** — Separate press/release sensitivity with bottom dead zone
+- **SOCD** — Per-key-pair resolution (Deeper Travel Wins, Last Input Wins, Neutral, etc.)
+- **Calibration** — Min/max ADC readings, offset adjustment
+- **Gamepad Mode** — Assign keys to joystick axes (X/Y/Z/Rz) or buttons
+
+### Wireless (Bridged) Vial
+Full Vial support over Keychron's 2.4 GHz wireless dongle (Keychron Link):
+- Transparent VIA/Vial tunneling — all features work wirelessly
+- Automatic dongle and keyboard detection
+- USB+dongle deduplication (USB preferred when both connected)
+
+### Firmware Update
+- Flash updated QMK firmware while **preserving all Keychron settings** (debounce, RGB, analog matrix profiles, etc.)
+
+### Enhanced Export/Import
+- Export/import now includes RGB configuration, Keychron settings, and Analog Matrix data in addition to standard Vial keymaps
+
+> **Note:** I only have a **V5 Max ANSI Encoder** for physical testing. If you encounter issues with any other keyboard, please [open an issue](https://github.com/tymon3310/pipette-desktop/issues).
+
 ## Setup
 
 ```bash
@@ -161,12 +227,6 @@ Shared              — Types, constants, IPC channels
 ## Data & Privacy
 
 See the [Data Guide](docs/Data.md) for a complete guide on what data Pipette stores, how cloud sync works, and the security measures in place for external services.
-
-## Donate
-
-A cup of coffee keeps the commits coming ☕
-
-[Amazon Wishlist](https://www.amazon.co.jp/hz/wishlist/ls/66VQJTRHISQT) | [Ko-fi](https://ko-fi.com/darakuneko)
 
 ## Contributing
 
