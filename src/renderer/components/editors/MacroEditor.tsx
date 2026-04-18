@@ -24,7 +24,7 @@ import { ConfirmButton } from './ConfirmButton'
 import { FavoriteStoreContent } from './FavoriteStoreContent'
 import type { FavHubEntryResult } from './FavoriteHubActions'
 import type { BasicViewType, SplitKeyMode } from '../../../shared/types/app-config'
-import { parseMacroBuffer, isKeycodeAction } from './macro-editor-utils'
+import { parseMacroBuffer, isKeycodeAction, normalizeMacros, normalizeMacroActions } from './macro-editor-utils'
 
 interface Props {
   macroCount: number
@@ -39,6 +39,7 @@ interface Props {
   onUnlock?: () => void
   isDummy?: boolean
   onEditingChange?: (editing: boolean) => void
+  onRecordingChange?: (recording: boolean) => void
   tapDanceEntries?: TapDanceEntry[]
   deserializedMacros?: MacroAction[][]
   // Hub integration (optional)
@@ -51,8 +52,10 @@ interface Props {
   onRemoveFromHub?: (entryId: string) => void
   onRenameOnHub?: (entryId: string, hubPostId: string, newLabel: string) => void
   quickSelect?: boolean
+  autoAdvance?: boolean
   splitKeyMode?: SplitKeyMode
   basicViewType?: BasicViewType
+  layers?: number
 }
 
 export function MacroEditor({
@@ -68,6 +71,7 @@ export function MacroEditor({
   onUnlock,
   isDummy,
   onEditingChange,
+  onRecordingChange,
   tapDanceEntries,
   deserializedMacros,
   hubOrigin,
@@ -79,14 +83,21 @@ export function MacroEditor({
   onRemoveFromHub,
   onRenameOnHub,
   quickSelect,
+  autoAdvance,
   splitKeyMode,
   basicViewType,
+  layers,
 }: Props) {
   const { t } = useTranslation()
   const { guardAll, clearPending } = useUnlockGate({ unlocked, onUnlock })
   const [activeMacro, setActiveMacro] = useState(initialMacro ?? 0)
   const [dirty, setDirty] = useState(false)
   const [showTextEditor, setShowTextEditor] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+
+  useEffect(() => {
+    onRecordingChange?.(isRecording)
+  }, [isRecording, onRecordingChange])
 
   const [macros, setMacros] = useState<MacroAction[][]>(() =>
     parsedMacrosProp ?? parseMacroBuffer(macroBuffer, vialProtocol, macroCount),
@@ -98,7 +109,7 @@ export function MacroEditor({
 
   const favStore = useFavoriteStore({
     favoriteType: 'macro',
-    serialize: () => JSON.parse(macroActionsToJson(currentActions)),
+    serialize: () => JSON.parse(macroActionsToJson(normalizeMacroActions(currentActions))),
     apply: (data) => {
       const loaded = jsonToMacroActions(JSON.stringify(data))
       if (!loaded) throw new Error('Invalid macro data')
@@ -132,6 +143,7 @@ export function MacroEditor({
     handleKeycodeClick,
     handleKeycodeDoubleClick,
     handleKeycodeAdd,
+    handleKeycodeDelete,
     handleMaskPartClick,
     applyPopoverKeycode,
     handlePopoverKeycodeSelect,
@@ -147,6 +159,7 @@ export function MacroEditor({
     tapDanceEntries,
     deserializedMacros,
     quickSelect,
+    autoAdvance,
   })
 
   const updateActions = useCallback(
@@ -175,9 +188,22 @@ export function MacroEditor({
 
   const handleAddActionType = useCallback(
     (type: ActionType) => {
-      updateActions([...currentActions, defaultAction(type)])
+      if (isRecording) return
+      const newAction = defaultAction(type)
+      const newIndex = currentActions.length
+      clearPending()
+      setPopoverState(null)
+      setMacros((prev) => {
+        const updated = [...prev]
+        updated[activeMacro] = [...currentActions, newAction]
+        return updated
+      })
+      setDirty(true)
+      if (isKeycodeAction(newAction)) {
+        setSelectedKey({ actionIndex: newIndex, keycodeIndex: 0 })
+      }
     },
-    [currentActions, updateActions],
+    [isRecording, currentActions, activeMacro, setMacros, setDirty, clearPending, setPopoverState, setSelectedKey],
   )
 
   const handleChange = useCallback(
@@ -187,6 +213,29 @@ export function MacroEditor({
       updateActions(updated)
     },
     [currentActions, updateActions],
+  )
+
+  const handleKeycodeAddWithPopover = useCallback(
+    (actionIndex: number, rect: DOMRect) => {
+      if (isRecording) return
+      const action = currentActions[actionIndex]
+      if (!isKeycodeAction(action)) return
+      handleKeycodeAdd(actionIndex)
+      setPopoverState({ actionIndex, keycodeIndex: action.keycodes.length, anchorRect: rect })
+    },
+    [isRecording, currentActions, handleKeycodeAdd, setPopoverState],
+  )
+
+  const handleEditClick = useCallback(
+    (index: number, keycodeIndex: number) => {
+      if (isRecording) return
+      const action = currentActions[index]
+      if (isKeycodeAction(action)) {
+        preEditValueRef.current = action.keycodes[keycodeIndex] ?? 0
+        setSelectedKey({ actionIndex: index, keycodeIndex })
+      }
+    },
+    [isRecording, currentActions, setSelectedKey, preEditValueRef],
   )
 
   const handleDelete = useCallback(
@@ -226,7 +275,7 @@ export function MacroEditor({
 
   const handleSave = useCallback(async () => {
     await guardAll(async () => {
-      const current = macrosRef.current
+      const current = normalizeMacros(macrosRef.current)
       const buffer = serializeAllMacros(current, vialProtocol)
       await onSaveMacros(buffer, current)
       setDirty(false)
@@ -291,8 +340,9 @@ export function MacroEditor({
             <div className="flex-1" />
             <select
               data-testid="macro-add-action"
-              className="rounded bg-surface-dim px-2.5 py-1 text-xs hover:bg-surface-raised"
+              className="rounded bg-surface-dim px-2.5 py-1 text-xs hover:bg-surface-raised disabled:opacity-50"
               value=""
+              disabled={isRecording}
               onChange={(e) => {
                 if (e.target.value) handleAddActionType(e.target.value as ActionType)
                 e.target.value = ''
@@ -305,19 +355,20 @@ export function MacroEditor({
               <option value="up">{t('editor.macro.up')}</option>
               <option value="delay">{t('editor.macro.delay')}</option>
             </select>
-            <MacroRecorder onRecordComplete={handleRecordComplete} />
+            <MacroRecorder onRecordComplete={handleRecordComplete} onRecordingChange={setIsRecording} />
             <button
               type="button"
               data-testid="macro-text-editor-btn"
-              className="rounded bg-surface-dim px-2.5 py-1 text-xs hover:bg-surface-raised"
+              className="rounded bg-surface-dim px-2.5 py-1 text-xs hover:bg-surface-raised disabled:opacity-50"
+              disabled={isRecording}
               onClick={() => setShowTextEditor(true)}
             >
               {t('editor.macro.textEditor')}
             </button>
           </div>
 
-        {/* Scrollable content: action list + picker */}
-        <div className={`flex-1 overflow-y-auto px-6 pb-6 ${isEditing ? 'pt-6' : ''}`}>
+        {/* Action list: shrink-0 in edit mode, scrollable in list mode */}
+        <div className={`px-6 pb-3 ${isEditing ? 'shrink-0 pt-6' : 'flex-1 overflow-y-auto'}`}>
           <div className="space-y-1" data-testid="macro-action-list">
             {currentActions.map((action, i) => {
               const isSelectedAction = selectedKey?.actionIndex === i
@@ -339,69 +390,85 @@ export function MacroEditor({
                   onKeycodeClick={(ki) => handleKeycodeClick(i, ki)}
                   onKeycodeDoubleClick={(ki, rect) => handleKeycodeDoubleClick(i, ki, rect)}
                   onKeycodeAdd={() => handleKeycodeAdd(i)}
+                  onKeycodeAddDoubleClick={(rect) => handleKeycodeAddWithPopover(i, rect)}
+                  onKeycodeDelete={(ki) => handleKeycodeDelete(i, ki)}
+                  onEditClick={(ki) => handleEditClick(i, ki)}
                   onMaskPartClick={(ki, part) => handleMaskPartClick(i, ki, part)}
                   focusMode={isEditing}
-                  showConfirmHint={isSelectedAction && isEditing && !popoverState && !quickSelect && isKeycodeAction(action) && action.keycodes[selectedKey.keycodeIndex] !== preEditValueRef.current}
+                  onCloseEdit={isEditing ? revertAndDeselect : undefined}
+                  disabled={isRecording}
                 />
               )
             })}
           </div>
-
-          <div ref={pickerRef} className={`mt-3 ${isEditing ? '' : 'hidden'}`}>
-            <TabbedKeycodes
-              onKeycodeSelect={maskedSelection.pickerSelect}
-              onKeycodeDoubleClick={maskedSelection.pickerDoubleClick}
-              onConfirm={maskedSelection.confirm}
-              maskOnly={maskedSelection.maskOnly}
-              lmMode={maskedSelection.lmMode}
-              tabContentOverride={tabContentOverride}
-              splitKeyMode={splitKeyMode}
-              basicViewType={basicViewType}
-              onClose={revertAndDeselect}
-            />
-          </div>
         </div>
 
-        {/* Fixed footer: Clear / Revert / Save */}
-          <div className={`shrink-0 px-6 py-3 ${isEditing ? 'hidden' : ''}`}>
+        {/* Picker: shrink to content in edit mode so the Save footer sits close
+             to the keypicker content; list mode keeps the action list area
+             hidden via the sibling container. */}
+        <div ref={pickerRef} className={`overflow-y-auto px-6 pb-6 ${isEditing ? 'shrink-0' : 'hidden'}`}>
+          <TabbedKeycodes
+            onKeycodeSelect={maskedSelection.pickerSelect}
+            maskOnly={maskedSelection.maskOnly}
+            lmMode={maskedSelection.lmMode}
+            tabContentOverride={tabContentOverride}
+            splitKeyMode={splitKeyMode}
+            basicViewType={basicViewType}
+          />
+        </div>
+
+        {/* Fixed footer: Clear / Revert (list mode only) / Save (always visible) */}
+          <div data-macro-footer="true" className="shrink-0 px-6 py-3">
             <div className="flex justify-end gap-2">
-              <ConfirmButton
-                testId="macro-clear"
-                confirming={clearAction.confirming}
-                onClick={() => { revertAction.reset(); clearAction.trigger() }}
-                labelKey="common.clear"
-                confirmLabelKey="common.confirmClear"
-              />
-              <ConfirmButton
-                testId="macro-revert"
-                confirming={revertAction.confirming}
-                onClick={() => { clearAction.reset(); revertAction.trigger() }}
-                labelKey="common.revert"
-                confirmLabelKey="common.confirmRevert"
-              />
+              {!isEditing && (
+                <>
+                  <ConfirmButton
+                    testId="macro-clear"
+                    confirming={clearAction.confirming}
+                    onClick={() => { revertAction.reset(); clearAction.trigger() }}
+                    labelKey="common.clear"
+                    confirmLabelKey="common.confirmClear"
+                    disabled={isRecording}
+                  />
+                  <ConfirmButton
+                    testId="macro-revert"
+                    confirming={revertAction.confirming}
+                    onClick={() => { clearAction.reset(); revertAction.trigger() }}
+                    labelKey="common.revert"
+                    confirmLabelKey="common.confirmRevert"
+                    disabled={isRecording}
+                  />
+                </>
+              )}
               <button
                 type="button"
                 data-testid="macro-save"
                 className="rounded bg-accent px-4 py-2 text-sm text-content-inverse hover:bg-accent-hover disabled:opacity-50"
-                onClick={handleSave}
-                disabled={!dirty || hasInvalidText}
+                onClick={isEditing ? revertAndDeselect : handleSave}
+                disabled={isEditing ? isRecording : (!dirty || hasInvalidText || isRecording)}
               >
                 {t('common.save')}
               </button>
             </div>
           </div>
 
-        {popoverState !== null && (
-          <KeyPopover
-            anchorRect={popoverState.anchorRect}
-            currentKeycode={popoverKeycode}
-            onKeycodeSelect={handlePopoverKeycodeSelect}
-            onRawKeycodeSelect={applyPopoverKeycode}
-            onClose={closePopover}
-            onConfirm={() => { closePopover(); maskedSelection.clearMask(); setSelectedKey(null) }}
-            quickSelect={quickSelect}
-          />
-        )}
+        {popoverState !== null && (() => {
+          const action = currentActions[popoverState.actionIndex]
+          const isVirtualSlot = isKeycodeAction(action) && popoverState.keycodeIndex >= action.keycodes.length
+          return (
+            <KeyPopover
+              anchorRect={popoverState.anchorRect}
+              currentKeycode={popoverKeycode}
+              emptyInitial={isVirtualSlot}
+              layers={layers}
+              onKeycodeSelect={handlePopoverKeycodeSelect}
+              onRawKeycodeSelect={applyPopoverKeycode}
+              onClose={closePopover}
+              onConfirm={() => { closePopover(); maskedSelection.clearMask() }}
+              quickSelect={quickSelect}
+            />
+          )
+        })()}
 
         {showTextEditor && (
           <MacroTextEditor
@@ -414,7 +481,7 @@ export function MacroEditor({
 
       {!isDummy && (
         <div
-          className={`w-[456px] shrink-0 flex flex-col ${isEditing ? 'hidden' : ''}`}
+          className={`w-[456px] shrink-0 flex flex-col ${isEditing ? 'hidden' : isRecording ? 'invisible' : ''}`}
           data-testid="macro-favorites-panel"
         >
           <FavoriteStoreContent

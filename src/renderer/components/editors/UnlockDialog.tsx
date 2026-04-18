@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { KleKey } from '../../../shared/kle/types'
 import { KeyboardWidget } from '../keyboard'
+import { useEscapeSwallow } from '../../hooks/useEscapeClose'
 
 const UNLOCK_POLL_INTERVAL = 200 // ms
 const EMPTY_KEYCODES = new Map<string, string>()
@@ -45,6 +46,10 @@ export function UnlockDialog({
   const onCompleteRef = useRef(onComplete)
   onCompleteRef.current = onComplete
   const busyRef = useRef(false)
+
+  // Swallow Escape while the unlock dialog is mounted so parent modals
+  // (KeymapEditor etc.) do not accidentally close on top of the unlock prompt.
+  useEscapeSwallow()
 
   // Single useEffect: send unlockStart once, then poll via setInterval.
   // setInterval (like Python's QTimer) guarantees exactly one poll loop.

@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { join } from 'node:path'
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 
 // --- Mock electron ---
@@ -68,7 +68,7 @@ vi.mock('../sync/google-auth', () => ({
 }))
 
 vi.mock('../sync/sync-crypto', () => ({
-  retrievePassword: vi.fn(async () => 'test-password'),
+  retrievePasswordResult: vi.fn(async () => ({ ok: true, password: 'test-password' })),
   storePassword: vi.fn(async () => {}),
   clearPassword: vi.fn(async () => {}),
   hasStoredPassword: vi.fn(async () => true),
@@ -982,7 +982,7 @@ describe('sync-service', () => {
       mockGetAuthStatus.mockResolvedValueOnce({ authenticated: false })
 
       const result = await scanRemoteData()
-      expect(result).toEqual({ keyboards: [], favorites: [], undecryptable: [] })
+      expect(result).toEqual({ keyboards: [], keyboardNames: {}, favorites: [], undecryptable: [] })
     })
 
     it('deduplicates keyboard UIDs', async () => {
@@ -1085,7 +1085,7 @@ describe('sync-service', () => {
       const syncPromise = executeSync('download')
 
       await expect(changePassword('new-password')).rejects.toThrow(
-        'Cannot change password while sync is in progress',
+        'sync.changePasswordInProgress',
       )
 
       await vi.advanceTimersByTimeAsync(200)
@@ -1097,10 +1097,10 @@ describe('sync-service', () => {
       expect(mockUploadFile).not.toHaveBeenCalled()
     })
 
-    it('throws when no password is stored', async () => {
+    it('throws SyncCredentialError(unauthenticated) when not signed in', async () => {
       mockGetAuthStatus.mockResolvedValueOnce({ authenticated: false })
 
-      await expect(changePassword('new-password')).rejects.toThrow('No stored password found')
+      await expect(changePassword('new-password')).rejects.toThrow('sync.changePasswordError.unauthenticated')
     })
 
     it('succeeds with no remote data files (password-check only)', async () => {
@@ -1319,7 +1319,10 @@ describe('sync-service', () => {
         expect(downloadedIds).not.toContain('f4') // other keyboard excluded
       })
 
-      it('downloads all files when scope is omitted (backward compat)', async () => {
+      it('downloads all files when scope is omitted and the keyboard is already local', async () => {
+        // Lazy: scope='all' only pulls remote keyboards that already exist locally
+        await mkdir(join(mockUserDataPath, 'sync', 'keyboards', '0x1234'), { recursive: true })
+
         mockListFiles.mockResolvedValue([
           { id: 'f1', name: 'favorites_tapDance.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
           {
@@ -1341,7 +1344,27 @@ describe('sync-service', () => {
         expect(downloadedIds).toContain('f2')
       })
 
+      it('does not materialize remote-only keyboards locally when scope is omitted (lazy download)', async () => {
+        mockListFiles.mockResolvedValue([
+          { id: 'f1', name: 'favorites_tapDance.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
+          { id: 'f2', name: 'keyboards_0xRemoteOnly_snapshots.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
+          PASSWORD_CHECK_DRIVE_FILE,
+        ])
+        // Default response covers password-check + favorites + any backfill probe
+        mockDownloadFile.mockResolvedValue(makePasswordCheckEnvelope())
+
+        await executeSync('download')
+
+        // mergeWithRemote should not have run for the remote-only keyboard
+        await expect(
+          access(join(mockUserDataPath, 'sync', 'keyboards', '0xRemoteOnly')),
+        ).rejects.toBeDefined()
+      })
+
       it('updates remote state for all files even with scoped download', async () => {
+        // Local copy of 0x1234 exists, so polling should still pick up changes for it
+        await mkdir(join(mockUserDataPath, 'sync', 'keyboards', '0x1234'), { recursive: true })
+
         const allFiles = [
           { id: 'f1', name: 'favorites_tapDance.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
           {
@@ -1378,9 +1401,39 @@ describe('sync-service', () => {
         await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
         await flushIO()
 
-        // Polling should detect the keyboard file changed
+        // Polling should detect the keyboard file changed for the locally-tracked keyboard
         expect(mockDownloadFile).toHaveBeenCalledWith('f2')
 
+        stopPolling()
+      })
+
+      it('polling skips remote-only keyboards (lazy)', async () => {
+        // No local directory for 0xRemoteOnly — polling should not download it
+        const initialFiles = [
+          { id: 'f1', name: 'favorites_tapDance.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
+          { id: 'f2', name: 'keyboards_0xRemoteOnly_snapshots.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
+          PASSWORD_CHECK_DRIVE_FILE,
+        ]
+        mockListFiles.mockResolvedValue(initialFiles)
+        mockDownloadFile
+          .mockResolvedValueOnce(makePasswordCheckEnvelope())
+          .mockResolvedValueOnce(makeRemoteEnvelope('2025-01-01T00:00:00.000Z'))
+
+        await executeSync('download')
+
+        const updatedFiles = [
+          ...initialFiles.slice(0, 1),
+          { id: 'f2', name: 'keyboards_0xRemoteOnly_snapshots.enc', modifiedTime: '2025-01-02T00:00:00.000Z' },
+          PASSWORD_CHECK_DRIVE_FILE,
+        ]
+        mockListFiles.mockResolvedValue(updatedFiles)
+
+        mockDownloadFile.mockClear()
+        startPolling()
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+        await flushIO()
+
+        expect(mockDownloadFile).not.toHaveBeenCalledWith('f2')
         stopPolling()
       })
 

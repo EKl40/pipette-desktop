@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useTranslation } from 'react-i18next'
+import { useEscapeClose } from '../../hooks/useEscapeClose'
 import { ModalCloseButton } from './ModalCloseButton'
 import {
   FavoriteStoreContent,
@@ -16,6 +17,7 @@ interface Props extends FavoriteStoreContentProps {
 
 export function FavoriteStoreModal({ favoriteType, onClose, ...contentProps }: Props) {
   const { t } = useTranslation()
+  useEscapeClose(onClose)
 
   return (
     <div

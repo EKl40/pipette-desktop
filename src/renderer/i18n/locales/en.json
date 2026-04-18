@@ -146,6 +146,8 @@
       "textEditorTitle": "Edit Macro (Text)",
       "invalidJson": "Invalid JSON format",
       "addKeycode": "Add keycode",
+      "deleteKeycode": "Delete keycode",
+      "editAction": "Edit action",
       "asciiOnly": "Only ASCII characters (A-Z, 0-9, symbols) are supported",
       "unlockClickAgain": "After unlocking, click the macro key again to open the editor.",
       "unlockWarning": "Do not store passwords or sensitive information in macros, as they may be replayed or shared.",
@@ -164,7 +166,6 @@
       "value": "Value",
       "hex": "HEX",
       "noLighting": "This keyboard does not support lighting control.",
-      "unsavedPreview": "Preview — not saved to keyboard yet",
       "colorPicker": {
         "label": "Color Picker",
         "palette": "Palette",
@@ -521,6 +522,21 @@
     "statusSuccess": "Success",
     "statusError": "Error",
     "noSyncYet": "Not synced yet",
+    "readiness": {
+      "unauthenticated": "Sign in to Google to sync.",
+      "noPasswordFile": "Set a sync password to start syncing.",
+      "decryptFailed": "Stored password could not be read (the OS keychain may have changed).",
+      "keystoreUnavailable": "OS keychain is not available on this system.",
+      "remoteCheckFailed": "Couldn't reach Google Drive — sync is paused."
+    },
+    "changePasswordError": {
+      "unauthenticated": "Please sign in to Google before changing the password.",
+      "noPasswordFile": "No saved password to change. Set a password first.",
+      "decryptFailed": "Couldn't read the existing password (OS keychain rejected it).",
+      "keystoreUnavailable": "OS keychain is not available; password cannot be changed here.",
+      "remoteCheckFailed": "Couldn't reach Google Drive to verify the current password."
+    },
+    "changePasswordInProgress": "Cannot change password while sync is in progress.",
     "troubleshooting": "Troubleshooting",
     "localData": "Local Data",
     "import": "Import",
@@ -535,6 +551,7 @@
     "scanRemoteDesc": "Scan remote data to see what is stored in Google Drive.",
     "scanUndecryptable": "Scan",
     "scanning": "Scanning...",
+    "downloading": "Downloading...",
     "noRemoteData": "No remote data found",
     "noUndecryptable": "No undecryptable files found",
     "undecryptableCount": "{{count}} undecryptable file(s)",

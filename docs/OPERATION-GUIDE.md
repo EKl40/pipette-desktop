@@ -69,7 +69,7 @@ The left sidebar provides a **tree navigation** with the following structure:
   - **Keyboards**: Browse saved keyboard snapshots. Click a keyboard to view, load, export, or delete entries
   - **Favorites**: Tap Dance, Macro, Combo, Key Override, Alt Repeat Key — each type shows its saved entries with rename, delete, export, and Hub actions
   - **Application**: Import/export local data or reset selected targets (keyboard data, favorites, app settings)
-- **Sync** (when Cloud Sync is configured): Shows remote-only data not available locally. Scan and delete orphaned sync data from Google Drive
+- **Sync** (when Cloud Sync is configured): Lists keyboards that exist only in Google Drive (not yet downloaded on this device). Each entry is labeled with the keyboard's real name, resolved from the synced name index rather than from the raw UID. Click a remote-only keyboard to download it on demand — a spinner is shown while fetching, and a failure message appears inline if the download cannot complete. Once downloaded, the keyboard moves into the **Local › Keyboards** branch. To clean up orphaned encrypted files that can no longer be decrypted, use **Undecryptable Files** in the Settings **Data** tab instead (see §6.1)
 - **Hub** (when Hub is connected): Manage Hub posts grouped by keyboard name
 
 ![Data — Keyboard Saves](screenshots/data-sidebar-keyboard-saves.png)
@@ -332,6 +332,25 @@ The Macro section displays a **tile grid preview** showing all entries at a glan
 - Record sequences of key inputs as macros
 - **Edit JSON** button at the bottom opens a JSON editor for bulk editing all entries (see §5.6)
 
+#### Macro Edit Modal — List Mode and Edit Mode
+
+Opening a macro action brings up the Macro Modal with two display modes that share the same row:
+
+- **List mode** (default): The action's keycodes are shown as clickable tiles followed by a dashed **add slot**. Single-click a keycode tile to switch that index into edit mode. Single-click the dashed add slot to select it; double-click the dashed slot to open the keycode popover with an empty query (mirrors the keymap editor). The pencil "edit" icon from earlier versions is gone — clicking is the only affordance
+- **Edit mode**: The keycode picker stays visible below the row. Each keycode tile shows a hover **X** button to delete that index, and the Tap row exposes a **Close** button to leave edit mode. There is no per-action Save button; every selection in the picker or the keycode popover commits immediately. Deleting the selected index shifts the selection so the edit session continues rather than exiting. An outside-click handler exits edit mode on any click outside the picker, the macro action list, the footer, and the key popover — so the session ends when you press Close, or when you click away into the wider app (the modal backdrop, the title area, etc.)
+
+Empty keycode actions are tolerated while editing; they are normalized out silently when the macro is saved or exported to a favorite.
+
+#### Recording Lock
+
+While the built-in recorder is capturing keystrokes, the Macro Modal enters a strict disabled state to prevent accidental edits:
+
+- The Add Action select, Text Editor toggle, Clear, Revert, and bottom **Save** buttons are all disabled
+- Every existing MacroActionItem and its KeycodeField is disabled (native `disabled` attribute — Tab / hover / click are all suppressed)
+- The inline favorites panel is made invisible with its width preserved, so the layout does not jump
+- The modal's top-right Close button and backdrop click are inert — the modal cannot be dismissed until recording stops
+- The footer (Clear / Revert / Save row) is also hidden while you are inside the per-action edit mode, since each picker/popover click already commits; re-open list mode to see the footer again
+
 ### 3.8 Combo
 
 Combo keycodes for simultaneous key-press combinations.
@@ -544,6 +563,7 @@ Correctly typed words turn green. Incorrect characters are highlighted in red wi
 
 - Press the restart button (↺) to restart the test at any time
 - Press Escape to exit typing test mode
+- The status bar's Disconnect button is hidden while Typing Test is active. To disconnect, first return to the editor with Escape or the Typing Test button
 - The keyboard layout below the test area shows key presses in real time via the Vial matrix tester protocol
 
 #### Typing View (View-Only Mode)
@@ -573,6 +593,16 @@ Click anywhere on the keyboard area to toggle the controls panel (bottom-right p
 Press Escape or click the keyboard area again to close the panel. A hint text appears at the bottom when hovering over the window. The window size and always-on-top preference are saved per keyboard.
 
 > **Note**: Auto-lock is suspended while in Typing View mode. If the keyboard is disconnected while in view-only mode, the window automatically restores to its normal size.
+
+#### View Mode Memory and Auto-Restore
+
+The last view mode (Editor / Typing Test / Typing View) is remembered per keyboard and automatically restored the next time you connect that keyboard:
+
+- **Editor**: The editor view is shown as usual
+- **Typing Test**: Typing Test mode is re-entered automatically. If the keyboard is locked, the Unlock dialog appears first and the test starts after unlocking
+- **Typing View**: The compact view-only window is re-entered automatically. If the keyboard is locked, the Unlock dialog appears first
+
+View mode is stored per keyboard alongside preferences like keyboard layout, zoom scale, and window size. When Pipette Hub sync is enabled, view mode is synced to other devices as well (see §7).
 
 ---
 
@@ -721,7 +751,7 @@ Sync is configured in the **Settings** modal (gear icon on the device selection 
 
 ![Data Tab](screenshots/hub-settings-data-sync.png)
 
-The Data tab contains the following sections: Google Account, Data Sync, and Pipette Hub. Additional troubleshooting and data management options are available in the separate Troubleshooting tab (see below).
+The Data tab contains the following sections: Google Account, Data Sync, and Pipette Hub. Additional troubleshooting and data management options are available in the Data panel (§1.3).
 
 #### Google Account
 
@@ -734,6 +764,29 @@ The Data tab contains the following sections: Google Account, Data Sync, and Pip
 - If a password already exists on the server (set from another device), a hint is shown asking you to enter the same password
 - **Change Password**: Click **Change Password** to re-encrypt all synced files with a new password. No data is deleted — existing files are decrypted and re-encrypted in place
 
+**Change Password error conditions**
+
+When a password change cannot proceed, Pipette shows a localized message instead of the raw error. The common cases are listed below; other underlying errors (network, Drive) may appear as their own messages.
+
+Credential failures (the 5 reasons come from the same typed `SyncCredentialFailureReason` set used for readiness — only 3 of them surface in **Sync Status** below):
+
+| Reason | Message | Trigger |
+|--------|---------|---------|
+| `unauthenticated` | "Please sign in to Google before changing the password." | Not signed in with Google |
+| `noPasswordFile` | "No saved password to change. Set a password first." | No local sync password has ever been set |
+| `decryptFailed` | "Couldn't read the existing password (OS keychain rejected it)." | The OS keychain entry is unreadable (keychain reset, profile move, etc.) |
+| `keystoreUnavailable` | "OS keychain is not available; password cannot be changed here." | `safeStorage.isEncryptionAvailable()` returns false (typical on headless Linux without a keyring) |
+| `remoteCheckFailed` | "Couldn't reach Google Drive to verify the current password." | Network or Drive outage — retry later |
+
+Operational errors (shown as the message directly, no reason code):
+
+| Message | Trigger |
+|---------|---------|
+| "Cannot change password while sync is in progress." | A sync is already running — wait for it to finish |
+| "New password must be different from the current password." | The new password matches the existing one |
+| "Some files cannot be decrypted. Please scan and delete undecryptable files first." | Drive has files the current password cannot decrypt — use **Undecryptable Files** first |
+| "Sync password does not match. Please check your encryption password." | The current password fails to decrypt the remote password check — reconfirm the password you are providing |
+
 #### Sync Controls
 
 - **Auto Sync**: Toggle automatic sync on or off. When enabled, changes sync automatically with a 10-second debounce and periodic 3-minute polling
@@ -743,6 +796,16 @@ The Data tab contains the following sections: Google Account, Data Sync, and Pip
 
 - Displays current sync progress with the sync unit name and an item counter (current / total)
 - Shows error or partial-sync details if any units failed
+
+**Readiness reasons**
+
+If sync cannot run because the client is not ready, a specific readiness reason is shown in place of the generic "Not synced yet" label. Only three reasons surface here; detailed keystore failures (`decryptFailed`, `keystoreUnavailable`) come through the password set/change flow instead.
+
+| Reason | Message |
+|--------|---------|
+| `unauthenticated` | "Sign in to Google to sync." |
+| `noPasswordFile` | "Set a sync password to start syncing." |
+| `remoteCheckFailed` | "Couldn't reach Google Drive — sync is paused." |
 
 #### Undecryptable Files
 
@@ -764,7 +827,7 @@ See the [Data Guide](Data.md) for details on what is synced and how your data is
 Troubleshooting and data management functions are available in the **Data** panel (see §1.3):
 
 - **Local > Application**: Import/export local data or reset selected targets (keyboard data, favorites, app settings)
-- **Sync**: Scan remote data on Google Drive and delete orphaned sync files
+- **Sync**: List remote-only keyboards by real name and download any one on demand (see §1.3). To delete encrypted files that cannot be decrypted, use the **Undecryptable Files** section above
 
 #### Settings — Defaults
 
@@ -855,7 +918,31 @@ See the [Data Guide](Data.md) for details on how Hub authentication works.
 
 ---
 
-## 8. Status Bar
+## 8. Modal Interactions
+
+Pipette applies a uniform set of keyboard and dismissal rules to every top-level modal (Settings, Data, Macro, QMK Settings, Tap Dance, Combo, Key Override, Alt Repeat Key, Notification, Language Selector, Layout Store, Editor Settings, Favorite Store, and the History Toggle dialog).
+
+### Escape to Close
+
+Pressing **Escape** closes the modal, with the following exceptions so that Escape never interrupts text entry:
+
+- If the focused element is an `<input>`, `<textarea>`, `<select>`, or anything inside a `contenteditable` region, Escape is ignored (the element receives it instead)
+- During an IME composition (e.g., Japanese input), Escape is ignored so the composition can be cancelled without dismissing the modal
+
+### Unlock Dialog Protection
+
+The Unlock Dialog (prompting for a physical key press after a boot-unlock keycode is invoked) **intercepts Escape before it reaches the parent modal**. Pressing Escape on top of an unlock prompt cannot leak through, preventing accidental dismissal of a half-configured Settings or Data modal by rapid Escape presses.
+
+### Escape Suppression During Busy Flows
+
+Escape-to-close is disabled while the containing modal is in a transient state that must complete:
+
+- **Settings / Data modals**: disabled while a sync / troubleshooting flow is running
+- **Macro Modal**: disabled while the recorder is actively capturing keystrokes (see §3.7 Recording Lock); the backdrop click and top-right Close button are also inert at the same time
+
+---
+
+## 9. Status Bar
 
 The status bar at the bottom of the screen shows connection information and action buttons.
 
@@ -870,4 +957,4 @@ The status bar at the bottom of the screen shows connection information and acti
 - **Locked / Unlocked**: Keyboard lock status (prevents accidental changes to dangerous keycodes)
 - **Sync status**: Cloud sync status (shown only when sync is configured)
 - **Hub connection**: Pipette Hub connection status (shown only when Hub is configured)
-- **Disconnect button**: Disconnects from the keyboard and returns to the device selection screen
+- **Disconnect button**: Disconnects from the keyboard and returns to the device selection screen (hidden while Typing Test is active)

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MacroEditor } from './MacroEditor'
 import { ModalCloseButton } from './ModalCloseButton'
+import { useEscapeClose } from '../../hooks/useEscapeClose'
 import type { MacroAction } from '../../../preload/macro'
 import type { TapDanceEntry } from '../../../shared/types/protocol'
 import type { FavHubEntryResult } from './FavoriteHubActions'
@@ -33,8 +34,10 @@ interface Props {
   onRemoveFromHub?: (entryId: string) => void
   onRenameOnHub?: (entryId: string, hubPostId: string, newLabel: string) => void
   quickSelect?: boolean
+  autoAdvance?: boolean
   splitKeyMode?: SplitKeyMode
   basicViewType?: BasicViewType
+  layers?: number
 }
 
 export function MacroModal({
@@ -60,21 +63,27 @@ export function MacroModal({
   onRemoveFromHub,
   onRenameOnHub,
   quickSelect,
+  autoAdvance,
   splitKeyMode,
   basicViewType,
+  layers,
 }: Props) {
   const { t } = useTranslation()
   const [isEditing, setIsEditing] = useState(false)
-  const modalWidth = isDummy ? 'w-[1000px]' : 'w-[1050px]'
+  const [isRecording, setIsRecording] = useState(false)
+  const modalWidth = isDummy ? 'w-[1200px]' : 'w-[1300px]'
+  const modalHeight = isEditing ? 'max-h-[90vh]' : 'h-[90vh]'
+
+  useEscapeClose(onClose, !isRecording)
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       data-testid="macro-modal-backdrop"
-      onClick={onClose}
+      onClick={isRecording ? undefined : onClose}
     >
       <div
-        className={`rounded-lg bg-surface-alt shadow-xl ${modalWidth} max-w-[90vw] h-[80vh] flex flex-col overflow-hidden`}
+        className={`rounded-lg bg-surface-alt shadow-xl ${modalWidth} max-w-[95vw] ${modalHeight} flex flex-col overflow-hidden`}
         data-testid="macro-modal"
         onClick={(e) => e.stopPropagation()}
       >
@@ -83,7 +92,10 @@ export function MacroModal({
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold">
                 {t('editor.macro.editTitle', { index })}
-              </h3>              <ModalCloseButton testid="macro-modal-close" onClick={onClose} />
+              </h3>
+              {!isRecording && (
+                <ModalCloseButton testid="macro-modal-close" onClick={onClose} />
+              )}
             </div>
             <p className="mt-1 text-xs text-warning">{t('editor.macro.unlockWarning')}</p>
           </div>
@@ -103,6 +115,7 @@ export function MacroModal({
             onUnlock={onUnlock}
             isDummy={isDummy}
             onEditingChange={setIsEditing}
+            onRecordingChange={setIsRecording}
             tapDanceEntries={tapDanceEntries}
             deserializedMacros={deserializedMacros}
             hubOrigin={hubOrigin}
@@ -114,8 +127,10 @@ export function MacroModal({
             onRemoveFromHub={onRemoveFromHub}
             onRenameOnHub={onRenameOnHub}
             quickSelect={quickSelect}
+            autoAdvance={autoAdvance}
             splitKeyMode={splitKeyMode}
             basicViewType={basicViewType}
+            layers={layers}
           />
         </div>
       </div>

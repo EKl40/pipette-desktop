@@ -38,12 +38,10 @@ interface Props {
   highlighted?: boolean
   everPressed?: boolean
   remapped?: boolean
-  onClick?: (
-    key: KleKey,
-    maskClicked: boolean,
-    event?: { ctrlKey: boolean; shiftKey: boolean },
-  ) => void
+  onClick?: (key: KleKey, maskClicked: boolean, event?: { ctrlKey: boolean; shiftKey: boolean }) => void
   onDoubleClick?: (key: KleKey, rect: DOMRect, maskClicked: boolean) => void
+  onHover?: (key: KleKey, keycode: string, rect: DOMRect) => void
+  onHoverEnd?: () => void
   hoverMaskParts?: boolean
   selectedFill?: boolean
   customFill?: string
@@ -65,6 +63,8 @@ function KeyWidgetInner({
   remapped,
   onClick,
   onDoubleClick,
+  onHover,
+  onHoverEnd,
   hoverMaskParts,
   selectedFill = true,
   customFill,
@@ -98,17 +98,14 @@ function KeyWidgetInner({
   let fillColor = customFill ?? KEY_BG_COLOR
   let invertText = false
   if (pressed) fillColor = KEY_PRESSED_COLOR
-  else if (selected && !innerSelected && selectedFill) {
-    fillColor = KEY_SELECTED_COLOR
-    invertText = true
-  } else if (multiSelected) fillColor = KEY_MULTI_SELECTED_COLOR
-  else if (highlighted) {
-    fillColor = KEY_HIGHLIGHT_COLOR
-    invertText = true
-  } else if (everPressed) fillColor = KEY_EVER_PRESSED_COLOR
+  else if (selected && !innerSelected && selectedFill) { fillColor = KEY_SELECTED_COLOR; invertText = true }
+  else if (multiSelected) fillColor = KEY_MULTI_SELECTED_COLOR
+  else if (highlighted) { fillColor = KEY_HIGHLIGHT_COLOR; invertText = true }
+  else if (everPressed) fillColor = KEY_EVER_PRESSED_COLOR
   else if (hoverMaskParts && masked && hoveredPart === 'outer') fillColor = KEY_HOVER_COLOR
 
-  // labelColor = inverted when key is selected/highlighted, remap color for remapped keys in non-mask mode, default otherwise
+  // Label text color: inverted when key is selected/highlighted, remap color
+  // for remapped keys in non-mask mode, default otherwise
   let labelColor = KEY_TEXT_COLOR
   if (invertText) labelColor = 'var(--content-inverse)'
   else if (remapped) labelColor = KEY_REMAP_COLOR
@@ -208,13 +205,27 @@ function KeyWidgetInner({
       transform={groupTransform}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
-      onMouseEnter={hoverMaskParts && masked ? () => setHoveredPart('outer') : undefined}
-      onMouseLeave={hoverMaskParts && masked ? () => setHoveredPart(null) : undefined}
-      style={{ cursor: isClickable ? 'pointer' : 'default' }}
+      onMouseEnter={(e) => {
+        if (hoverMaskParts && masked) setHoveredPart('outer')
+        if (onHover && isClickable) {
+          const rect = (e.currentTarget as SVGGElement).getBoundingClientRect()
+          onHover(kleKey, keycode, rect)
+        }
+      }}
+      onMouseLeave={() => {
+        if (hoverMaskParts && masked) setHoveredPart(null)
+        onHoverEnd?.()
+      }}
+      style={isClickable ? { cursor: 'pointer' } : undefined}
     >
       {/* Key shape: unified path for ISO/stepped keys, simple rect for normal */}
       {unionPath ? (
-        <path d={unionPath} fill={fillColor} stroke={outerStroke} strokeWidth={outerStrokeWidth} />
+        <path
+          d={unionPath}
+          fill={fillColor}
+          stroke={outerStroke}
+          strokeWidth={outerStrokeWidth}
+        />
       ) : (
         <rect
           x={x}
@@ -295,7 +306,7 @@ function KeyWidgetInner({
           </text>
         ))
       )}
-      
+
       {/* Bottom Label (e.g. Actuation Point) */}
       {bottomLabel && (
         <text
