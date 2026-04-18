@@ -292,6 +292,8 @@ export function App() {
   const [showKeychronAnalogModal, setShowKeychronAnalogModal] = useState(false)
   const [showKeychronSocdModal, setShowKeychronSocdModal] = useState(false)
   const [keychronAnalogData, setKeychronAnalogData] = useState<import('../shared/types/keychron').KeychronAnalogState | null>(
+    keyboard.keychron?.analog ?? null
+  )
   const keychronSupported = !device.isDummy && keyboard.keychron != null
   const isBridge = device.connectedDevice?.serialNumber?.startsWith('bridge:') ?? false
 
@@ -309,8 +311,6 @@ export function App() {
       }
     }
   }, [keyboard.keychron?.hasAnalog, keyboard.rows, keyboard.cols, keychronAnalogData])
-    keyboard.keychron?.analog ?? null
-  )
 
   // Exit view-only mode: hide content → wait for paint → resize → show editor
   const exitViewOnlyMode = useCallback(() => {
@@ -849,6 +849,25 @@ export function App() {
 
       {editorUI.showUnlockDialog && !device.isDummy && (
         <UnlockDialog
+          keys={keyboard.layout?.keys ?? []}
+          unlockKeys={keyboard.unlockStatus.keys}
+          layoutOptions={decodedLayoutOptions}
+          unlockStart={() => { device.setPollSuspended(true); return window.vialAPI.unlockStart() }}
+          unlockPoll={window.vialAPI.unlockPoll}
+          onComplete={async () => {
+            device.setPollSuspended(false)
+            editorUI.setShowUnlockDialog(false)
+            editorUI.setUnlockMacroWarning(false)
+            await keyboard.refreshUnlockStatus()
+          }}
+          onClose={() => {
+            device.setPollSuspended(false)
+            editorUI.setShowUnlockDialog(false)
+            editorUI.setUnlockMacroWarning(false)
+          }}
+          macroWarning={editorUI.unlockMacroWarning}
+        />
+      )}
       {showKeychronRgbModal && keyboard.keychron?.hasRgb && keyboard.keychron.rgb && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowKeychronRgbModal(false)}>
           <div className="flex max-h-[90vh] w-[1200px] max-w-[95vw] flex-col rounded-lg bg-surface-alt shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -918,26 +937,6 @@ export function App() {
             </div>
           </div>
         </div>
-      )}
-          keys={keyboard.layout?.keys ?? []}
-          unlockKeys={keyboard.unlockStatus.keys}
-          layoutOptions={decodedLayoutOptions}
-          unlockStart={() => { device.setPollSuspended(true); return api.unlockStart() }}
-          unlockPoll={api.unlockPoll}
-          onComplete={async () => {
-            device.setPollSuspended(false)
-            editorUI.setShowUnlockDialog(false)
-            editorUI.setUnlockMacroWarning(false)
-            await keyboard.refreshUnlockStatus()
-          }}
-          onDisconnect={() => {
-            device.setPollSuspended(false)
-            editorUI.setShowUnlockDialog(false)
-            editorUI.setUnlockMacroWarning(false)
-            keyboard.rejectPendingUnlock()
-          }}
-          macroWarning={editorUI.unlockMacroWarning}
-        />
       )}
 
       {editorUI.showLightingModal && editorUI.lightingSupported && (
