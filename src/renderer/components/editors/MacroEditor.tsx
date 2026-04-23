@@ -18,6 +18,7 @@ import {
 import type { TapDanceEntry } from '../../../shared/types/protocol'
 import { useUnlockGate } from '../../hooks/useUnlockGate'
 import { useConfirmAction } from '../../hooks/useConfirmAction'
+import { useEscapeClose } from '../../hooks/useEscapeClose'
 import { useFavoriteStore } from '../../hooks/useFavoriteStore'
 import { useMacroKeycodeSelection } from '../../hooks/useMacroKeycodeSelection'
 import { ConfirmButton } from './ConfirmButton'
@@ -133,7 +134,6 @@ export function MacroEditor({
     selectedKey,
     setSelectedKey,
     setPopoverState,
-    preEditValueRef,
     isEditing,
     maskedSelection,
     tabContentOverride,
@@ -149,6 +149,10 @@ export function MacroEditor({
     handlePopoverKeycodeSelect,
     closePopover,
     revertAndDeselect,
+    commitAndDeselect,
+    beginAddAction,
+    hasPendingEdit,
+    isExistingEdit,
   } = useMacroKeycodeSelection({
     currentActions,
     activeMacro,
@@ -161,6 +165,9 @@ export function MacroEditor({
     quickSelect,
     autoAdvance,
   })
+
+  // Guarded so MacroModal's ESC handler takes over outside edit mode and during recording.
+  useEscapeClose(revertAndDeselect, isEditing && !isRecording)
 
   const updateActions = useCallback(
     (newActions: MacroAction[]) => {
@@ -189,21 +196,9 @@ export function MacroEditor({
   const handleAddActionType = useCallback(
     (type: ActionType) => {
       if (isRecording) return
-      const newAction = defaultAction(type)
-      const newIndex = currentActions.length
-      clearPending()
-      setPopoverState(null)
-      setMacros((prev) => {
-        const updated = [...prev]
-        updated[activeMacro] = [...currentActions, newAction]
-        return updated
-      })
-      setDirty(true)
-      if (isKeycodeAction(newAction)) {
-        setSelectedKey({ actionIndex: newIndex, keycodeIndex: 0 })
-      }
+      beginAddAction(defaultAction(type))
     },
-    [isRecording, currentActions, activeMacro, setMacros, setDirty, clearPending, setPopoverState, setSelectedKey],
+    [isRecording, beginAddAction],
   )
 
   const handleChange = useCallback(
@@ -229,13 +224,9 @@ export function MacroEditor({
   const handleEditClick = useCallback(
     (index: number, keycodeIndex: number) => {
       if (isRecording) return
-      const action = currentActions[index]
-      if (isKeycodeAction(action)) {
-        preEditValueRef.current = action.keycodes[keycodeIndex] ?? 0
-        setSelectedKey({ actionIndex: index, keycodeIndex })
-      }
+      handleKeycodeClick(index, keycodeIndex)
     },
-    [isRecording, currentActions, setSelectedKey, preEditValueRef],
+    [isRecording, handleKeycodeClick],
   )
 
   const handleDelete = useCallback(
@@ -295,12 +286,24 @@ export function MacroEditor({
     setDirty(false)
   }, [macroBuffer, vialProtocol, macroCount, clearPending, setSelectedKey, setPopoverState]))
 
+  // Edit-mode Revert (per-slot) — confirms like the list-level Revert but
+  // only rolls back the in-flight picker edit via revertAndDeselect.
+  const editRevertAction = useConfirmAction(revertAndDeselect)
+
+  // Enter in the picker commits the staged edit and exits edit mode,
+  // mirroring the Save button's enabled state so an empty commit can't
+  // sneak through.
+  const pickerEnterCommit = useCallback(() => {
+    if (isEditing && !isRecording && hasPendingEdit) commitAndDeselect()
+  }, [isEditing, isRecording, hasPendingEdit, commitAndDeselect])
+
   // Clear selection state when switching macros to avoid stale indices
   useEffect(() => {
     setSelectedKey(null)
     setPopoverState(null)
     clearAction.reset()
     revertAction.reset()
+    editRevertAction.reset()
   }, [activeMacro])
 
   const memoryUsed = useMemo(() => {
@@ -409,6 +412,7 @@ export function MacroEditor({
         <div ref={pickerRef} className={`overflow-y-auto px-6 pb-6 ${isEditing ? 'shrink-0' : 'hidden'}`}>
           <TabbedKeycodes
             onKeycodeSelect={maskedSelection.pickerSelect}
+            onConfirm={pickerEnterCommit}
             maskOnly={maskedSelection.maskOnly}
             lmMode={maskedSelection.lmMode}
             tabContentOverride={tabContentOverride}
@@ -440,12 +444,24 @@ export function MacroEditor({
                   />
                 </>
               )}
+              {isEditing && isExistingEdit && (
+                <ConfirmButton
+                  testId="macro-edit-revert"
+                  confirming={editRevertAction.confirming}
+                  onClick={editRevertAction.trigger}
+                  labelKey="common.revert"
+                  confirmLabelKey="common.confirmRevert"
+                  disabled={isRecording || !hasPendingEdit}
+                />
+              )}
               <button
                 type="button"
                 data-testid="macro-save"
                 className="rounded bg-accent px-4 py-2 text-sm text-content-inverse hover:bg-accent-hover disabled:opacity-50"
-                onClick={isEditing ? revertAndDeselect : handleSave}
-                disabled={isEditing ? isRecording : (!dirty || hasInvalidText || isRecording)}
+                onClick={isEditing ? commitAndDeselect : handleSave}
+                disabled={isEditing
+                  ? (isRecording || !hasPendingEdit)
+                  : (!dirty || hasInvalidText || isRecording)}
               >
                 {t('common.save')}
               </button>

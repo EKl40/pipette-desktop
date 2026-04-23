@@ -8,6 +8,30 @@ import { useMaskedKeycodeSelection } from './useMaskedKeycodeSelection'
 import { useTileContentOverride } from './useTileContentOverride'
 import { isKeycodeAction } from '../components/editors/macro-editor-utils'
 
+/** Structural equality for a MacroAction[] — cheap enough per-render because
+ *  macros are small (< 50 actions, each with a handful of keycodes). */
+function actionsEqual(a: MacroAction[], b: MacroAction[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x.type !== y.type) return false
+    if (x.type === 'text' && y.type === 'text') {
+      if (x.text !== y.text) return false
+    } else if (x.type === 'delay' && y.type === 'delay') {
+      if (x.delay !== y.delay) return false
+    } else if ('keycodes' in x && 'keycodes' in y) {
+      if (x.keycodes.length !== y.keycodes.length) return false
+      for (let j = 0; j < x.keycodes.length; j++) {
+        if (x.keycodes[j] !== y.keycodes[j]) return false
+      }
+    } else {
+      return false
+    }
+  }
+  return true
+}
+
 interface UseMacroKeycodeSelectionOptions {
   currentActions: MacroAction[]
   activeMacro: number
@@ -43,12 +67,28 @@ export function useMacroKeycodeSelection({
     anchorRect: DOMRect
   } | null>(null)
   const preEditValueRef = useRef<number>(0)
+  // Snapshot of the full actions array at edit start. Restoring the whole
+  // array is what lets revert undo all in-flight edits (keycode change,
+  // virtual slot add, autoAdvance runs, newly-added action via Add Tap etc.)
+  // in a single step.
+  const preEditActionsRef = useRef<MacroAction[] | null>(null)
 
   const isEditing = selectedKey !== null
 
   useLayoutEffect(() => {
     onEditingChange?.(isEditing)
   }, [isEditing, onEditingChange])
+
+  // Invalidate the pre-edit snapshot when edit mode ends or the active macro
+  // changes. Covers external callers that clear selectedKey directly (e.g.
+  // updateActions, revertAction) and prevents cross-macro corruption.
+  useEffect(() => {
+    if (!isEditing) preEditActionsRef.current = null
+  }, [isEditing])
+
+  useEffect(() => {
+    preEditActionsRef.current = null
+  }, [activeMacro])
 
   /** Update keycodes for a specific action without clearing selectedKey. */
   const setKeycodeAt = useCallback(
@@ -74,6 +114,7 @@ export function useMacroKeycodeSelection({
       const action = currentActions[actionIndex]
       if (isKeycodeAction(action)) {
         preEditValueRef.current = action.keycodes[keycodeIndex] ?? 0
+        preEditActionsRef.current = [...currentActions]
       }
       setSelectedKey({ actionIndex, keycodeIndex })
     },
@@ -92,6 +133,7 @@ export function useMacroKeycodeSelection({
       const action = currentActions[actionIndex]
       if (!isKeycodeAction(action)) return
       preEditValueRef.current = 0
+      preEditActionsRef.current = [...currentActions]
       setSelectedKey({ actionIndex, keycodeIndex: action.keycodes.length })
     },
     [currentActions],
@@ -151,11 +193,15 @@ export function useMacroKeycodeSelection({
     quickSelect,
   })
 
-  const tabContentOverride = useTileContentOverride(
+  // Tile picker uses pickerSelect/pickerDoubleClick so the quickSelect and
+  // Enter-to-commit behavior matches regular keycode tiles. onCommit is a
+  // no-op in macro mode, so double-click simply acts like another single-click.
+  const tabContentOverride = useTileContentOverride({
     tapDanceEntries,
     deserializedMacros,
-    maskedSelection.handleKeycodeSelect,
-  )
+    onSelect: maskedSelection.pickerSelect,
+    onDoubleClick: maskedSelection.pickerDoubleClick,
+  })
 
   const handleMaskPartClick = useCallback(
     (actionIndex: number, keycodeIndex: number, part: 'outer' | 'inner') => {
@@ -164,6 +210,7 @@ export function useMacroKeycodeSelection({
       const code = action.keycodes[keycodeIndex]
       if (code == null) return
       preEditValueRef.current = code
+      preEditActionsRef.current = [...currentActions]
       maskedSelection.enterMaskMode(code, part)
       setSelectedKey({ actionIndex, keycodeIndex })
     },
@@ -195,9 +242,48 @@ export function useMacroKeycodeSelection({
   const pickerRef = useRef<HTMLDivElement>(null)
 
   const revertAndDeselect = useCallback(() => {
+    const snapshot = preEditActionsRef.current
+    if (selectedKey && snapshot) {
+      clearPending()
+      setMacros((prev) => {
+        const updated = [...prev]
+        updated[activeMacro] = snapshot
+        return updated
+      })
+    }
+    preEditActionsRef.current = null
+    maskedSelection.clearMask()
+    setSelectedKey(null)
+  }, [selectedKey, activeMacro, clearPending, setMacros, maskedSelection.clearMask])
+
+  const commitAndDeselect = useCallback(() => {
+    preEditActionsRef.current = null
     maskedSelection.clearMask()
     setSelectedKey(null)
   }, [maskedSelection.clearMask])
+
+  /** Append a new action and, for keycode actions, enter edit mode on its
+   *  first slot. Snapshots the pre-append state so revertAndDeselect can
+   *  remove the new action entirely. */
+  const beginAddAction = useCallback(
+    (newAction: MacroAction) => {
+      clearPending()
+      setPopoverState(null)
+      const newIndex = currentActions.length
+      preEditActionsRef.current = [...currentActions]
+      setMacros((prev) => {
+        const updated = [...prev]
+        updated[activeMacro] = [...(prev[activeMacro] ?? []), newAction]
+        return updated
+      })
+      setDirty(true)
+      if (isKeycodeAction(newAction)) {
+        preEditValueRef.current = 0
+        setSelectedKey({ actionIndex: newIndex, keycodeIndex: 0 })
+      }
+    },
+    [currentActions, activeMacro, clearPending, setMacros, setDirty],
+  )
 
   // Close picker when clicking outside of it.
   useEffect(() => {
@@ -225,6 +311,15 @@ export function useMacroKeycodeSelection({
       : 0
   })()
 
+  // isExistingEdit is false while editing a freshly-added action
+  // (beginAddAction grew the array) — that's how the Revert button stays
+  // hidden for new actions.
+  const snapshot = preEditActionsRef.current
+  const hasPendingEdit =
+    isEditing && snapshot !== null && !actionsEqual(snapshot, currentActions)
+  const isExistingEdit =
+    isEditing && snapshot !== null && snapshot.length === currentActions.length
+
   return {
     selectedKey,
     setSelectedKey,
@@ -245,5 +340,9 @@ export function useMacroKeycodeSelection({
     handlePopoverKeycodeSelect,
     closePopover,
     revertAndDeselect,
+    commitAndDeselect,
+    beginAddAction,
+    hasPendingEdit,
+    isExistingEdit,
   }
 }

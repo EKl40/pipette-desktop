@@ -113,15 +113,23 @@ export function TabbedKeycodes({
     el.style.left = `${clampedLeft}px`
   }, [tooltip])
 
-  // Enter key confirms current selection and closes the picker
+  // Enter key confirms current selection and closes the picker.
+  // Always block the browser's native "Enter re-clicks the focused button"
+  // for buttons inside the picker surface — otherwise picking a keycode
+  // leaves that tile focused and a subsequent Enter silently inserts the
+  // same keycode again. Buttons outside the picker (e.g. the modal's
+  // Save/Cancel) still let native Enter→click through.
+  //
+  // When onConfirm is provided, Enter also commits (TapDance / Combo / etc.
+  // use this for the "press Enter to close" UI hint).
   useEffect(() => {
-    if (!onConfirm) return
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Enter') return
       const el = e.target as HTMLElement | null
-      if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.tagName === 'BUTTON' || el?.isContentEditable) return
+      if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return
+      if (el?.tagName === 'BUTTON' && !containerRef.current?.contains(el)) return
       e.preventDefault()
-      onConfirm()
+      onConfirm?.()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
