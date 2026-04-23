@@ -25,6 +25,7 @@ import { useHubState } from './hooks/useHubState'
 import { useSnapshotMigration } from './hooks/useSnapshotMigration'
 import { useDeviceLifecycle } from './hooks/useDeviceLifecycle'
 import { formatDeviceId } from './app-types'
+import { FAKE_KEYCHRON_JSON } from './utils/fake-keychron'
 import { DeviceSelector } from './components/DeviceSelector'
 import { SettingsModal } from './components/SettingsModal'
 import { DataModal } from './components/DataModal'
@@ -55,19 +56,6 @@ import { deserializeAllMacros } from '../preload/macro'
 import { EMPTY_UID } from '../shared/constants/protocol'
 
 export { type PipetteFileKeyboard, type PipetteFileEntry } from './app-types'
-
-const FAKE_KEYCHRON_JSON = {
-  name: 'Keychron K2 HE ANSI RGB (Mock)',
-  keychron: {
-    hasAnalog: true,
-    hasRgb: true,
-    hasWireless: true,
-    hasSnapClick: true,
-    hasDefaultLayer: true,
-    defaultLayer: 2,
-    batteryLevel: 85,
-  },
-}
 
 export function App() {
   const { t } = useTranslation()
@@ -337,7 +325,7 @@ export function App() {
 
   const handleLoadKeychronDummy = useCallback(() => {
     device.connectDummy()
-    keyboard.loadDummy(FAKE_KEYCHRON_JSON as any)
+    keyboard.loadDummy(FAKE_KEYCHRON_JSON)
   }, [device, keyboard])
 
   // One-shot guard: prevents re-restoring the same uid after an initial restore
