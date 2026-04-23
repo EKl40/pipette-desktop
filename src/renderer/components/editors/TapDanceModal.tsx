@@ -10,6 +10,7 @@ import { useConfirmAction } from '../../hooks/useConfirmAction'
 import { useFavoriteStore } from '../../hooks/useFavoriteStore'
 import { useMaskedKeycodeSelection } from '../../hooks/useMaskedKeycodeSelection'
 import { useTileContentOverride } from '../../hooks/useTileContentOverride'
+import { useEscapeClose } from '../../hooks/useEscapeClose'
 import { ConfirmButton } from './ConfirmButton'
 import { KeycodeField } from './KeycodeField'
 import { ModalCloseButton } from './ModalCloseButton'
@@ -149,6 +150,19 @@ export function TapDanceModal({
     setEditedEntry((prev) => ({ ...prev, [field]: code }))
   }, [])
 
+  const handlePickerClose = useCallback(() => {
+    if (selectedField) {
+      setEditedEntry((prev) => ({
+        ...prev,
+        [selectedField]: preEditValueRef.current,
+      }))
+    }
+    maskedSelection.clearMask()
+    setSelectedField(null)
+  }, [selectedField, maskedSelection])
+
+  useEscapeClose(selectedField ? handlePickerClose : onClose)
+
   const handleFieldDoubleClick = useCallback(
     (field: KeycodeFieldName, rect: DOMRect) => {
       if (!selectedField) return
@@ -180,11 +194,11 @@ export function TapDanceModal({
     [popoverField, updateField],
   )
 
-  const tabContentOverride = useTileContentOverride(
+  const tabContentOverride = useTileContentOverride({
     tapDanceEntries,
     deserializedMacros,
-    maskedSelection.handleKeycodeSelect,
-  )
+    onSelect: maskedSelection.handleKeycodeSelect,
+  })
 
   const modalWidth = isDummy ? 'w-[900px]' : 'w-[1050px]'
 
@@ -279,16 +293,7 @@ export function TapDanceModal({
                   tabContentOverride={tabContentOverride}
                   splitKeyMode={splitKeyMode}
                   basicViewType={basicViewType}
-                  onClose={() => {
-                    if (selectedField) {
-                      setEditedEntry((prev) => ({
-                        ...prev,
-                        [selectedField]: preEditValueRef.current,
-                      }))
-                    }
-                    maskedSelection.clearMask()
-                    setSelectedField(null)
-                  }}
+                  onClose={handlePickerClose}
                 />
               </div>
             )}
