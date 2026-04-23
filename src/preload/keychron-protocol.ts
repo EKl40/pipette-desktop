@@ -915,11 +915,11 @@ export async function setKeychronAnalogSocd(
   row2: number,
   col2: number,
   index: number,
-  pair: SOCDPair,
+  socdType: number,
 ): Promise<boolean> {
   if (process.env.DEBUG_KEYCHRON_ANALOG) return true
   const resp = await sendReceive(
-    cmd(KC_ANALOG_MATRIX, AMC_SET_SOCD, profile, row1, col1, row2, col2, index, pair.socdType),
+    cmd(KC_ANALOG_MATRIX, AMC_SET_SOCD, profile, row1, col1, row2, col2, index, socdType),
   )
   return resp[0] === KC_ANALOG_MATRIX && resp[1] === AMC_SET_SOCD && resp[2] === KC_SUCCESS
 }

@@ -17,6 +17,7 @@ import {
   AKM_RAPID,
   GC_MASK_XINPUT,
   GC_MASK_TYPING,
+  CALIB_OFF,
   CALIB_ZERO_TRAVEL_MANUAL,
   CALIB_FULL_TRAVEL_MANUAL,
   CALIB_SAVE_AND_EXIT,
@@ -440,14 +441,7 @@ export function KeychronAnalog({ analog, keys, rows, cols, keymap }: Props) {
     }
   }, [api])
 
-  const handleStartCalibFull = useCallback(async () => {
-    const ok = await api.keychronAnalogStartCalibration(CALIB_FULL_TRAVEL_MANUAL)
-    if (ok) {
-      setCalibPhase('full')
-    }
-  }, [api])
-
-  const handleSaveCalib = useCallback(async () => {
+  const handleFinishCalib = useCallback(async () => {
     await api.keychronAnalogStartCalibration(CALIB_SAVE_AND_EXIT)
     setCalibrating(false)
     setCalibPhase('idle')
@@ -459,6 +453,7 @@ export function KeychronAnalog({ analog, keys, rows, cols, keymap }: Props) {
   }, [api])
 
   const handleCancelCalib = useCallback(async () => {
+    await api.keychronAnalogStartCalibration(CALIB_SAVE_AND_EXIT)
     setCalibrating(false)
     setCalibPhase('idle')
     setRealtimeTravel(null)
@@ -466,33 +461,54 @@ export function KeychronAnalog({ analog, keys, rows, cols, keymap }: Props) {
       window.clearInterval(calibIntervalRef.current)
       calibIntervalRef.current = null
     }
-  }, [])
+  }, [api])
 
-  // Poll realtime travel during calibration
+  // Poll calibration state and realtime travel during calibration.
   useEffect(() => {
-    if (calibrating && selectedCalibKey) {
+    if (calibrating) {
       calibIntervalRef.current = window.setInterval(async () => {
-        const travel = await api.keychronAnalogGetRealtimeTravel(
-          selectedCalibKey.row,
-          selectedCalibKey.col,
-        )
-        if (travel) {
-          setRealtimeTravel({
-            travelMm: travel.travelMm,
-            value: travel.value,
-            zero: travel.zero,
-            full: travel.full,
-          })
+        const state = await api.keychronAnalogGetCalibrationState()
+        if (state) {
+          if (state.state === CALIB_ZERO_TRAVEL_MANUAL) {
+            setCalibPhase('zero')
+          } else if (state.state === CALIB_FULL_TRAVEL_MANUAL) {
+            setCalibPhase('full')
+          } else if (state.state === CALIB_OFF) {
+            setCalibrating(false)
+            setCalibPhase('idle')
+            setRealtimeTravel(null)
+            if (calibIntervalRef.current) {
+              window.clearInterval(calibIntervalRef.current)
+              calibIntervalRef.current = null
+            }
+            return
+          }
+        }
+
+        if (selectedCalibKey) {
+          const travel = await api.keychronAnalogGetRealtimeTravel(
+            selectedCalibKey.row,
+            selectedCalibKey.col,
+          )
+          if (travel) {
+            setRealtimeTravel({
+              travelMm: travel.travelMm,
+              value: travel.value,
+              zero: travel.zero,
+              full: travel.full,
+            })
+          }
         }
       }, 100)
 
       return () => {
         if (calibIntervalRef.current) {
           window.clearInterval(calibIntervalRef.current)
+          calibIntervalRef.current = null
         }
       }
     }
-  }, [calibrating, selectedCalibKey, api])
+  }, [api, calibrating, selectedCalibKey])
 
   const tabBtnClass = (tab: AnalogTab) =>
     `rounded px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -1173,7 +1189,7 @@ export function KeychronAnalog({ analog, keys, rows, cols, keymap }: Props) {
           <p className="text-sm text-content-secondary">
             {t(
               'keychron.analog.calibDesc',
-              'Calibrate the Hall Effect sensors. First calibrate the zero (rest) position, then the full travel position.',
+              'Calibrate the Hall Effect sensors. Start zero calibration first; the firmware will automatically advance to full travel and save when complete.',
             )}
           </p>
 
@@ -1255,20 +1271,12 @@ export function KeychronAnalog({ analog, keys, rows, cols, keymap }: Props) {
               )}
 
               <div className="flex gap-2 pt-2">
-                {calibPhase === 'zero' && (
-                  <button
-                    className="rounded bg-accent px-4 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
-                    onClick={handleStartCalibFull}
-                  >
-                    {t('keychron.analog.calibNext', 'Next: Full Travel')}
-                  </button>
-                )}
                 {calibPhase === 'full' && (
                   <button
                     className="rounded bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700"
-                    onClick={handleSaveCalib}
+                    onClick={handleFinishCalib}
                   >
-                    {t('keychron.analog.calibSave', 'Save Calibration')}
+                    {t('keychron.analog.calibFinish', 'Finish Early')}
                   </button>
                 )}
                 <button
