@@ -896,9 +896,10 @@ export function App() {
             <div className="flex min-h-0 flex-1 overflow-hidden p-6 pt-0">
               <KeychronAnalog
                 analog={keychronAnalogData}
+                keys={keyboard.layout?.keys ?? []}
                 rows={keyboard.rows}
                 cols={keyboard.cols}
-                onSettingChanged={keyboard.refreshKeychron}
+                keymap={keyboard.keymap}
               />
             </div>
           </div>
@@ -908,6 +909,8 @@ export function App() {
       {showKeychronSocdModal && keyboard.keychron?.hasSnapClick && (
         <KeychronSocd
           keychron={keyboard.keychron}
+          keys={keyboard.layout?.keys ?? []}
+          keymap={keyboard.keymap}
           onSettingChanged={keyboard.refreshKeychron}
           onClose={() => setShowKeychronSocdModal(false)}
         />
