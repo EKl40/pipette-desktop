@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { GripVertical, X } from 'lucide-react'
 import { isValidMacroText, type MacroAction } from '../../../preload/macro'
 import { KeycodeField, KEYCODE_FIELD_SIZE } from './KeycodeField'
+import { Tooltip } from '../ui/Tooltip'
 
 export type ActionType = MacroAction['type']
 
@@ -113,7 +114,7 @@ export function MacroActionItem({
               />
             ))}
             {onEditClick && (
-              <div className="group relative">
+              <Tooltip content={t('editor.macro.addKeycode')} side="bottom" openDelay={0}>
                 <button
                   type="button"
                   data-testid="macro-edit-action"
@@ -123,13 +124,7 @@ export function MacroActionItem({
                   disabled={disabled}
                   aria-label={t('editor.macro.addKeycode')}
                 />
-
-                <div className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 rounded-md border border-edge bg-surface-alt px-2.5 py-1.5 shadow-lg group-hover:visible">
-                  <div className="text-xs font-medium text-content whitespace-nowrap">
-                    {t('editor.macro.addKeycode')}
-                  </div>
-                </div>
-              </div>
+              </Tooltip>
             )}
           </div>
         )
@@ -179,7 +174,7 @@ export function MacroActionItem({
               />
             )
           })}
-          <div className="group relative">
+          <Tooltip content={t('editor.macro.addKeycode')} side="bottom" openDelay={0}>
             <button
               type="button"
               data-testid="macro-add-keycode"
@@ -194,12 +189,7 @@ export function MacroActionItem({
               disabled={disabled}
               aria-label={t('editor.macro.addKeycode')}
             />
-            <div className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 rounded-md border border-edge bg-surface-alt px-2.5 py-1.5 shadow-lg group-hover:visible">
-              <div className="text-xs font-medium text-content whitespace-nowrap">
-                {t('editor.macro.addKeycode')}
-              </div>
-            </div>
-          </div>
+          </Tooltip>
         </div>
         {onCloseEdit && (
           <button
@@ -238,15 +228,17 @@ export function MacroActionItem({
 
       {renderContent()}
 
-      <button
-        type="button"
-        onClick={() => onDelete(index)}
-        disabled={disabled}
-        className="rounded p-1 text-content-muted hover:text-danger disabled:opacity-50"
-        aria-label={t('common.delete')}
-      >
-        <X size={20} aria-hidden="true" />
-      </button>
+      <Tooltip content={t('common.delete')}>
+        <button
+          type="button"
+          onClick={() => onDelete(index)}
+          disabled={disabled}
+          className="rounded p-1 text-content-muted hover:text-danger disabled:opacity-50"
+          aria-label={t('common.delete')}
+        >
+          <X size={20} aria-hidden="true" />
+        </button>
+      </Tooltip>
     </div>
   )
 }

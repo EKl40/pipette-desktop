@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { IpcChannels } from '../shared/ipc/channels'
-import { isValidFavoriteType, isFavoriteDataFile, FAV_EXPORT_KEY_MAP, FAV_TYPE_TO_EXPORT_KEY, isValidFavExportFile, serializeFavData, deserializeFavData } from '../shared/favorite-data'
-import { serialize as serializeKeycode, deserialize as deserializeKeycode } from '../shared/keycodes/keycodes'
+import { isValidFavoriteType, isValidVialProtocol, isFavoriteDataFile, FAV_EXPORT_KEY_MAP, FAV_TYPE_TO_EXPORT_KEY, isValidFavExportFile, buildFavExportFile, serializeFavData, deserializeFavData } from '../shared/favorite-data'
+import { serialize as serializeKeycode, deserialize as deserializeKeycode, getProtocol, setProtocol } from '../shared/keycodes/keycodes'
 import { notifyChange } from './sync/sync-service'
 import { secureHandle } from './ipc-guard'
 import type {
@@ -67,6 +67,25 @@ async function findEntry(
   const entry = index.entries.find((e) => e.id === entryId)
   if (!entry) return null
   return { index, entry }
+}
+
+/**
+ * Run `body` with `getProtocol()` temporarily set to `protocol` so that
+ * `deserializeKeycode` resolves keycode strings against the file's protocol
+ * version. Restores the previous protocol in `finally`.
+ *
+ * If `protocol` is undefined (legacy v2 file or out-of-spec v3 without
+ * `vial_protocol`), runs `body` with the current default protocol.
+ */
+function withImportProtocol<T>(protocol: number | undefined, body: () => T): T {
+  if (protocol === undefined) return body()
+  const prev = getProtocol()
+  setProtocol(protocol)
+  try {
+    return body()
+  } finally {
+    setProtocol(prev)
+  }
 }
 
 export function setupFavoriteStore(): void {
@@ -200,18 +219,15 @@ export function setupFavoriteStore(): void {
   // --- Export ---
   secureHandle(
     IpcChannels.FAVORITE_STORE_EXPORT,
-    async (
-      event,
-      scope: unknown,
-      entryId?: unknown,
-    ): Promise<{ success: boolean; error?: string }> => {
+    async (event, scope: unknown, vialProtocol: unknown, entryId?: unknown): Promise<{ success: boolean; error?: string }> => {
       try {
         const win = BrowserWindow.fromWebContents(event.sender)
         if (!win) return { success: false, error: 'No window' }
 
         if (!isValidFavoriteType(scope)) return { success: false, error: 'Invalid scope' }
-        if (entryId !== undefined && typeof entryId !== 'string')
-          return { success: false, error: 'Invalid entryId' }
+        if (!isValidVialProtocol(vialProtocol)) return { success: false, error: 'Invalid vialProtocol' }
+        if (entryId !== undefined && typeof entryId !== 'string') return { success: false, error: 'Invalid entryId' }
+
 
         const index = await readIndex(scope)
         const exportKey = FAV_TYPE_TO_EXPORT_KEY[scope]
@@ -273,13 +289,7 @@ export function setupFavoriteStore(): void {
           return { success: false, error: 'cancelled' }
         }
 
-        const exportFile = {
-          app: 'pipette' as const,
-          version: 2 as const,
-          scope: 'fav' as const,
-          exportedAt: now.toISOString(),
-          categories,
-        }
+        const exportFile = buildFavExportFile(vialProtocol, categories, now.toISOString())
 
         await writeFile(result.filePath, JSON.stringify(exportFile, null, 2), 'utf-8')
         return { success: true }
@@ -293,12 +303,13 @@ export function setupFavoriteStore(): void {
   // --- Export Current (live state without saving first) ---
   secureHandle(
     IpcChannels.FAVORITE_STORE_EXPORT_CURRENT,
-    async (event, scope: unknown, dataJson: unknown): Promise<{ success: boolean; error?: string }> => {
+    async (event, scope: unknown, vialProtocol: unknown, dataJson: unknown): Promise<{ success: boolean; error?: string }> => {
       try {
         const win = BrowserWindow.fromWebContents(event.sender)
         if (!win) return { success: false, error: 'No window' }
 
         if (!isValidFavoriteType(scope)) return { success: false, error: 'Invalid scope' }
+        if (!isValidVialProtocol(vialProtocol)) return { success: false, error: 'Invalid vialProtocol' }
         if (typeof dataJson !== 'string') return { success: false, error: 'Invalid data' }
 
         const parsed = JSON.parse(dataJson) as Record<string, unknown>
@@ -324,19 +335,17 @@ export function setupFavoriteStore(): void {
           return { success: false, error: 'cancelled' }
         }
 
-        const exportFile = {
-          app: 'pipette' as const,
-          version: 2 as const,
-          scope: 'fav' as const,
-          exportedAt: now.toISOString(),
-          categories: {
+        const exportFile = buildFavExportFile(
+          vialProtocol,
+          {
             [exportKey]: [{
               label: 'Current',
               savedAt: now.toISOString(),
               data: serializedData,
             }],
           },
-        }
+          now.toISOString(),
+        )
 
         await writeFile(result.filePath, JSON.stringify(exportFile, null, 2), 'utf-8')
         return { success: true }
@@ -408,7 +417,9 @@ export function setupFavoriteStore(): void {
         }
 
         const firstEntry = entries[0]
-        const normalizedData = deserializeFavData(scope, firstEntry.data, deserializeKeycode)
+        const normalizedData = withImportProtocol(parsed.vial_protocol, () =>
+          deserializeFavData(scope, firstEntry.data, deserializeKeycode),
+        )
 
         return { success: true, data: normalizedData }
       } catch (err) {
@@ -461,7 +472,9 @@ export function setupFavoriteStore(): void {
         await mkdir(dir, { recursive: true })
 
         for (const entry of entries) {
-          const normalizedData = deserializeFavData(favType, entry.data, deserializeKeycode)
+          const normalizedData = withImportProtocol(parsed.vial_protocol, () =>
+            deserializeFavData(favType, entry.data, deserializeKeycode),
+          )
           if (!isFavoriteDataFile({ type: favType, data: normalizedData }, favType)) {
             skipped++
             continue
@@ -483,7 +496,7 @@ export function setupFavoriteStore(): void {
           const filename = `${favType}_${timestamp}_${randomUUID().slice(0, 8)}.json`
           const filePath = getSafeFilePath(favType, filename)
 
-            await writeFile(filePath, JSON.stringify({ type: favType, data: normalizedData }), 'utf-8')
+          await writeFile(filePath, JSON.stringify({ type: favType, data: normalizedData }), 'utf-8')
           const meta: SavedFavoriteMeta = {
             id: randomUUID(),
             label: entry.label,

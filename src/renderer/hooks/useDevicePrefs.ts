@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState, useCallback, useRef } from 'react'
-import { LAYOUT_ID_SET } from '../data/keyboard-layouts'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { KeyboardLayoutId } from '../data/keyboard-layouts'
-import { remapKeycode, isRemappedKeycode } from './useKeyboardLayout'
+import { useKeyLabelLookup } from './useKeyLabelLookup'
 import { useAppConfig } from './useAppConfig'
 import { MIN_SCALE, MAX_SCALE } from '../components/editors/keymap-editor-types'
-import type { TypingTestResult, ViewMode } from '../../shared/types/pipette-settings'
-import { VIEW_MODES } from '../../shared/types/pipette-settings'
+import type { TypingTestResult, TypingViewMenuTab, ViewMode } from '../../shared/types/pipette-settings'
+import { VIEW_MODES, isTypingViewMenuTab } from '../../shared/types/pipette-settings'
 import { trimResults } from '../typing-test/result-builder'
 import type { TypingTestConfig } from '../typing-test/types'
 import type { AutoLockMinutes, BasicViewType, SplitKeyMode } from '../../shared/types/app-config'
@@ -73,11 +72,13 @@ interface ValidatedPrefs {
   typingTestViewOnly: boolean
   typingTestViewOnlyWindowSize?: { width: number; height: number }
   typingTestViewOnlyAlwaysOnTop: boolean
+  typingRecordEnabled: boolean
+  typingViewMenuTab: TypingViewMenuTab
   viewMode: ViewMode
 }
 
 function validateIpcPrefs(
-  data: { keyboardLayout: string; autoAdvance: boolean; layerPanelOpen?: boolean; basicViewType?: string; splitKeyMode?: string; quickSelect?: boolean; keymapScale?: number; layerNames?: string[]; typingTestResults?: TypingTestResult[]; typingTestConfig?: unknown; typingTestLanguage?: unknown; typingTestViewOnly?: boolean; typingTestViewOnlyWindowSize?: unknown; typingTestViewOnlyAlwaysOnTop?: boolean; viewMode?: unknown } | null,
+  data: { keyboardLayout: string; autoAdvance: boolean; layerPanelOpen?: boolean; basicViewType?: string; splitKeyMode?: string; quickSelect?: boolean; keymapScale?: number; layerNames?: string[]; typingTestResults?: TypingTestResult[]; typingTestConfig?: unknown; typingTestLanguage?: unknown; typingTestViewOnly?: boolean; typingTestViewOnlyWindowSize?: unknown; typingTestViewOnlyAlwaysOnTop?: boolean; typingRecordEnabled?: boolean; typingViewMenuTab?: unknown; viewMode?: unknown } | null,
   defaultLayout: KeyboardLayoutId,
   defaultAutoAdvance: boolean,
   defaultLayerPanelOpen: boolean,
@@ -87,7 +88,11 @@ function validateIpcPrefs(
 ): ValidatedPrefs | null {
   if (!data) return null
 
-  const layout = typeof data.keyboardLayout === 'string' && LAYOUT_ID_SET.has(data.keyboardLayout)
+  // After the Key Labels migration the built-in `LAYOUT_ID_SET` only
+  // covers QWERTY. Any saved id that is not empty is accepted here; the
+  // Key Label store is consulted at render time and falls back to
+  // QWERTY when the id is not (yet) installed locally.
+  const layout = typeof data.keyboardLayout === 'string' && data.keyboardLayout.length > 0
     ? data.keyboardLayout
     : null
   const autoAdvance = typeof data.autoAdvance === 'boolean' ? data.autoAdvance : null
@@ -145,6 +150,8 @@ function validateIpcPrefs(
     typingTestViewOnly,
     typingTestViewOnlyWindowSize: validateWindowSize(data.typingTestViewOnlyWindowSize),
     typingTestViewOnlyAlwaysOnTop: typeof data.typingTestViewOnlyAlwaysOnTop === 'boolean' ? data.typingTestViewOnlyAlwaysOnTop : false,
+    typingRecordEnabled: typeof data.typingRecordEnabled === 'boolean' ? data.typingRecordEnabled : false,
+    typingViewMenuTab: isTypingViewMenuTab(data.typingViewMenuTab) ? data.typingViewMenuTab : 'window',
     viewMode,
   }
 }
@@ -172,6 +179,8 @@ export interface UseDevicePrefsReturn {
   typingTestViewOnly: boolean
   typingTestViewOnlyWindowSize: { width: number; height: number } | undefined
   typingTestViewOnlyAlwaysOnTop: boolean
+  typingRecordEnabled: boolean
+  typingViewMenuTab: TypingViewMenuTab
   viewMode: ViewMode
   appliedUid: string | null
   setLayout: (id: KeyboardLayoutId) => void
@@ -188,6 +197,8 @@ export interface UseDevicePrefsReturn {
   setTypingTestViewOnly: (enabled: boolean) => void
   setTypingTestViewOnlyWindowSize: (size: { width: number; height: number }) => void
   setTypingTestViewOnlyAlwaysOnTop: (enabled: boolean) => void
+  setTypingRecordEnabled: (enabled: boolean) => void
+  setTypingViewMenuTab: (tab: TypingViewMenuTab) => void
   setViewMode: (mode: ViewMode) => void
   defaultLayout: KeyboardLayoutId
   defaultAutoAdvance: boolean
@@ -226,7 +237,10 @@ function useStateRef<T>(initial: T): [T, (v: T) => void, React.RefObject<T>] {
 export function useDevicePrefs(): UseDevicePrefsReturn {
   const { config, set } = useAppConfig()
 
-  const defaultLayout = LAYOUT_ID_SET.has(config.defaultKeyboardLayout)
+  // Accept any non-empty id; Key Labels installed via the modal are
+  // valid even though they are not in the built-in `LAYOUT_ID_SET`.
+  const defaultLayout = typeof config.defaultKeyboardLayout === 'string'
+    && config.defaultKeyboardLayout.length > 0
     ? config.defaultKeyboardLayout
     : 'qwerty'
   const defaultAutoAdvance = config.defaultAutoAdvance
@@ -249,6 +263,8 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
   const [typingTestViewOnly, updateTypingTestViewOnly, typingTestViewOnlyRef] = useStateRef<boolean>(false)
   const [typingTestViewOnlyWindowSize, updateTypingTestViewOnlyWindowSize, typingTestViewOnlyWindowSizeRef] = useStateRef<{ width: number; height: number } | undefined>(undefined)
   const [typingTestViewOnlyAlwaysOnTop, updateTypingTestViewOnlyAlwaysOnTop, typingTestViewOnlyAlwaysOnTopRef] = useStateRef<boolean>(false)
+  const [typingRecordEnabled, updateTypingRecordEnabled, typingRecordEnabledRef] = useStateRef<boolean>(false)
+  const [typingViewMenuTab, updateTypingViewMenuTab, typingViewMenuTabRef] = useStateRef<TypingViewMenuTab>('window')
   const [viewMode, updateViewMode, viewModeRef] = useStateRef<ViewMode>('editor')
   const [appliedUid, setAppliedUid] = useState<string | null>(null)
 
@@ -274,6 +290,8 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
       typingTestViewOnly: typingTestViewOnlyRef.current,
       typingTestViewOnlyWindowSize: typingTestViewOnlyWindowSizeRef.current,
       typingTestViewOnlyAlwaysOnTop: typingTestViewOnlyAlwaysOnTopRef.current || undefined,
+      typingRecordEnabled: typingRecordEnabledRef.current || undefined,
+      typingViewMenuTab: typingViewMenuTabRef.current,
       viewMode: viewModeRef.current,
     }).catch(() => {
       // IPC failure — best-effort save
@@ -355,6 +373,18 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
     saveCurrentPrefs()
   }, [saveCurrentPrefs, updateTypingTestViewOnlyAlwaysOnTop])
 
+  const setTypingRecordEnabled = useCallback((enabled: boolean) => {
+    if (typingRecordEnabledRef.current === enabled) return
+    updateTypingRecordEnabled(enabled)
+    saveCurrentPrefs()
+  }, [saveCurrentPrefs, updateTypingRecordEnabled])
+
+  const setTypingViewMenuTab = useCallback((tab: TypingViewMenuTab) => {
+    if (typingViewMenuTabRef.current === tab) return
+    updateTypingViewMenuTab(tab)
+    saveCurrentPrefs()
+  }, [saveCurrentPrefs, updateTypingViewMenuTab])
+
   const setViewMode = useCallback((mode: ViewMode) => {
     if (viewModeRef.current === mode) return
     updateViewMode(mode)
@@ -416,6 +446,8 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
       typingTestResults: [],
       typingTestViewOnly: false,
       typingTestViewOnlyAlwaysOnTop: false,
+      typingRecordEnabled: false,
+      typingViewMenuTab: 'window',
       viewMode: 'editor',
     }
 
@@ -433,6 +465,8 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
     updateTypingTestViewOnly(resolved.typingTestViewOnly)
     updateTypingTestViewOnlyWindowSize(resolved.typingTestViewOnlyWindowSize)
     updateTypingTestViewOnlyAlwaysOnTop(resolved.typingTestViewOnlyAlwaysOnTop)
+    updateTypingRecordEnabled(resolved.typingRecordEnabled)
+    updateTypingViewMenuTab(resolved.typingViewMenuTab)
     updateViewMode(resolved.viewMode)
     setAppliedUid(uid)
 
@@ -441,14 +475,33 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
     }
   }, [saveCurrentPrefs, defaultLayout, defaultAutoAdvance, defaultLayerPanelOpen, defaultBasicViewType, defaultSplitKeyMode, defaultQuickSelect])
 
+  const lookup = useKeyLabelLookup()
+
+  // Trigger an IPC fetch for non-built-in layouts so the remap callbacks
+  // see the map / compositeLabels as soon as the store responds.
+  useEffect(() => {
+    void lookup.ensure(layout)
+  }, [lookup, layout])
+
   const remapLabel = useCallback(
-    (qmkId: string): string => remapKeycode(qmkId, layout),
-    [layout],
+    (qmkId: string): string => {
+      const composite = lookup.getCompositeLabels(layout)?.[qmkId]
+      if (composite !== undefined) return composite
+      const mapped = lookup.getMap(layout)?.[qmkId]
+      if (mapped !== undefined) return mapped
+      return qmkId
+    },
+    [lookup, layout],
   )
 
   const isRemapped = useCallback(
-    (qmkId: string): boolean => isRemappedKeycode(qmkId, layout),
-    [layout],
+    (qmkId: string): boolean => {
+      const composite = lookup.getCompositeLabels(layout)
+      if (composite && qmkId in composite) return true
+      const map = lookup.getMap(layout)
+      return Boolean(map && qmkId in map)
+    },
+    [lookup, layout],
   )
 
   return {
@@ -466,6 +519,8 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
     typingTestViewOnly,
     typingTestViewOnlyWindowSize,
     typingTestViewOnlyAlwaysOnTop,
+    typingRecordEnabled,
+    typingViewMenuTab,
     viewMode,
     appliedUid,
     setLayout,
@@ -482,6 +537,8 @@ export function useDevicePrefs(): UseDevicePrefsReturn {
     setTypingTestViewOnly,
     setTypingTestViewOnlyWindowSize,
     setTypingTestViewOnlyAlwaysOnTop,
+    setTypingRecordEnabled,
+    setTypingViewMenuTab,
     setViewMode,
     defaultLayout,
     defaultAutoAdvance,

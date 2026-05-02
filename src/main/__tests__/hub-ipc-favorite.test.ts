@@ -24,6 +24,19 @@ vi.mock('../ipc-guard', async () => {
   return { secureHandle: ipcMain.handle }
 })
 
+// Mock sync-service + key-label-store so importing hub-ipc does not
+// pull in app-config at module load (electron-store needs projectName).
+vi.mock('../sync/sync-service', () => ({
+  notifyChange: vi.fn(),
+}))
+
+vi.mock('../key-label-store', () => ({
+  KEY_LABEL_SYNC_UNIT: 'key-labels',
+  getRecord: vi.fn().mockResolvedValue({ success: false, errorCode: 'NOT_FOUND' }),
+  saveRecord: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  setHubPostId: vi.fn().mockResolvedValue({ success: true, data: {} }),
+}))
+
 // Mock google-auth
 vi.mock('../sync/google-auth', () => ({
   getIdToken: vi.fn(),
@@ -169,6 +182,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'My Tap Dance',
       })
 
@@ -189,6 +203,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'invalidType',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'Test',
       })
 
@@ -216,6 +231,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'a'.repeat(201),
       })
 
@@ -232,6 +248,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'nonexistent',
+        vialProtocol: 6,
         title: 'Test',
       })
 
@@ -246,6 +263,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'deleted-entry',
+        vialProtocol: 6,
         title: 'Test',
       })
 
@@ -264,6 +282,7 @@ describe('hub-ipc favorite handlers', () => {
       await handler({}, {
         type: 'tapDance',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'My Tap Dance',
       })
 
@@ -272,8 +291,9 @@ describe('hub-ipc favorite handlers', () => {
       const jsonFile = call[3] as { name: string; data: Buffer }
       const parsed = JSON.parse(jsonFile.data.toString('utf-8'))
       expect(parsed.app).toBe('pipette')
-      expect(parsed.version).toBe(2)
+      expect(parsed.version).toBe(3)
       expect(parsed.scope).toBe('fav')
+      expect(parsed.vial_protocol).toBe(6)
       expect(parsed.categories.td).toHaveLength(1)
       const entry = parsed.categories.td[0]
       expect(entry.label).toBe('My Tap Dance')
@@ -307,6 +327,7 @@ describe('hub-ipc favorite handlers', () => {
       mockFavoriteFs()
       vi.mocked(updateFeaturePostOnHub).mockResolvedValueOnce({
         id: 'fav-post-1',
+        vialProtocol: 6,
         title: 'Updated Tap Dance',
       })
 
@@ -314,6 +335,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'Updated Tap Dance',
         postId: 'fav-post-1',
       })
@@ -336,6 +358,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'badType',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'Test',
         postId: 'fav-post-1',
       })
@@ -350,6 +373,7 @@ describe('hub-ipc favorite handlers', () => {
         const result = await handler({}, {
           type: 'tapDance',
           entryId: 'entry-1',
+          vialProtocol: 6,
           title: 'Test',
           postId,
         })
@@ -364,6 +388,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: '',
         postId: 'fav-post-1',
       })
@@ -379,6 +404,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'nonexistent',
+        vialProtocol: 6,
         title: 'Test',
         postId: 'fav-post-1',
       })
@@ -408,6 +434,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'evil-entry',
+        vialProtocol: 6,
         title: 'Test',
       })
 
@@ -434,6 +461,7 @@ describe('hub-ipc favorite handlers', () => {
       const result = await handler({}, {
         type: 'tapDance',
         entryId: 'entry-1',
+        vialProtocol: 6,
         title: 'Test',
       })
 
@@ -488,6 +516,7 @@ describe('hub-ipc favorite handlers', () => {
         const result = await handler({}, {
           type: favType,
           entryId: 'e1',
+          vialProtocol: 6,
           title: 'Test',
         })
 

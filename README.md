@@ -1,4 +1,7 @@
 # Pipette (Keychron Edition)
+<p align="center">
+  <img width="1024" alt="keymap-editor" src="docs/screenshots/layer-panel-collapsed.png" />
+</p>
 
 Refining the way you interact with your Vial-powered keyboards.
 
@@ -18,6 +21,25 @@ Communicates with Vial keyboards via USB HID to configure keymaps, macros, light
 [![Playwright](https://img.shields.io/badge/Playwright-2EAD33?style=flat&logo=playwright&logoColor=white)](https://playwright.dev/)
 [![pnpm](https://img.shields.io/badge/pnpm-F69220?style=flat&logo=pnpm&logoColor=white)](https://pnpm.io/)
 
+## Table of Contents
+
+- [Installation](#installation)
+- [Usage](#usage)
+- [Operation Guide](#operation-guide)
+- [Platform Setup](#platform-setup)
+  - [Linux](#linux)
+  - [macOS](#macos)
+- [Features](#features)
+- [Setup](#setup)
+- [Development](#development)
+- [Build & Distribution](#build--distribution)
+- [Architecture](#architecture)
+- [Data & Privacy](#data--privacy)
+- [Donate](#donate)
+- [Contributing](#contributing)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
+
 ## Screenshot
 
 <p align="center">
@@ -31,6 +53,7 @@ The Keychron fork adds a **Keychron Settings** panel (shown below) with debounce
 <p align="center">
   <img width="1200" alt="keychron-settings" src="docs/screenshots/keychron-settings.png" />
 </p>
+
 
 ## Installation
 
@@ -48,11 +71,6 @@ Download the latest release for your platform:
 - **Linux (x86_64 AppImage)**
   https://github.com/tymon3310/pipette-desktop/releases/latest/download/Pipette-linux-x64.AppImage
 
-> Linux users: make the AppImage executable before launching.
-> ```bash
-> chmod +x Pipette-linux-x64.AppImage
-> ```
-
 ### Arch Linux (AUR)
 
 Two AUR packages are available for Arch-based distributions:
@@ -62,15 +80,41 @@ Two AUR packages are available for Arch-based distributions:
 
 ---
 
-### Distribution Policy
+## Usage
+
+### Quick Start
+
+
+1.  Connect your Vial-compatible keyboard via USB.
+2.  Launch Pipette.
+3.  The keyboard will be detected automatically.
+4.  Select a layer and start editing key assignments.
+
+## Operation Guide
+
+For complete instructions with screenshots:
+
+- [Operation Guide](docs/OPERATION-GUIDE.md)
+
+---
 
 The **upstream** Pipette project is officially distributed only as an AppImage on Linux and does not provide distro-specific packages.
 
 For this **Keychron fork**, we provide official AUR packages for Arch-based distributions (see above). We do not provide or document other distro-specific packages (.deb, .rpm, Flatpak, Snap, etc.) in order to keep the maintenance and support scope focused on the AppImage and AUR releases.
 
-Community-maintained packages may exist, but they are not officially supported.
+## Platform Setup
 
-### Linux: AppImage Sandbox (Ubuntu 24.04+ / Debian 13+)
+### Linux
+
+#### AppImage executable
+
+Make the AppImage executable before launching:
+
+```bash
+chmod +x Pipette-linux-x86_64.AppImage
+```
+
+#### AppImage Sandbox (Ubuntu 24.04+ / Debian 13+)
 
 On distributions that restrict unprivileged user namespaces (e.g. Ubuntu 24.04+, Debian 13+ via AppArmor's `unprivileged_userns_restricted` flag), the AppImage may fail to launch with a sandbox / user namespace error.
 
@@ -94,21 +138,40 @@ sudo systemctl reload apparmor.service
 
 Replace `YOUR_USER` and adjust the filename/path to match your setup.
 
-## Usage
+#### udev Rules
 
-### Quick Start
+udev rules are required to access keyboards:
 
-1.  Connect your Vial-compatible keyboard via USB.
-2.  Launch Pipette.
-3.  The keyboard will be detected automatically.
-4.  Select a layer and start editing key assignments.
+```bash
+sudo cp scripts/99-vial.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
 
-### Detailed Guide
+#### Monitor App on Wayland (GNOME Shell extension)
 
-For complete instructions with screenshots:
+The typing-view Monitor App toggle tags each minute of recording with the active application name. X11 exposes the focused window directly, but on Wayland the desktop sandboxes window focus, so Pipette falls back to a GNOME Shell extension.
 
--   [Operation Guide](docs/OPERATION-GUIDE.md)
+To enable Monitor App on Wayland, install the **Focused Window D-Bus** GNOME Shell extension:
 
+https://extensions.gnome.org/extension/5592/focused-window-d-bus/
+
+Without the extension Monitor App silently records `null` for every minute on Wayland — keystroke counts still flow to the analytics, but per-app breakdowns are unavailable. Compositors other than GNOME Shell (KDE Plasma, Sway, etc.) are not currently supported; each would need its own focus-bridge implementation.
+
+#### Distribution Policy
+
+Pipette is officially distributed only as an AppImage on Linux.
+
+We do not provide or document distro-specific packages (.deb, .rpm, AUR, Flatpak, Snap, etc.) in order to keep the maintenance and support scope focused on the AppImage release.
+
+Community-maintained packages may exist, but they are not officially supported.
+
+### macOS
+
+#### Accessibility permission for Monitor App
+
+The typing-view Monitor App toggle requires the **Accessibility** permission on macOS to resolve the foreground application name. Grant access in **System Settings → Privacy & Security → Accessibility** and add Pipette Desktop to the allowed list.
+
+Without this permission, Monitor App silently records `null` for every minute on macOS — keystroke counts still flow to the analytics, but per-app breakdowns are unavailable.
 
 ## Features
 
@@ -227,15 +290,6 @@ pnpm dist:win     # Windows (NSIS installer)
 pnpm dist:mac     # macOS (dmg)
 ```
 
-### Linux: udev Rules
-
-udev rules are required to access keyboards:
-
-```bash
-sudo cp scripts/99-vial.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
 ## Architecture
 
 Raw HID I/O runs in the **main process** via `node-hid`. Protocol logic runs in the **preload** layer and delegates HID I/O through IPC.
@@ -258,6 +312,10 @@ Contributions are welcome! In particular:
 
 - **Translations** — Add a locale JSON file to `src/renderer/i18n/locales/` and register it in `src/renderer/i18n/index.ts`.
   PRs for new languages or corrections to existing translations are appreciated.
+- **Keyboard layout composite labels** — `KeyboardLayoutDef.compositeLabels` in `src/renderer/data/keyboard-layouts.ts`
+  lets a layout override the label of an individual composite keycode (e.g. `LALT(KC_L)` → "Cmd L" on macOS).
+  Add the full qmkId → display string mapping to the relevant layout. Reviewers must check that the
+  same label is not assigned to two different composite qmkIds within one layout (label collision).
 - **Bug reports & feature requests** — Open an issue to let us know.
 
 ## Acknowledgments

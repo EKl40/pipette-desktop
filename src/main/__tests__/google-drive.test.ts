@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // --- Mock electron ---
 vi.mock('electron', () => ({
@@ -36,7 +36,11 @@ vi.mock('node:fs/promises', () => {
   }
 })
 
-import { driveFileName, syncUnitFromFileName } from '../sync/google-drive'
+vi.mock('../sync/google-auth', () => ({
+  getAccessToken: vi.fn(async () => 'mock-token'),
+}))
+
+import { driveFileName, listFiles, syncUnitFromFileName } from '../sync/google-drive'
 
 describe('google-drive', () => {
   beforeEach(() => {
@@ -52,6 +56,8 @@ describe('google-drive', () => {
     it('converts keyboard sync units to drive filename', () => {
       expect(driveFileName('keyboards/0x1234/settings')).toBe('keyboards_0x1234_settings.enc')
       expect(driveFileName('keyboards/0x1234/snapshots')).toBe('keyboards_0x1234_snapshots.enc')
+      expect(driveFileName('keyboards/0x1234/devices/hash-abc/days/2026-04-19'))
+        .toBe('keyboards_0x1234_devices_hash-abc_days_2026-04-19.enc')
     })
   })
 
@@ -73,6 +79,17 @@ describe('google-drive', () => {
       )
     })
 
+    it('parses per-day device JSONL drive filename to sync unit', () => {
+      expect(syncUnitFromFileName('keyboards_0x1234_devices_hash-abc_days_2026-04-19.enc'))
+        .toBe('keyboards/0x1234/devices/hash-abc/days/2026-04-19')
+    })
+
+    it('returns null for the legacy flat device JSONL filename shape', () => {
+      // The flat `{hash}.enc` form (no `_days_` segment) was retired with
+      // the v7 cutover; it must no longer round-trip into a sync unit.
+      expect(syncUnitFromFileName('keyboards_0x1234_devices_hash-abc.enc')).toBeNull()
+    })
+
     it('round-trips the keyboard-meta singleton sync unit', () => {
       expect(driveFileName('meta/keyboard-names')).toBe('meta_keyboard-names.enc')
       expect(syncUnitFromFileName('meta_keyboard-names.enc')).toBe('meta/keyboard-names')
@@ -83,6 +100,69 @@ describe('google-drive', () => {
       expect(syncUnitFromFileName('other_thing.enc')).toBeNull()
       expect(syncUnitFromFileName('layerNames_0x1234.enc')).toBeNull()
       expect(syncUnitFromFileName('')).toBeNull()
+    })
+  })
+
+  describe('listFiles', () => {
+    function mockFetchOk(files: Array<{ id: string; name: string; modifiedTime: string }> = []): {
+      fetchSpy: ReturnType<typeof vi.fn>
+    } {
+      const fetchSpy = vi.fn(async () =>
+        new Response(JSON.stringify({ files }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      vi.stubGlobal('fetch', fetchSpy)
+      return { fetchSpy }
+    }
+
+    function extractFetchUrl(call: unknown): URL {
+      const args = call as readonly [string | URL, RequestInit?]
+      return new URL(typeof args[0] === 'string' ? args[0] : args[0].toString())
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('omits the `q` parameter when no nameContains is given', async () => {
+      const { fetchSpy } = mockFetchOk()
+
+      await listFiles()
+
+      expect(fetchSpy).toHaveBeenCalledOnce()
+      const url = extractFetchUrl(fetchSpy.mock.calls[0])
+      expect(url.searchParams.get('spaces')).toBe('appDataFolder')
+      expect(url.searchParams.get('pageSize')).toBe('1000')
+      expect(url.searchParams.has('q')).toBe(false)
+    })
+
+    it('adds `name contains` to the `q` parameter when nameContains is given', async () => {
+      const { fetchSpy } = mockFetchOk()
+
+      await listFiles({ nameContains: 'keyboards_0x1234_devices_' })
+
+      const url = extractFetchUrl(fetchSpy.mock.calls[0])
+      expect(url.searchParams.get('q')).toBe("name contains 'keyboards_0x1234_devices_'")
+    })
+
+    it('escapes single quotes in nameContains so the Drive `q` value stays valid', async () => {
+      const { fetchSpy } = mockFetchOk()
+
+      await listFiles({ nameContains: "weird'name" })
+
+      const url = extractFetchUrl(fetchSpy.mock.calls[0])
+      expect(url.searchParams.get('q')).toBe("name contains 'weird\\'name'")
+    })
+
+    it('treats an empty nameContains as no filter', async () => {
+      const { fetchSpy } = mockFetchOk()
+
+      await listFiles({ nameContains: '' })
+
+      const url = extractFetchUrl(fetchSpy.mock.calls[0])
+      expect(url.searchParams.has('q')).toBe(false)
     })
   })
 })

@@ -4,6 +4,34 @@ This document describes what data Pipette stores, where it lives, and how extern
 
 ---
 
+## Table of Contents
+
+- [Local Data](#local-data)
+  - [App Settings](#app-settings)
+  - [Per-Keyboard Settings](#per-keyboard-settings)
+  - [Typing Analytics](#typing-analytics)
+  - [Snapshots](#snapshots)
+  - [Favorites](#favorites)
+  - [Key Labels](#key-labels)
+  - [Typing Test Language Packs](#typing-test-language-packs)
+  - [Logs](#logs)
+  - [Authentication Credentials](#authentication-credentials)
+- [Keyboard-Side Data](#keyboard-side-data)
+- [Cloud Sync (Google Drive appDataFolder)](#cloud-sync-google-drive-appdatafolder)
+  - [How It Works](#how-it-works)
+  - [What Is Synced](#what-is-synced)
+  - [Security & Privacy](#security--privacy)
+  - [Google OAuth Scopes](#google-oauth-scopes)
+- [Pipette Hub](#pipette-hub)
+  - [What Is It](#what-is-it)
+  - [How It Works](#how-it-works-1)
+  - [What Is Uploaded](#what-is-uploaded)
+  - [Security & Privacy](#security--privacy-1)
+- [Export Formats](#export-formats)
+- [Reset Operations](#reset-operations)
+
+---
+
 ## Local Data
 
 All local data is stored under the OS user data directory:
@@ -33,6 +61,9 @@ General preferences that apply across all keyboards.
 | Auto sync | Enable/disable cloud sync |
 | Hub enabled | Enable/disable Pipette Hub integration |
 | Window position & size | Restored on next launch |
+| Typing recording consent | Whether the typing-analytics recording consent dialog has been accepted (gates the REC tab Start button) |
+| Typing-view heatmap window | Window length (minutes) for the typing-view real-time heatmap overlay |
+| Monitor App enabled | Whether to capture the active application name during typing-analytics recording. Required for the App filter and By App tab in Analyze |
 
 ### Per-Keyboard Settings
 
@@ -53,6 +84,38 @@ Settings tied to a specific keyboard, identified by its unique ID.
 | Typing test config | Mode, word count, and other test preferences |
 | Typing test language | Selected language pack |
 | Typing view preferences | Compact window size and always-on-top setting |
+| Record enabled | User-chosen state of the REC toggle in the typing view; recording is gated additionally on Typing View being open |
+| Typing view menu tab | Last active menu pane tab in Typing View (Window / REC) |
+| Typing sync span | How many days of typing-analytics history to sync (per-device JSONL) |
+| Analyze finger assignments | Manual `row,col → finger` overrides for the Ergonomics tab |
+| Analyze goal | Daily keystroke goal, target consecutive days, and goal-edit history for the Streak / Goal cards |
+| Analyze filters | Per-tab filter state (device scope, app scope, view modes, ranking limits, snapshot selection) for the Analyze dashboard |
+| Analyze compare filters | Same shape as Analyze filters, bound to the secondary pane in the Analyze split-view |
+
+### Typing Analytics
+
+Per-keyboard typing history that feeds the Analyze page (see OPERATION-GUIDE §1.4). Recorded while you are in Typing View and the Record toggle in the typing-test pane is set to Start; typing-test results flow into the same stream.
+
+| Item | Description |
+|------|-------------|
+| Keystroke events | Per-keystroke records aggregated into minute buckets |
+| Minute stats | WPM, Backspace %, interval percentiles, and other per-minute summaries |
+| Matrix activity | Per-cell press counts with the active layer at the time |
+| Sessions | Start / end markers for each typing session |
+| Keymap snapshots | Point-in-time keymap captures used to resolve heatmap positions and layer-op targets |
+| App tag | Active application name attached to each minute when Monitor App is on. Minutes that observed only one app carry that name; minutes that observed multiple apps are tagged as unknown; minutes captured while Monitor App was off are not tagged. Powers the App filter and the By App tab in Analyze |
+
+**What is synced, what is local cache**
+
+| Storage | Path (under user data directory) | Scope |
+|---------|-----------------------------------|-------|
+| Per-device typing log (master) | `sync/keyboards/{uid}/devices/{machineHash}/{YYYY-MM-DD}.jsonl` | **Synced** across your signed-in devices |
+| Keymap snapshots (master) | `typing-analytics/keymaps/{uid}/{machineHash}/*.json` | Local only (per machine) |
+| Query cache (SQLite) | `local/typing-analytics.db` | Local only — rebuilt from the JSONL master when missing or stale |
+
+The JSONL master is the source of truth and survives cache rebuilds. When the app can't find the SQLite cache (first launch on a new machine, file corruption, schema upgrade), it replays the JSONL log to rebuild it; no data is lost.
+
+**Layer names in the chart** come from Per-Keyboard Settings above, not from typing analytics — renaming a layer in the layer panel updates the axis label in Analyze the next time you open it.
 
 ### Snapshots
 
@@ -93,6 +156,30 @@ Reusable configurations that work across any keyboard. Individual entries can be
 | Alternate Repeat Key | Saved alt repeat key mapping |
 
 Each favorite entry may have an associated `hubPostId` if it has been uploaded to Hub. Renaming a Hub-uploaded favorite also updates its title on Hub.
+
+### Key Labels
+
+Maps QMK keycode ids to keycap legends used by the Keymap Editor, the Keycodes Overlay Panel, the Settings → Defaults dropdown, and the Layout Comparison view. QWERTY ships built-in; every other label set (Dvorak, Colemak, French, Brazilian, …) is downloaded from Pipette Hub or imported as a `.json` file. The store is shared across keyboards (it survives Reset Keyboard Data) and syncs entry-by-entry across machines.
+
+A Key Label `.json` is a small JSON object:
+
+```json
+{
+  "name": "Brazilian (QWERTY)",
+  "map": { "KC_2": "2\n@", "KC_QUOT": "ç", "KC_GRAVE": "KC_LALT" },
+  "compositeLabels": { "LSFT(KC_2)": "@", "LALT(KC_L)": "KC_LALT" }
+}
+```
+
+| Field | Required | Purpose |
+|------|:--:|---------|
+| `name` | Yes | Display name and uniqueness key for overwrite-on-import |
+| `map` | Yes | `QMK keycode id → label string`. Lines are split on `\n` to control the cap layout (1 = centred, 2 = stacked, 3 = three slices, 4 = 2 × 2 quadrants). Empty parts leave a slot blank |
+| `compositeLabels` | No | Overrides for composite keycodes (e.g. `LT(0,KC_A)`, `LSFT(KC_2)`). Composite caps render the inner key in an inset rectangle, so only the first two `\n` parts of the outer label are honoured |
+
+Values may also be plain QMK keycode ids (e.g. `"LALT(KC_L)": "KC_LALT"`). The editor runs the value through `keycodeLabel()` before display, so a keycode-id value resolves to that keycode's canonical legend automatically.
+
+See `docs/OPERATION-GUIDE.md` §6.2 for the full authoring guide and the modal walkthrough.
 
 ### Typing Test Language Packs
 

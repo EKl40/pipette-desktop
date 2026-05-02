@@ -34,12 +34,7 @@ const mockSerialize = vi.fn(() => MOCK_TAP_DANCE_DATA)
 const mockApply = vi.fn()
 
 function hookOpts(overrides: Record<string, unknown> = {}) {
-  return {
-    favoriteType: 'tapDance' as const,
-    serialize: mockSerialize,
-    apply: mockApply,
-    ...overrides,
-  }
+  return { favoriteType: 'tapDance' as const, serialize: mockSerialize, apply: mockApply, vialProtocol: 6, ...overrides }
 }
 
 beforeEach(() => {
@@ -424,7 +419,7 @@ describe('useFavoriteStore – exportFavorites', () => {
       await result.current.exportFavorites()
     })
 
-    expect(mockFavoriteStoreExport).toHaveBeenCalledWith('tapDance')
+    expect(mockFavoriteStoreExport).toHaveBeenCalledWith('tapDance', 6)
   })
 
   it('returns true on success', async () => {
@@ -578,7 +573,7 @@ describe('useFavoriteStore – exportEntry', () => {
       await result.current.exportEntry('entry-123')
     })
 
-    expect(mockFavoriteStoreExport).toHaveBeenCalledWith('tapDance', 'entry-123')
+    expect(mockFavoriteStoreExport).toHaveBeenCalledWith('tapDance', 6, 'entry-123')
   })
 
   it('returns true on success', async () => {

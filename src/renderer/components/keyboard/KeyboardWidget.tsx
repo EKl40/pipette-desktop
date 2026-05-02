@@ -2,10 +2,14 @@
 
 import { useMemo, memo } from 'react'
 import type { KleKey } from '../../../shared/kle/types'
-import { repositionLayoutKeys } from '../../../shared/kle/filter-keys'
+import { filterVisibleKeys, repositionLayoutKeys } from '../../../shared/kle/filter-keys'
+import { posKey } from '../../../shared/kle/pos-key'
 import { KeyWidget } from './KeyWidget'
 import { EncoderWidget } from './EncoderWidget'
 import { KEY_UNIT, KEY_SPACING, KEYBOARD_PADDING } from './constants'
+import { innerHeatmapFillForCell, outerHeatmapFillForCell } from './heatmap-fill'
+import type { TypingHeatmapCell } from '../../../shared/types/typing-analytics'
+import { useEffectiveTheme } from '../../hooks/useEffectiveTheme'
 
 /** Rotate point (px, py) by `angle` degrees around center (cx, cy). */
 export function rotatePoint(
@@ -67,16 +71,38 @@ interface Props {
   multiSelectedKeys?: Set<string>
   layoutOptions?: Map<number, number>
   selectedMaskPart?: boolean
+  /** Per-cell press triples for the typing-view heatmap overlay,
+   * keyed by `"row,col"`. The overlay is hidden when this is null. */
+  heatmapCells?: Map<string, TypingHeatmapCell> | null
+  /** Peak `total` across `heatmapCells` — paints the single heatmap
+   * rect on non-tap-hold keys. */
+  heatmapMaxTotal?: number
+  /** Peak `tap` across `heatmapCells` — scales the inner (tap) rect
+   * of masked LT/MT keys independently of the outer (hold) ramp. */
+  heatmapMaxTap?: number
+  /** Peak `hold` across `heatmapCells` — scales the outer rect of
+   * masked LT/MT keys. */
+  heatmapMaxHold?: number
+  /** Optional per-key pretty-label override keyed by `"row,col"`. The
+   *  Analyze view passes this so snapshot keymaps render with multi-part
+   *  LT/LM labels even when the connected keyboard does not currently
+   *  register those composites. */
+  labelOverrides?: Map<string, { outer: string; inner: string; masked: boolean }>
+  /** Optional per-key background fill keyed by `"row,col"`. Lives below
+   *  the interactive and heatmap fill layers so pressed/selected/etc.
+   *  still win. Used by the Finger Assignment modal to paint each key
+   *  with its finger colour. */
+  keyColors?: Map<string, string>
   onKeyClick?: (
     key: KleKey,
     maskClicked: boolean,
     event?: { ctrlKey: boolean; shiftKey: boolean },
   ) => void
+
   onKeyDoubleClick?: (key: KleKey, rect: DOMRect, maskClicked: boolean) => void
   onEncoderClick?: (key: KleKey, direction: number) => void
   onEncoderDoubleClick?: (key: KleKey, direction: number, rect: DOMRect) => void
   readOnly?: boolean
-  keyColors?: Map<string, string>
   scale?: number
 }
 
@@ -96,24 +122,28 @@ function KeyboardWidgetInner({
   bottomLabels,
   multiSelectedKeys,
   layoutOptions,
+  heatmapCells,
+  heatmapMaxTotal = 0,
+  heatmapMaxTap = 0,
+  heatmapMaxHold = 0,
+  labelOverrides,
+  keyColors,
   onKeyClick,
   onKeyDoubleClick,
   onEncoderClick,
   onEncoderDoubleClick,
   readOnly = false,
-  keyColors,
   scale = 1,
 }: Props) {
-  // Reposition selected layout alternatives to align with option 0, then filter
+  const effectiveTheme = useEffectiveTheme()
+
+  // Reposition runs on the full key list (including decals) so option 0's
+  // bounding box is computed correctly; decals are dropped afterwards by
+  // `filterVisibleKeys`. Mirrors `widgets/keyboard_widget.py:place_widgets` +
+  // `update_layout` in vial-gui.
   const visibleKeys = useMemo(() => {
-    if (!layoutOptions || layoutOptions.size === 0) return keys
-    const repositioned = repositionLayoutKeys(keys, layoutOptions)
-    return repositioned.filter((key) => {
-      if (key.layoutIndex < 0) return true
-      const selectedOption = layoutOptions.get(key.layoutIndex)
-      if (selectedOption === undefined) return key.layoutOption === 0
-      return key.layoutOption === selectedOption
-    })
+    const opts = layoutOptions ?? new Map<number, number>()
+    return filterVisibleKeys(repositionLayoutKeys(keys, opts), opts)
   }, [keys, layoutOptions])
 
   // Calculate SVG bounds (track min to normalize position)
@@ -176,22 +206,27 @@ function KeyboardWidgetInner({
           )
         }
 
-        const posKey = `${key.row},${key.col}`
+        const pos = posKey(key.row, key.col)
         return (
           <KeyWidget
             key={`key-${key.row}-${key.col}-${idx}`}
             kleKey={key}
-            keycode={keycodes.get(posKey) ?? 'KC_NO'}
-            maskKeycode={maskKeycodes?.get(posKey)}
+            keycode={keycodes.get(pos) ?? 'KC_NO'}
+            maskKeycode={maskKeycodes?.get(pos)}
             selected={false}
-            multiSelected={multiSelectedKeys?.has(posKey)}
-            pressed={pressedKeys?.has(posKey)}
-            highlighted={highlightedKeys?.has(posKey)}
-            everPressed={everPressedKeys?.has(posKey)}
-            remapped={remappedKeys?.has(posKey)}
-            customFill={keyColors?.get(posKey)}
-            customLabel={customLabels?.get(posKey)}
-            bottomLabel={bottomLabels?.get(posKey)}
+            multiSelected={multiSelectedKeys?.has(pos)}
+            pressed={pressedKeys?.has(pos)}
+            highlighted={highlightedKeys?.has(pos)}
+            everPressed={everPressedKeys?.has(pos)}
+            remapped={remappedKeys?.has(pos)}
+            heatmapOuterFill={outerHeatmapFillForCell(heatmapCells, heatmapMaxHold, heatmapMaxTotal, pos, effectiveTheme)}
+            heatmapInnerFill={innerHeatmapFillForCell(heatmapCells, heatmapMaxTap, pos, effectiveTheme)}
+            effectiveTheme={effectiveTheme}
+            customFill={keyColors?.get(pos) ?? null}
+            customLabel={customLabels?.get(pos)}
+            bottomLabel={bottomLabels?.get(pos)}
+            labelOverride={labelOverrides?.get(pos)}
+
             onClick={readOnly ? undefined : onKeyClick}
             onDoubleClick={readOnly ? undefined : onKeyDoubleClick}
             scale={scale}
@@ -222,23 +257,28 @@ function KeyboardWidgetInner({
           )
         }
 
-        const posKey = `${key.row},${key.col}`
+        const pos = posKey(key.row, key.col)
         return (
           <KeyWidget
             key={`key-${key.row}-${key.col}-${idx}`}
             kleKey={key}
-            keycode={keycodes.get(posKey) ?? 'KC_NO'}
-            maskKeycode={maskKeycodes?.get(posKey)}
+            keycode={keycodes.get(pos) ?? 'KC_NO'}
+            maskKeycode={maskKeycodes?.get(pos)}
             selected
-            multiSelected={multiSelectedKeys?.has(posKey)}
+            multiSelected={multiSelectedKeys?.has(pos)}
             selectedMaskPart={selectedMaskPart}
-            pressed={pressedKeys?.has(posKey)}
-            highlighted={highlightedKeys?.has(posKey)}
-            everPressed={everPressedKeys?.has(posKey)}
-            remapped={remappedKeys?.has(posKey)}
-            customFill={keyColors?.get(posKey)}
-            customLabel={customLabels?.get(posKey)}
-            bottomLabel={bottomLabels?.get(posKey)}
+            pressed={pressedKeys?.has(pos)}
+            highlighted={highlightedKeys?.has(pos)}
+            everPressed={everPressedKeys?.has(pos)}
+            remapped={remappedKeys?.has(pos)}
+            heatmapOuterFill={outerHeatmapFillForCell(heatmapCells, heatmapMaxHold, heatmapMaxTotal, pos, effectiveTheme)}
+            heatmapInnerFill={innerHeatmapFillForCell(heatmapCells, heatmapMaxTap, pos, effectiveTheme)}
+            effectiveTheme={effectiveTheme}
+            customFill={keyColors?.get(pos) ?? null}
+            customLabel={customLabels?.get(pos)}
+            bottomLabel={bottomLabels?.get(pos)}
+            labelOverride={labelOverrides?.get(pos)}
+
             onClick={readOnly ? undefined : onKeyClick}
             onDoubleClick={readOnly ? undefined : onKeyDoubleClick}
             scale={scale}

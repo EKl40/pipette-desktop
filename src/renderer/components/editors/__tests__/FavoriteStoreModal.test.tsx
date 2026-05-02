@@ -54,7 +54,7 @@ describe('FavoriteStoreModal', () => {
 
     const labels = screen.getAllByTestId('favorite-store-entry-label')
     expect(labels[0].textContent).toBe('My Tap Dance')
-    expect(labels[1].textContent).toBe('favoriteStore.noLabel')
+    expect(labels[1].textContent).toBe('common.noLabel')
   })
 
   it('displays type badge in title', () => {
@@ -67,7 +67,7 @@ describe('FavoriteStoreModal', () => {
     render(<FavoriteStoreModal entries={MOCK_ENTRIES} {...DEFAULT_PROPS} />)
 
     expect(screen.getByText('favoriteStore.saveCurrentState')).toBeInTheDocument()
-    expect(screen.getByText('favoriteStore.history')).toBeInTheDocument()
+    expect(screen.getByText('common.synced')).toBeInTheDocument()
   })
 
   it('calls onLoad when load button clicked', () => {

@@ -136,7 +136,7 @@ export function FavoriteStoreContent({
               type="text"
               value={saveLabel}
               onChange={(e) => setSaveLabel(e.target.value)}
-              placeholder={t('favoriteStore.labelPlaceholder')}
+              placeholder={t('common.labelPlaceholder')}
               maxLength={200}
               className="flex-1 rounded-lg border border-edge bg-surface px-3.5 py-2 text-[13px] text-content placeholder:text-content-muted focus:border-accent focus:outline-none"
               data-testid="favorite-store-save-input"
@@ -154,7 +154,7 @@ export function FavoriteStoreContent({
 
         {/* Synced Data header */}
         <div className="pt-5">
-          <SectionHeader label={t('favoriteStore.history')} count={entries.length} />
+          <SectionHeader label={t('common.synced')} count={entries.length} />
         </div>
       </div>
 
@@ -203,7 +203,7 @@ export function FavoriteStoreContent({
                         data-testid="favorite-store-entry-label"
                         onClick={() => rename.startRename(entry.id, entry.label)}
                       >
-                        {entry.label || t('favoriteStore.noLabel')}
+                        {entry.label || t('common.noLabel')}
                       </div>
                     )}
                   </div>
@@ -220,7 +220,7 @@ export function FavoriteStoreContent({
                           }}
                           data-testid="favorite-store-delete-confirm"
                         >
-                          {t('favoriteStore.confirmDelete')}
+                          {t('common.confirmDelete')}
                         </button>
                         <button
                           type="button"
@@ -239,7 +239,7 @@ export function FavoriteStoreContent({
                           onClick={() => onLoad(entry.id)}
                           data-testid="favorite-store-load-btn"
                         >
-                          {t('favoriteStore.load')}
+                          {t('common.load')}
                         </button>
                         <button
                           type="button"
