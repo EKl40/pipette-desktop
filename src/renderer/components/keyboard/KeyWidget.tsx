@@ -100,7 +100,6 @@ function KeyWidgetInner({
   onHoverEnd,
   hoverMaskParts,
   selectedFill = true,
-  customFill,
   customLabel,
   bottomLabel,
   scale = 1,

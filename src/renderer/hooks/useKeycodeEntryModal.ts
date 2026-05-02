@@ -145,7 +145,7 @@ export function useKeycodeEntryModal<TEntry extends Record<string, unknown>>(
   // Favorites
   const showFavorites = adapter.showFavorites
     ? adapter.showFavorites({ isDummy })
-    : true
+    : !isDummy
 
   const favStore = useFavoriteStore({
     favoriteType: adapter.favoriteType,

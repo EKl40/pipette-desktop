@@ -2,7 +2,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { TapDanceModal } from '../TapDanceModal'
 import type { TapDanceEntry } from '../../../../shared/types/protocol'
 
@@ -39,6 +39,7 @@ vi.mock('../../../../shared/keycodes/keycodes', () => ({
   isMask: () => false,
   findOuterKeycode: () => undefined,
   findInnerKeycode: () => undefined,
+  isResetKeycode: () => false,
 }))
 
 vi.mock('../../keycodes/TabbedKeycodes', () => ({
@@ -175,7 +176,7 @@ describe('TapDanceModal', () => {
     fireEvent.click(screen.getByTestId('confirm-picker'))
     // Save
     fireEvent.click(screen.getByTestId('td-modal-save'))
-    expect(onSave).toHaveBeenCalledWith(2, expect.objectContaining({ onTap: 4 }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(2, expect.objectContaining({ onTap: 4 })))
   })
 
   it('calls onClose when close icon is clicked', () => {
