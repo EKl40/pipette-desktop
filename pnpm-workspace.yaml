@@ -1,8 +1,0 @@
-packages:
-  - '.'
-allowedBuiltDependencies:
-  - better-sqlite3
-  - electron
-  - esbuild
-  - node-hid
-
