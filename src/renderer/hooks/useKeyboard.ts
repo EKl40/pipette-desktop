@@ -9,6 +9,8 @@ import { useKeyboardSetters } from './useKeyboardSetters'
 import { useKeyboardLighting } from './useKeyboardLighting'
 import { useKeyboardPersistence } from './useKeyboardPersistence'
 
+import type { KeychronState } from '../../shared/types/keychron'
+
 export type { BulkKeyEntry, KeyboardState } from './keyboard-types'
 
 export function useKeyboard() {
@@ -88,6 +90,17 @@ export function useKeyboard() {
     pipetteFileQmkSettingsGet, pipetteFileQmkSettingsSet, pipetteFileQmkSettingsReset,
   } = useKeyboardPersistence(setState, refs, bumpActivity, bootGuardRef, waitForUnlock)
 
+  const refreshKeychron = useCallback(async () => {
+    try {
+      const kcState = await window.vialAPI.keychronReload()
+      if (kcState) {
+        setState((s) => ({ ...s, keychron: kcState as KeychronState }))
+      }
+    } catch (err) {
+      console.error('[KB] refreshKeychron failed:', err)
+    }
+  }, [])
+
   return {
     ...state,
     activityCount,
@@ -128,5 +141,6 @@ export function useKeyboard() {
     updateQmkSettingsValue,
     setLayerName,
     setSaveLayerNamesCallback,
+    refreshKeychron,
   }
 }

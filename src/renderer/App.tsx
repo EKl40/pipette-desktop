@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { KeychronSettings } from './components/editors/KeychronSettings'
+import { KeychronRGB } from './components/editors/KeychronRGB'
+import { KeychronDfuFlasher } from './components/editors/KeychronDfuFlasher'
+import { KeychronAnalog } from './components/editors/KeychronAnalog'
+import { KeychronSocd } from './components/editors/KeychronSocd'
+import { FAKE_KEYCHRON_JSON } from './utils/fake-keychron'
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppConfig } from './hooks/useAppConfig'
@@ -279,6 +286,32 @@ export function App() {
   // Hide content during view→edit transition animation
   const [viewExitTransition, setViewExitTransition] = useState(false)
 
+  const [showKeychronModal, setShowKeychronModal] = useState(false)
+  const [showKeychronRgbModal, setShowKeychronRgbModal] = useState(false)
+  const [showKeychronFlasherModal, setShowKeychronFlasherModal] = useState(false)
+  const [showKeychronAnalogModal, setShowKeychronAnalogModal] = useState(false)
+  const [showKeychronSocdModal, setShowKeychronSocdModal] = useState(false)
+  const [keychronAnalogData, setKeychronAnalogData] = useState<import('../shared/types/keychron').KeychronAnalogState | null>(
+    keyboard.keychron?.analog ?? null
+  )
+  const keychronSupported = !device.isDummy && keyboard.keychron != null
+  const isBridge = device.connectedDevice?.serialNumber?.startsWith('bridge:') ?? false
+
+  const handleOpenKeychronAnalog = useCallback(async () => {
+    if (!keyboard.keychron?.hasAnalog) return
+    if (keychronAnalogData) {
+      setShowKeychronAnalogModal(true)
+      const result = await window.vialAPI.keychronAnalogReload(keyboard.rows, keyboard.cols) as import('../shared/types/keychron').KeychronAnalogState | null
+      if (result) setKeychronAnalogData(result)
+    } else {
+      const result = await window.vialAPI.keychronAnalogReload(keyboard.rows, keyboard.cols) as import('../shared/types/keychron').KeychronAnalogState | null
+      if (result) {
+        setKeychronAnalogData(result)
+        setShowKeychronAnalogModal(true)
+      }
+    }
+  }, [keyboard.keychron?.hasAnalog, keyboard.rows, keyboard.cols, keychronAnalogData])
+
   // Analytics page shell. Session-local boolean — entering the page
   // from the REC tab of the typing view exits the compact window
   // and hands the main content area over to TypingAnalyticsPage.
@@ -374,6 +407,11 @@ export function App() {
 
   const { setViewMode } = devicePrefs
   const { resetUIState } = editorUI
+
+  const handleLoadKeychronDummy = useCallback(() => {
+    device.connectDummy()
+    keyboard.loadDummy(FAKE_KEYCHRON_JSON)
+  }, [device, keyboard])
 
   const prevConnectedRef = useRef(device.connectedDevice)
   useEffect(() => {
@@ -489,7 +527,7 @@ export function App() {
           connecting={device.connecting}
           error={lifecycle.fileLoadError || device.error}
           onConnect={lifecycle.handleConnect}
-          onLoadDummy={lifecycle.handleLoadDummy}
+          onLoadDummy={handleLoadKeychronDummy}
           onLoadPipetteFile={lifecycle.handleLoadPipetteFile}
           pipetteFileKeyboards={lifecycle.pipetteFileKeyboards}
           pipetteFileEntries={lifecycle.pipetteFileEntries}
@@ -775,6 +813,11 @@ export function App() {
             onLock={lifecycle.handleLock}
             onMatrixModeChange={editorUI.handleMatrixModeChange}
             onOpenLighting={editorUI.lightingSupported ? () => editorUI.setShowLightingModal(true) : undefined}
+            onOpenKeychron={keychronSupported ? () => { keyboard.refreshKeychron(); setShowKeychronModal(true) } : undefined}
+            onOpenKeychronRgb={(keyboard.keychron?.hasRgb && keyboard.keychron.rgb) ? () => setShowKeychronRgbModal(true) : undefined}
+            onOpenKeychronFlasher={keychronSupported && !isBridge ? () => setShowKeychronFlasherModal(true) : undefined}
+            onOpenKeychronAnalog={keyboard.keychron?.hasAnalog ? handleOpenKeychronAnalog : undefined}
+            onOpenKeychronSocd={keyboard.keychron?.hasSnapClick ? () => setShowKeychronSocdModal(true) : undefined}
             comboEntries={editorUI.comboSupported ? keyboard.comboEntries : undefined}
             onOpenCombo={editorUI.comboSupported ? (index: number) => editorUI.setComboInitialIndex(index) : undefined}
             onSetComboEntry={editorUI.comboSupported ? keyboard.setComboEntry : undefined}
@@ -870,6 +913,12 @@ export function App() {
           comboActive={editorUI.comboSupported && keyboard.comboEntries.some((e) => e.output !== 0)}
           altRepeatKeyActive={editorUI.altRepeatKeySupported && keyboard.altRepeatKeyEntries.some((e) => e.enabled)}
           keyOverrideActive={editorUI.keyOverrideSupported && keyboard.keyOverrideEntries.some((e) => e.enabled)}
+          onOpenKeychron={keychronSupported ? () => { keyboard.refreshKeychron(); setShowKeychronModal(true) } : undefined}
+          onOpenKeychronRgb={(keyboard.keychron?.hasRgb && keyboard.keychron.rgb) ? () => setShowKeychronRgbModal(true) : undefined}
+          onOpenKeychronFlasher={keychronSupported && !isBridge ? () => setShowKeychronFlasherModal(true) : undefined}
+          onOpenKeychronAnalog={keyboard.keychron?.hasAnalog ? handleOpenKeychronAnalog : undefined}
+          onOpenKeychronSocd={keyboard.keychron?.hasSnapClick ? () => setShowKeychronSocdModal(true) : undefined}
+          batteryLevel={keyboard.keychron?.hasWireless ? keyboard.keychron?.batteryLevel : undefined}
           viewOnly={devicePrefs.typingTestViewOnly}
           onViewOnlyChange={() => {
             pendingTypingTestSaveRef.current = false
@@ -928,6 +977,81 @@ export function App() {
           }}
           macroWarning={editorUI.unlockMacroWarning}
         />
+      )}
+
+      {showKeychronRgbModal && keyboard.keychron?.hasRgb && keyboard.keychron.rgb && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowKeychronRgbModal(false)}>
+          <div className="flex max-h-[90vh] w-[1200px] max-w-[95vw] flex-col rounded-lg bg-surface-alt shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+              <h3 className="text-lg font-semibold">{t("keymap.keychronRgb", "Keychron RGB")}</h3>
+              <ModalCloseButton testid="keychron-rgb-modal-close" onClick={() => setShowKeychronRgbModal(false)} />
+            </div>
+            <div className="flex min-h-0 flex-1 overflow-hidden p-6 pt-0">
+              <KeychronRGB
+                rgb={keyboard.keychron.rgb}
+                ledMatrix={keyboard.keychron.rgb.ledMatrix}
+                onSetPerKeyRGBType={keyboard.setKeychronPerKeyRGBType}
+                onSetPerKeyColor={keyboard.setKeychronPerKeyColor}
+                onSaveRGB={keyboard.saveKeychronRGB}
+                onSetIndicators={keyboard.setKeychronIndicators}
+                onSetMixedRGBRegions={keyboard.setKeychronMixedRGBRegions}
+                onSetMixedRGBEffects={keyboard.setKeychronMixedRGBEffects}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showKeychronFlasherModal && (
+        <KeychronDfuFlasher
+          isOpen={showKeychronFlasherModal}
+          onClose={() => setShowKeychronFlasherModal(false)}
+          setSuppressDisconnect={device.setSuppressDisconnect}
+        />
+      )}
+
+      {showKeychronAnalogModal && keychronAnalogData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowKeychronAnalogModal(false)}>
+          <div className="flex h-[90vh] w-[1400px] max-w-[95vw] flex-col rounded-lg bg-surface-alt shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+              <h3 className="text-lg font-semibold">{t("keychron.analog.title", "Analog Matrix (HE)")}</h3>
+              <ModalCloseButton testid="keychron-analog-modal-close" onClick={() => setShowKeychronAnalogModal(false)} />
+            </div>
+            <div className="flex min-h-0 flex-1 overflow-hidden p-6 pt-0">
+              <KeychronAnalog
+                analog={keychronAnalogData}
+                keys={keyboard.layout?.keys ?? []}
+                rows={keyboard.rows}
+                cols={keyboard.cols}
+                keymap={keyboard.keymap}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showKeychronSocdModal && keyboard.keychron?.hasSnapClick && (
+        <KeychronSocd
+          keychron={keyboard.keychron}
+          keys={keyboard.layout?.keys ?? []}
+          keymap={keyboard.keymap}
+          onSettingChanged={keyboard.refreshKeychron}
+          onClose={() => setShowKeychronSocdModal(false)}
+        />
+      )}
+
+      {showKeychronModal && keychronSupported && keyboard.keychron && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" data-testid="keychron-modal-backdrop" onClick={() => setShowKeychronModal(false)}>
+          <div className="flex max-h-[90vh] w-[800px] max-w-[95vw] flex-col rounded-lg bg-surface-alt shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+              <h3 className="text-lg font-semibold">{t("keychron.settings", "Keychron Settings")}</h3>
+              <ModalCloseButton testid="keychron-modal-close" onClick={() => setShowKeychronModal(false)} />
+            </div>
+            <div className="flex-1 overflow-auto p-6 pt-0">
+              <KeychronSettings keychron={keyboard.keychron} onSettingChanged={keyboard.refreshKeychron} />
+            </div>
+          </div>
+        </div>
       )}
 
       {editorUI.showLightingModal && editorUI.lightingSupported && (

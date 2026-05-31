@@ -29,10 +29,12 @@ import {
 import { logHidPacket } from './logger'
 import type { DeviceInfo, DeviceType, KeyboardDefinition, ProbeResult } from '../shared/types/protocol'
 import { decompressLzma, decompressXz, hasXzMagic } from './lzma'
+import * as bridgeService from './bridge-service'
 
 let openDevice: HID.HIDAsync | null = null
 let openDevicePath: string | null = null
 let sendMutex: Promise<void> = Promise.resolve()
+let usingBridge = false
 
 /**
  * Pad data to exactly MSG_LEN bytes, truncating or zero-filling as needed.
@@ -96,8 +98,13 @@ export async function listDevices(): Promise<DeviceInfo[]> {
   const devices = await HID.devicesAsync()
   const result: DeviceInfo[] = []
 
+  // Detect Keychron bridge/dongle devices first so we can exclude its raw FF60 interface
+  const bridge = bridgeService.findBridgeDevice(devices)
+
+  // Standard directly-connected devices
   for (const d of devices) {
     if (d.usagePage !== HID_USAGE_PAGE || d.usage !== HID_USAGE) continue
+    if (bridge && d.path === bridge.viaPath) continue // Hide the raw bridge FF60 interface
 
     const serial = d.serialNumber ?? ''
     const type = classifyDevice(serial)
@@ -108,6 +115,53 @@ export async function listDevices(): Promise<DeviceInfo[]> {
       serialNumber: serial,
       type,
     })
+  }
+
+  if (bridge) {
+    // If bridge is already open (active wireless connection), just report the connected device
+    if (bridgeService.isBridgeOpen()) {
+      const connInfo = bridgeService.getConnectedDeviceInfo()
+      if (connInfo) {
+        const productName =
+          devices.find((d) => d.vendorId === connInfo.vid && d.productId === connInfo.pid)
+            ?.product ?? 'Keychron (wireless)'
+        result.push({
+          vendorId: connInfo.vid,
+          productId: connInfo.pid,
+          productName: `${productName} [2.4 GHz]`,
+          serialNumber: `bridge:${bridge.viaPath}`,
+          type: 'vial',
+        })
+      }
+      return result
+    }
+    // Try to initialize the bridge and find connected keyboards
+    const state = await bridgeService.openBridge(bridge.viaPath)
+    if (state && state.connectedSlot !== null) {
+      const connInfo = bridgeService.getConnectedDeviceInfo()
+      if (connInfo) {
+        // Check if this wireless device is already listed as a direct device
+        // (it shouldn't be if it's wireless-only, but just in case)
+        const alreadyListed = result.some(
+          (r) => r.vendorId === connInfo.vid && r.productId === connInfo.pid,
+        )
+        if (!alreadyListed) {
+          // Find the product name from the bridge slot's VID/PID
+          const productName =
+            devices.find((d) => d.vendorId === connInfo.vid && d.productId === connInfo.pid)
+              ?.product ?? `Keychron (wireless via ${state.firmwareVersion || 'bridge'})`
+          result.push({
+            vendorId: connInfo.vid,
+            productId: connInfo.pid,
+            productName: `${productName} [2.4 GHz]`,
+            serialNumber: `bridge:${bridge.viaPath}`,
+            type: 'vial',
+          })
+        }
+      }
+    }
+    // Close bridge after scanning — will reopen when user selects the device
+    await bridgeService.closeBridge()
   }
 
   return result
@@ -129,11 +183,29 @@ function isTransientError(err: Error): boolean {
  * Uses device path for precise matching.
  * Retries with a delay to work around transient open failures on all platforms.
  */
-export async function openHidDevice(vendorId: number, productId: number): Promise<boolean> {
-  if (openDevice) {
+export async function openHidDevice(
+  vendorId: number,
+  productId: number,
+  serialNumber?: string,
+): Promise<boolean> {
+  if (openDevice || usingBridge) {
     await closeHidDevice()
   }
 
+  // Bridge device — serial starts with 'bridge:'
+  if (serialNumber?.startsWith('bridge:')) {
+    const viaPath = serialNumber.slice('bridge:'.length)
+    const state = await bridgeService.openBridge(viaPath)
+    if (state && state.connectedSlot !== null) {
+      usingBridge = true
+      openDevicePath = `bridge:${viaPath}`
+      openDevice = null // bridge handles its own HID device
+      return true
+    }
+    return false
+  }
+
+  // Standard direct device open
   const devices = await HID.devicesAsync()
   const deviceInfo = devices.find(
     (d) =>
@@ -149,6 +221,7 @@ export async function openHidDevice(vendorId: number, productId: number): Promis
     try {
       openDevice = await HID.HIDAsync.open(deviceInfo.path)
       openDevicePath = deviceInfo.path
+      usingBridge = false
       return true
     } catch (err) {
       if (attempt < HID_OPEN_RETRY_COUNT - 1) {
@@ -166,6 +239,13 @@ export async function openHidDevice(vendorId: number, productId: number): Promis
  * Close the currently open HID device.
  */
 export async function closeHidDevice(): Promise<void> {
+  if (usingBridge) {
+    await bridgeService.closeBridge()
+    usingBridge = false
+    openDevice = null
+    openDevicePath = null
+    return
+  }
   if (openDevice) {
     try {
       openDevice.close()
@@ -201,6 +281,22 @@ export function validateHidData(data: unknown, maxLen: number): number[] {
  * Serialized via mutex; retries on timeout up to HID_RETRY_COUNT times.
  */
 export function sendReceive(data: number[]): Promise<number[]> {
+  // Route through bridge if active — bridge has its own retry logic (8 retries, 150ms delay, 1000ms timeout)
+  if (usingBridge) {
+    const { prev, release } = acquireMutex()
+    return prev.then(async () => {
+      try {
+        logHidPacket('TX[bridge]', new Uint8Array(data))
+        const result = await bridgeService.bridgeSendReceive(data)
+        logHidPacket('RX[bridge]', new Uint8Array(result))
+        return result
+      } finally {
+        release()
+      }
+    })
+  }
+
+  // Standard direct device path — aggressive retries for USB stability
   const { prev, release } = acquireMutex()
 
   return prev.then(async () => {
@@ -215,7 +311,7 @@ export function sendReceive(data: number[]): Promise<number[]> {
       let lastError: Error | undefined
       for (let attempt = 0; attempt < HID_RETRY_COUNT; attempt++) {
         try {
-          openDevice.write([HID_REPORT_ID, ...padded])
+          await openDevice.write([HID_REPORT_ID, ...padded])
 
           const response = await openDevice.read(HID_TIMEOUT_MS)
           if (!response || response.length === 0) {
@@ -245,9 +341,23 @@ export function sendReceive(data: number[]): Promise<number[]> {
  * Serialized via mutex to prevent interleaving with sendReceive.
  */
 export function send(data: number[]): Promise<void> {
+  // Route through bridge if active
+  if (usingBridge) {
+    const { prev, release } = acquireMutex()
+    return prev.then(async () => {
+      try {
+        logHidPacket('TX[bridge]', new Uint8Array(data))
+        await bridgeService.bridgeSend(data)
+      } finally {
+        release()
+      }
+    })
+  }
+
+  // Standard direct device path
   const { prev, release } = acquireMutex()
 
-  return prev.then(() => {
+  return prev.then(async () => {
     try {
       if (!openDevice) {
         throw new Error('No HID device is open')
@@ -255,7 +365,7 @@ export function send(data: number[]): Promise<void> {
 
       const padded = padToMsgLen(data)
       logHidPacket('TX', new Uint8Array(padded))
-      openDevice.write([HID_REPORT_ID, ...padded])
+      await openDevice.write([HID_REPORT_ID, ...padded])
     } finally {
       release()
     }
@@ -267,6 +377,26 @@ export function send(data: number[]): Promise<void> {
  * Re-enumerates USB devices to detect physical disconnection.
  */
 export async function isDeviceOpen(): Promise<boolean> {
+  if (usingBridge) {
+    // Bridge health check: try multiple times to account for wireless latency
+    // This prevents false disconnect detection due to temporary wireless interference
+    const HEALTH_CHECK_RETRIES = 3
+    const HEALTH_CHECK_DELAY_MS = 500
+
+    for (let attempt = 0; attempt < HEALTH_CHECK_RETRIES; attempt++) {
+      const present = bridgeService.isBridgePresent()
+      if (present) return true
+
+      // Wait before retry (except on last attempt)
+      if (attempt < HEALTH_CHECK_RETRIES - 1) {
+        await delay(HEALTH_CHECK_DELAY_MS)
+      }
+    }
+
+    // All retries failed — bridge is truly gone
+    await closeHidDevice()
+    return false
+  }
   if (!openDevice || !openDevicePath) return false
   const devices = await HID.devicesAsync()
   const present = devices.some((d) => d.path === openDevicePath)

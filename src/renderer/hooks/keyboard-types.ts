@@ -13,6 +13,7 @@ import type {
 import type { MacroAction } from '../../preload/macro'
 import type { KeyboardLayout } from '../../shared/kle/types'
 import { EMPTY_UID, ECHO_DETECTED_MSG } from '../../shared/constants/protocol'
+import type { KeychronState } from '../../shared/types/keychron'
 
 export interface BulkKeyEntry {
   layer: number
@@ -72,6 +73,8 @@ export interface KeyboardState {
   qmkSettingsValues: Record<string, number[]>
   // Layer names (persisted per-UID, synced)
   layerNames: string[]
+  // Keychron
+  keychron: KeychronState | null
 }
 
 export function emptyState(): KeyboardState {
@@ -120,6 +123,7 @@ export function emptyState(): KeyboardState {
     supportedQsids: new Set(),
     qmkSettingsValues: {},
     layerNames: [],
+    keychron: null,
   }
 }
 

@@ -310,6 +310,10 @@ export function vilToVialGuiJson(vil: VilFile, ctx: VilExportContext): string {
     settings: qmkSettingsToVialGui(vil.qmkSettings),
   }
 
+  if (vil.keychron) {
+    obj.keychron = vil.keychron
+  }
+
   return stringifyWithBigIntUid(obj, uid)
 }
 
@@ -340,5 +344,6 @@ export function vialGuiToVil(
     keyOverride: keyOverride ? vialGuiToKeyOverride(keyOverride) : [],
     altRepeatKey: altRepeatKey ? vialGuiToAltRepeatKey(altRepeatKey) : [],
     qmkSettings: settings ? vialGuiToQmkSettings(settings) : {},
+    keychron: data.keychron as Record<string, unknown> | undefined,
   }
 }

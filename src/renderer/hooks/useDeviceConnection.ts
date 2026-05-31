@@ -18,6 +18,9 @@ export const POLL_INTERVAL_MS = 1000
 /** Maximum time to wait for a single poll IPC call before giving up (ms) */
 export const POLL_TIMEOUT_MS = 5000
 
+/** Health check timeout for bridge/wireless devices (ms) — longer than USB due to wireless latency */
+export const BRIDGE_HEALTH_CHECK_TIMEOUT_MS = 10000
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
@@ -39,6 +42,7 @@ export function useDeviceConnection() {
   const mountedRef = useRef(true)
   const connectedDeviceRef = useRef<DeviceInfo | null>(null)
   const isDummyRef = useRef(false)
+  const suppressDisconnectRef = useRef(false)
   const deviceListActiveRef = useRef(false)
   // Skip all USB activity when suspended (e.g. during unlock dialog).
   // USB device enumeration disrupts firmware operations like unlock counter.
@@ -76,6 +80,7 @@ export function useDeviceConnection() {
       const success = await window.vialAPI.openDevice(
         device.vendorId,
         device.productId,
+        device.serialNumber,
       )
       if (mountedRef.current) {
         if (success) {
@@ -213,10 +218,13 @@ export function useDeviceConnection() {
 
       if (connectedDeviceRef.current) {
         // Health check for connected device (skip for dummy keyboards)
-        if (!isDummyRef.current) {
+        if (!isDummyRef.current && !suppressDisconnectRef.current) {
+          // Use longer timeout for bridge/wireless devices to account for wireless latency
+          const isBridge = connectedDeviceRef.current.serialNumber?.startsWith('bridge:') ?? false
+          const healthTimeout = isBridge ? BRIDGE_HEALTH_CHECK_TIMEOUT_MS : POLL_TIMEOUT_MS
           const open = await withTimeout(
             window.vialAPI.isDeviceOpen(),
-            POLL_TIMEOUT_MS,
+            healthTimeout,
           ).catch(() => false)
           if (!open) await handleDisconnect()
         }
@@ -236,6 +244,9 @@ export function useDeviceConnection() {
     }
   }, []) // stable — uses refs internally
 
+  const setSuppressDisconnect = useCallback((suppress: boolean) => {
+    suppressDisconnectRef.current = suppress
+  }, [])
   const setDeviceListActive = useCallback((active: boolean) => { deviceListActiveRef.current = active }, [])
   const setPollSuspended = useCallback((suspended: boolean) => { pollSuspendedRef.current = suspended }, [])
 
@@ -248,5 +259,6 @@ export function useDeviceConnection() {
     disconnectDevice,
     setDeviceListActive,
     setPollSuspended,
+    setSuppressDisconnect,
   }
 }

@@ -7,6 +7,7 @@ import {
   probeDevice,
 } from './hid-transport'
 import * as protocol from './protocol'
+import * as keychronProtocol from './keychron-protocol'
 import { IpcChannels } from '../shared/ipc/channels'
 import type { DeviceInfo, KeyboardDefinition, ProbeResult } from '../shared/types/protocol'
 import type { SnapshotMeta } from '../shared/types/snapshot-store'
@@ -84,8 +85,8 @@ import type { NotificationFetchResult } from '../shared/types/notification'
 const vialAPI = {
   // --- Device Management (node-hid via IPC) ---
   listDevices: (): Promise<DeviceInfo[]> => listDevices(),
-  openDevice: (vendorId: number, productId: number): Promise<boolean> =>
-    openHidDevice(vendorId, productId),
+  openDevice: (vendorId: number, productId: number, serialNumber?: string): Promise<boolean> =>
+    openHidDevice(vendorId, productId, serialNumber),
   closeDevice: (): Promise<void> => closeHidDevice(),
   isDeviceOpen: (): Promise<boolean> => isDeviceOpen(),
   probeDevice: (vendorId: number, productId: number, serialNumber?: string): Promise<ProbeResult> =>
@@ -189,6 +190,143 @@ const vialAPI = {
 
   // --- Matrix Tester ---
   getMatrixState: (): Promise<number[]> => protocol.getMatrixState(),
+
+  // --- Keychron ---
+  keychronReload: (): Promise<unknown> => keychronProtocol.reloadKeychron(),
+  keychronSetDebounce: (type: number, time: number): Promise<boolean> =>
+    keychronProtocol.setKeychronDebounce(type, time),
+  keychronSetNkro: (enabled: boolean): Promise<boolean> =>
+    keychronProtocol.setKeychronNkro(enabled),
+  keychronSetReportRate: (rate: number): Promise<boolean> =>
+    keychronProtocol.setKeychronReportRate(rate),
+  keychronSetPollRateV2: (usbRate: number, frRate: number): Promise<boolean> =>
+    keychronProtocol.setKeychronPollRateV2(usbRate, frRate),
+  keychronSetWirelessLpm: (backlitTime: number, idleTime: number): Promise<boolean> =>
+    keychronProtocol.setKeychronWirelessLpm(backlitTime, idleTime),
+  keychronSetSnapClick: (
+    index: number,
+    snapType: number,
+    key1: number,
+    key2: number,
+  ): Promise<boolean> => keychronProtocol.setKeychronSnapClick(index, snapType, key1, key2),
+  keychronSaveSnapClick: (): Promise<boolean> => keychronProtocol.saveKeychronSnapClick(),
+  keychronSetPerKeyRGBType: (effectType: number): Promise<void> =>
+    keychronProtocol.setKeychronPerKeyRGBType(effectType),
+  keychronSetPerKeyColor: (ledIndex: number, h: number, s: number, v: number): Promise<void> =>
+    keychronProtocol.setKeychronPerKeyColor(ledIndex, h, s, v),
+  keychronSaveRGB: (): Promise<void> => keychronProtocol.saveKeychronRGB(),
+  keychronSetIndicators: (
+    disableMask: number,
+    hue: number,
+    sat: number,
+    val: number,
+  ): Promise<void> => keychronProtocol.setKeychronIndicators(disableMask, hue, sat, val),
+  keychronSetMixedRGBRegions: (startIndex: number, regions: number[]): Promise<void> =>
+    keychronProtocol.setKeychronMixedRGBRegions(startIndex, regions),
+  keychronSetMixedRGBEffects: (
+    regionIndex: number,
+    startIndex: number,
+    effects: import('../shared/types/keychron').MixedRGBEffect[],
+  ): Promise<void> => keychronProtocol.setKeychronMixedRGBEffects(regionIndex, startIndex, effects),
+  keychronAnalogReload: (rows: number, cols: number): Promise<unknown> =>
+    keychronProtocol.reloadKeychronAnalog(rows, cols),
+  keychronAnalogGetVersion: (): Promise<number> => keychronProtocol.getKeychronAnalogVersion(),
+  keychronAnalogGetProfilesInfo: (): Promise<{
+    currentProfile: number
+    profileCount: number
+    profileSize: number
+    okmcCount: number
+    socdCount: number
+  }> => keychronProtocol.getKeychronAnalogProfilesInfo(),
+  keychronAnalogGetCurve: (): Promise<number[]> => keychronProtocol.getKeychronAnalogCurve(),
+  keychronAnalogSetCurve: (curvePoints: number[]): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogCurve(curvePoints),
+  keychronAnalogGetGameControllerMode: (): Promise<number> =>
+    keychronProtocol.getKeychronAnalogGameControllerMode(),
+  keychronAnalogSetProfile: (profileIndex: number): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogProfile(profileIndex),
+  keychronAnalogSetTravel: (
+    profile: number,
+    mode: number,
+    actPt: number,
+    sens: number,
+    rlsSens: number,
+    entire: boolean,
+    rowMask?: number[],
+  ): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogTravel(profile, mode, actPt, sens, rlsSens, entire, rowMask),
+  keychronAnalogSetSocd: (
+    profile: number,
+    row1: number,
+    col1: number,
+    row2: number,
+    col2: number,
+    index: number,
+    socdType: number,
+  ): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogSocd(profile, row1, col1, row2, col2, index, socdType),
+  keychronAnalogSaveProfile: (profile: number): Promise<boolean> =>
+    keychronProtocol.saveKeychronAnalogProfile(profile),
+  keychronAnalogResetProfile: (profile: number): Promise<boolean> =>
+    keychronProtocol.resetKeychronAnalogProfile(profile),
+  keychronAnalogSetGameControllerMode: (mode: number): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogGameControllerMode(mode),
+  keychronAnalogGetProfileRaw: (profile: number, offset: number, size: number): Promise<number[]> =>
+    keychronProtocol.getKeychronAnalogProfileRaw(profile, offset, size),
+  keychronAnalogStartCalibration: (calibType: number): Promise<boolean> =>
+    keychronProtocol.startKeychronCalibration(calibType),
+  keychronAnalogGetCalibrationState: (): Promise<{ calibrated: number; state: number } | null> =>
+    keychronProtocol.getKeychronCalibrationState(),
+  keychronAnalogGetRealtimeTravel: (
+    row: number,
+    col: number,
+  ): Promise<{
+    row: number
+    col: number
+    travelMm: number
+    travelRaw: number
+    value: number
+    zero: number
+    full: number
+    state: number
+  } | null> => keychronProtocol.getKeychronRealtimeTravel(row, col),
+  keychronAnalogSetProfileName: (profile: number, name: string): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogProfileName(profile, name),
+  keychronAnalogSetAdvanceModeClear: (
+    profile: number,
+    row: number,
+    col: number,
+  ): Promise<boolean> => keychronProtocol.setKeychronAnalogAdvanceModeClear(profile, row, col),
+  keychronAnalogSetAdvanceModeDks: (
+    profile: number,
+    row: number,
+    col: number,
+    okmcIndex: number,
+    shallowAct: number,
+    shallowDeact: number,
+    deepAct: number,
+    deepDeact: number,
+    keycodes: number[],
+    actions: number[],
+  ): Promise<boolean> =>
+    keychronProtocol.setKeychronAnalogAdvanceModeDks(
+      profile,
+      row,
+      col,
+      okmcIndex,
+      shallowAct,
+      shallowDeact,
+      deepAct,
+      deepDeact,
+      keycodes,
+      actions,
+    ),
+  keychronAnalogSetAdvanceModeToggle: (
+    profile: number,
+    row: number,
+    col: number,
+  ): Promise<boolean> => keychronProtocol.setKeychronAnalogAdvanceModeToggle(profile, row, col),
+
 
   // --- File I/O (IPC to main for native file dialogs) ---
   saveLayout: (json: string, deviceName?: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>
@@ -676,6 +814,25 @@ const vialAPI = {
     ipcRenderer.invoke(IpcChannels.EXPORT_LOCAL_DATA),
   importLocalData: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.IMPORT_LOCAL_DATA),
+
+  // --- Keychron DFU Flasher ---
+  keychronDfuFlash: (firmwareData: ArrayBuffer): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IpcChannels.KEYCHRON_DFU_FLASH, firmwareData),
+  keychronDfuOnOutput: (
+    callback: (data: { log?: string; progress?: number }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { log?: string; progress?: number },
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on(IpcChannels.KEYCHRON_DFU_OUTPUT, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.KEYCHRON_DFU_OUTPUT, handler)
+  },
+
+  // --- Special Commands ---
+  jumpToBootloader: (): Promise<void> => protocol.jumpToBootloader(),
 
   // --- Window Management ---
   setWindowCompactMode: (enabled: boolean, compactSize?: { width: number; height: number }): Promise<{ width: number; height: number } | null> =>

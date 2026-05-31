@@ -65,7 +65,7 @@ import type { NotificationFetchResult } from './notification'
 export interface VialAPI {
   // Device Management
   listDevices(): Promise<DeviceInfo[]>
-  openDevice(vendorId: number, productId: number): Promise<boolean>
+  openDevice(vendorId: number, productId: number, serialNumber?: string): Promise<boolean>
   closeDevice(): Promise<void>
   isDeviceOpen(): Promise<boolean>
   probeDevice(vendorId: number, productId: number, serialNumber?: string): Promise<ProbeResult>
@@ -133,6 +133,52 @@ export interface VialAPI {
 
   // Matrix Tester
   getMatrixState(): Promise<number[]>
+
+  // Keychron
+  keychronReload(): Promise<unknown>
+  keychronSetDebounce(type: number, time: number): Promise<boolean>
+  keychronSetNkro(enabled: boolean): Promise<boolean>
+  keychronSetReportRate(rate: number): Promise<boolean>
+  keychronSetPollRateV2(usbRate: number, frRate: number): Promise<boolean>
+  keychronSetWirelessLpm(backlitTime: number, idleTime: number): Promise<boolean>
+  keychronSetSnapClick(index: number, snapType: number, key1: number, key2: number): Promise<boolean>
+  keychronSaveSnapClick(): Promise<boolean>
+  keychronSetPerKeyRGBType(effectType: number): Promise<void>
+  keychronSetPerKeyColor(ledIndex: number, h: number, s: number, v: number): Promise<void>
+  keychronSaveRGB(): Promise<void>
+  keychronSetIndicators(disableMask: number, hue: number, sat: number, val: number): Promise<void>
+  keychronSetMixedRGBRegions(startIndex: number, regions: number[]): Promise<void>
+  keychronSetMixedRGBEffects(regionIndex: number, startIndex: number, effects: import('./keychron').MixedRGBEffect[]): Promise<void>
+  keychronAnalogReload(rows: number, cols: number): Promise<unknown>
+  keychronAnalogGetVersion(): Promise<number>
+  keychronAnalogGetProfilesInfo(): Promise<{ currentProfile: number; profileCount: number; profileSize: number; okmcCount: number; socdCount: number }>
+  keychronAnalogGetCurve(): Promise<number[]>
+  keychronAnalogSetCurve(curvePoints: number[]): Promise<boolean>
+  keychronAnalogGetGameControllerMode(): Promise<number>
+  keychronAnalogSetProfile(profileIndex: number): Promise<boolean>
+  keychronAnalogSetTravel(profile: number, mode: number, actPt: number, sens: number, rlsSens: number, entire: boolean, rowMask?: number[]): Promise<boolean>
+  keychronAnalogSetSocd(profile: number, row1: number, col1: number, row2: number, col2: number, index: number, socdType: number): Promise<boolean>
+  keychronAnalogSaveProfile(profile: number): Promise<boolean>
+  keychronAnalogResetProfile(profile: number): Promise<boolean>
+  keychronAnalogSetGameControllerMode(mode: number): Promise<boolean>
+  keychronAnalogGetProfileRaw(profile: number, offset: number, size: number): Promise<number[]>
+  keychronAnalogStartCalibration(calibType: number): Promise<boolean>
+  keychronAnalogGetCalibrationState(): Promise<{ calibrated: number; state: number } | null>
+  keychronAnalogGetRealtimeTravel(row: number, col: number): Promise<{ row: number; col: number; travelMm: number; travelRaw: number; value: number; zero: number; full: number; state: number } | null>
+  keychronAnalogSetProfileName(profile: number, name: string): Promise<boolean>
+  keychronAnalogSetAdvanceModeClear(profile: number, row: number, col: number): Promise<boolean>
+  keychronAnalogSetAdvanceModeDks(profile: number, row: number, col: number, okmcIndex: number, shallowAct: number, shallowDeact: number, deepAct: number, deepDeact: number, keycodes: number[], actions: number[]): Promise<boolean>
+  keychronAnalogSetAdvanceModeToggle(profile: number, row: number, col: number): Promise<boolean>
+
+  // Keychron DFU Flasher
+  keychronDfuFlash(firmwareData: ArrayBuffer): Promise<{ success: boolean; error?: string }>
+  keychronDfuOnOutput(callback: (data: { log?: string; progress?: number }) => void): () => void
+
+  // Special Commands
+  jumpToBootloader(): Promise<void>
+
+  // Debug
+  getDebugFlags(): Promise<Record<string, string | undefined>>
 
   // File I/O (IPC to main for native file dialogs)
   saveLayout(json: string, deviceName?: string): Promise<{ success: boolean; filePath?: string; error?: string }>

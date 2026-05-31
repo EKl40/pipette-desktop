@@ -222,6 +222,13 @@ export const IpcChannels = {
   // Favorite Store extensions
   FAVORITE_STORE_SET_HUB_POST_ID: 'favorite-store:set-hub-post-id',
 
+  // Keychron DFU Flasher (renderer ↔ main)
+  KEYCHRON_DFU_FLASH: 'keychron:dfu-flash',
+  KEYCHRON_DFU_OUTPUT: 'keychron:dfu-output',
+
+  // Debug (renderer → main → renderer)
+  GET_DEBUG_FLAGS: 'debug:get-flags',
+
   // Analyze Filter Store extensions
   ANALYZE_FILTER_STORE_SET_HUB_POST_ID: 'analyze-filter-store:set-hub-post-id',
 

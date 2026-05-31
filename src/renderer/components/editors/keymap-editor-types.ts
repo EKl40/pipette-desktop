@@ -95,6 +95,11 @@ export interface KeymapEditorProps {
   onLock?: () => void
   onMatrixModeChange?: (matrixMode: boolean, hasMatrixTester: boolean) => void
   onOpenLighting?: () => void
+  onOpenKeychron?: () => void
+  onOpenKeychronRgb?: () => void
+  onOpenKeychronAnalog?: () => void
+  onOpenKeychronSocd?: () => void
+  onOpenKeychronFlasher?: () => void
   comboEntries?: ComboEntry[]
   onOpenCombo?: (index: number) => void
   onSetComboEntry?: (index: number, entry: ComboEntry) => Promise<void>

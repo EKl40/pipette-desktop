@@ -17,6 +17,7 @@ import { setupHubIpc } from './hub/hub-ipc'
 import { startI18nStartupSync } from './hub/i18n-startup-sync'
 import { setupLzmaIpc } from './lzma'
 import { setupNotificationStore } from './notification-store'
+import { setupKeychronDfuIpc } from './keychron-dfu-ipc'
 import { buildCsp, securityHeaders } from './csp'
 import { log, logHidPacket } from './logger'
 import type { LogLevel } from './logger'
@@ -303,6 +304,18 @@ function setupLogIpc(): void {
   })
 }
 
+function setupDebugIpc(): void {
+  secureHandle(IpcChannels.GET_DEBUG_FLAGS, async () => {
+    const flags: Record<string, string | undefined> = {}
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('DEBUG_')) {
+        flags[key] = process.env[key]
+      }
+    }
+    return flags
+  })
+}
+
 app.whenReady().then(() => {
   log('info', 'Pipette starting')
   setupCsp()
@@ -320,9 +333,11 @@ app.whenReady().then(() => {
   setupSyncIpc()
   setupHubIpc()
   setupLzmaIpc()
+  setupKeychronDfuIpc()
   setupNotificationStore()
   setupLogIpc()
   setupShellIpc()
+  setupDebugIpc()
   setupWindowIpc()
   setTypingAnalyticsSyncNotifier(notifyChange)
   setupTypingAnalyticsIpc()

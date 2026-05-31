@@ -144,6 +144,7 @@ export interface VilFile {
   altRepeatKey: AltRepeatKeyEntry[]
   qmkSettings: Record<string, number[]>
   layerNames?: string[]
+  keychron?: Record<string, unknown>
   /** VIA protocol version. */
   viaProtocol?: number
   /** Vial protocol version — determines keycode address table (v5 vs v6). */

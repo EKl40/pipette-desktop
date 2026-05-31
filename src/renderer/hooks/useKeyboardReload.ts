@@ -339,6 +339,16 @@ export function useKeyboardReload(
         newState.unlockStatus = { unlocked: true, inProgress: false, keys: [] }
       }
 
+      // Phase 10: Keychron state
+      try {
+        const kcState = await api.keychronReload()
+        if (kcState) {
+          newState.keychron = kcState as import('../../shared/types/keychron').KeychronState
+        }
+      } catch (kcErr) {
+        console.warn('[KB] Keychron reload failed:', kcErr)
+      }
+
       newState.loading = false
       setState(newState)
       return newState.uid
