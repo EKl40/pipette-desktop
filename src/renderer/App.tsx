@@ -6,6 +6,7 @@ import { KeychronDfuFlasher } from './components/editors/KeychronDfuFlasher'
 import { KeychronAnalog } from './components/editors/KeychronAnalog'
 import { KeychronSocd } from './components/editors/KeychronSocd'
 import { FAKE_KEYCHRON_JSON } from './utils/fake-keychron'
+import { useEscapeClose } from './hooks/useEscapeClose'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -311,6 +312,12 @@ export function App() {
       }
     }
   }, [keyboard.keychron?.hasAnalog, keyboard.rows, keyboard.cols, keychronAnalogData])
+
+  useEscapeClose(() => setShowKeychronModal(false), showKeychronModal)
+  useEscapeClose(() => setShowKeychronRgbModal(false), showKeychronRgbModal)
+  useEscapeClose(() => setShowKeychronAnalogModal(false), showKeychronAnalogModal)
+  useEscapeClose(() => setShowKeychronSocdModal(false), showKeychronSocdModal)
+  useEscapeClose(() => setShowKeychronFlasherModal(false), showKeychronFlasherModal)
 
   // Analytics page shell. Session-local boolean — entering the page
   // from the REC tab of the typing view exits the compact window
