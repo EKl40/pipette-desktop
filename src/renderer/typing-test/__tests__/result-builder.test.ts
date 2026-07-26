@@ -7,9 +7,35 @@ import {
   computeConsistency,
   isPbForConfig,
   trimResults,
+  typingTestResultMaterialLabel,
+  resultKpm,
+  buildResultNameChips,
 } from '../result-builder'
 import type { TypingTestResult } from '../../../shared/types/pipette-settings'
 import type { TypingTestConfig } from '../types'
+
+describe('typingTestResultMaterialLabel', () => {
+  const base: TypingTestResult = {
+    date: '2026-01-01T00:00:00.000Z', wpm: 50, accuracy: 95, wordCount: 10,
+    correctChars: 50, incorrectChars: 2, durationSeconds: 30,
+  }
+  it('uses mode (language) for normal modes', () => {
+    expect(typingTestResultMaterialLabel({ ...base, mode: 'words', language: 'english' }))
+      .toBe('words (english)')
+    expect(typingTestResultMaterialLabel({ ...base, mode: 'quote', language: 'japanese' }))
+      .toBe('quote (japanese)')
+  })
+  it('uses the snapshotted text name for fileImport mode', () => {
+    expect(typingTestResultMaterialLabel({ ...base, mode: 'fileImport', fileImportTextName: 'novel.txt' }))
+      .toBe('novel.txt')
+    // Falls back to 'fileImport' when the name wasn't captured.
+    expect(typingTestResultMaterialLabel({ ...base, mode: 'fileImport' })).toBe('fileImport')
+  })
+  it('uses tatoeba-<language> for tatoeba mode', () => {
+    expect(typingTestResultMaterialLabel({ ...base, mode: 'tatoeba', language: 'english' }))
+      .toBe('tatoeba-english')
+  })
+})
 
 describe('computeRawWpm', () => {
   it('computes raw WPM from total chars and duration', () => {
@@ -116,6 +142,12 @@ describe('isPbForConfig', () => {
     const result = { ...makeResult(60), numbers: false }
     expect(isPbForConfig(result, history)).toBe(true)
   })
+
+  it('distinguishes by romajiInput', () => {
+    const history = [{ ...makeResult(100), romajiInput: true }]
+    const result = { ...makeResult(60), romajiInput: false }
+    expect(isPbForConfig(result, history)).toBe(true)
+  })
 })
 
 describe('trimResults', () => {
@@ -150,6 +182,7 @@ describe('buildTypingTestResult', () => {
       config,
       language: 'english',
       wpmHistory: [55, 58, 60, 62],
+      romajiActive: false, mistakes: {},
     })
 
     expect(result.wpm).toBe(60)
@@ -169,6 +202,51 @@ describe('buildTypingTestResult', () => {
     expect(result.date).toBeTruthy()
   })
 
+  it('includes mistakes when non-empty, and omits it entirely when empty', () => {
+    const config: TypingTestConfig = { mode: 'words', wordCount: 30, punctuation: false, numbers: false }
+    const baseInput = {
+      correctChars: 20, incorrectChars: 2, wordCount: 5, wpm: 40, accuracy: 90, elapsedMs: 20000,
+      config, language: 'english', wpmHistory: [], romajiActive: false,
+    }
+
+    const withMistakes = buildTypingTestResult({ ...baseInput, mistakes: { a: 2, t: 1 } })
+    expect(withMistakes.mistakes).toEqual({ a: 2, t: 1 })
+
+    const withoutMistakes = buildTypingTestResult({ ...baseInput, mistakes: {} })
+    expect(withoutMistakes.mistakes).toBeUndefined()
+  })
+
+  it('records romajiInput from the romajiActive input, not the raw config flag', () => {
+    const wordsConfig: TypingTestConfig = { mode: 'words', wordCount: 30, punctuation: false, numbers: false, romajiInput: true }
+    const withRomaji = buildTypingTestResult({
+      correctChars: 20, incorrectChars: 1, wordCount: 5, wpm: 40, accuracy: 95, elapsedMs: 20000,
+      config: wordsConfig, language: 'japanese_hiragana', wpmHistory: [], romajiActive: true, mistakes: {},
+    })
+    expect(withRomaji.romajiInput).toBe(true)
+
+    const notActive = buildTypingTestResult({
+      correctChars: 20, incorrectChars: 1, wordCount: 5, wpm: 40, accuracy: 95, elapsedMs: 20000,
+      config: wordsConfig, language: 'japanese_hiragana', wpmHistory: [], romajiActive: false, mistakes: {},
+    })
+    expect(notActive.romajiInput).toBeUndefined()
+
+    const quoteConfig: TypingTestConfig = { mode: 'quote', quoteLength: 'medium' }
+    const quoteResult = buildTypingTestResult({
+      correctChars: 20, incorrectChars: 1, wordCount: 5, wpm: 40, accuracy: 95, elapsedMs: 20000,
+      config: quoteConfig, language: 'english', wpmHistory: [], romajiActive: false, mistakes: {},
+    })
+    expect(quoteResult.romajiInput).toBeUndefined()
+  })
+
+  it('records romajiInput for tatoeba/fileImport runs too, now that recording follows romajiActive', () => {
+    const tatoebaCfg: TypingTestConfig = { mode: 'tatoeba', language: 'japanese_hiragana', pattern: 'lines', lineCount: 5, duration: 30 }
+    const result = buildTypingTestResult({
+      correctChars: 20, incorrectChars: 1, wordCount: 5, wpm: 40, accuracy: 95, elapsedMs: 20000,
+      config: tatoebaCfg, language: 'english', wpmHistory: [], romajiActive: true, mistakes: {},
+    })
+    expect(result.romajiInput).toBe(true)
+  })
+
   it('derives mode2 from time config', () => {
     const config: TypingTestConfig = { mode: 'time', duration: 60, punctuation: false, numbers: false }
     const result = buildTypingTestResult({
@@ -181,6 +259,7 @@ describe('buildTypingTestResult', () => {
       config,
       language: 'english',
       wpmHistory: [],
+      romajiActive: false, mistakes: {},
     })
     expect(result.mode).toBe('time')
     expect(result.mode2).toBe(60)
@@ -198,8 +277,89 @@ describe('buildTypingTestResult', () => {
       config,
       language: 'english',
       wpmHistory: [],
+      romajiActive: false, mistakes: {},
     })
     expect(result.mode).toBe('quote')
     expect(result.mode2).toBe('medium')
+  })
+
+  it('stores the tatoeba pack language as language, and a composite language|pattern|unit as mode2, not the input language', () => {
+    const config: TypingTestConfig = { mode: 'tatoeba', language: 'english', pattern: 'lines', lineCount: 5, duration: 30 }
+    const result = buildTypingTestResult({
+      correctChars: 120,
+      incorrectChars: 4,
+      wordCount: 20,
+      wpm: 65,
+      accuracy: 97,
+      elapsedMs: 40000,
+      config,
+      // The top-level (MonkeyType) language is irrelevant for tatoeba.
+      language: 'german',
+      wpmHistory: [],
+      romajiActive: false, mistakes: {},
+    })
+    expect(result.mode).toBe('tatoeba')
+    expect(result.mode2).toBe('english|lines|5')
+    expect(result.language).toBe('english')
+    expect(typingTestResultMaterialLabel(result)).toBe('tatoeba-english')
+  })
+
+  it('derives the tatoeba mode2 unit from duration when pattern is time', () => {
+    const config: TypingTestConfig = { mode: 'tatoeba', language: 'japanese', pattern: 'time', lineCount: 5, duration: 30 }
+    const result = buildTypingTestResult({
+      correctChars: 120,
+      incorrectChars: 4,
+      wordCount: 20,
+      wpm: 65,
+      accuracy: 97,
+      elapsedMs: 40000,
+      config,
+      language: 'japanese',
+      wpmHistory: [],
+      romajiActive: false, mistakes: {},
+    })
+    expect(result.mode2).toBe('japanese|time|30')
+  })
+})
+
+describe('resultKpm', () => {
+  const base: TypingTestResult = {
+    date: '2026-01-01T00:00:00.000Z', wpm: 50, accuracy: 95, wordCount: 10,
+    correctChars: 150, incorrectChars: 2, durationSeconds: 30,
+  }
+  it('derives keys per minute from chars and duration', () => {
+    // 150 chars over 30s -> 300 kpm
+    expect(resultKpm(base)).toBe(300)
+  })
+  it('returns 0 for zero duration', () => {
+    expect(resultKpm({ ...base, durationSeconds: 0 })).toBe(0)
+  })
+})
+
+describe('buildResultNameChips', () => {
+  const base: TypingTestResult = {
+    date: '2026-06-29T11:05:01.000Z', wpm: 139, accuracy: 99, wordCount: 10,
+    correctChars: 150, incorrectChars: 2, durationSeconds: 30,
+  }
+  // Stub translator: maps the metric-label keys to their English labels.
+  const tStub = (k: string): string =>
+    ({ 'editor.typingTest.wpm': 'WPM', 'editor.typingTest.kpm': 'KPM', 'editor.typingTest.accuracy': 'Accuracy' }[k] ?? k)
+  it('builds material-label, timestamp and metric chips', () => {
+    const chips = buildResultNameChips({ ...base, mode: 'fileImport', fileImportTextName: 'Scala - Test001' }, tStub)
+    expect(chips[0]).toBe('Scala - Test001')
+    // compact local timestamp YYYYMMDDHHmmss (14 digits)
+    expect(chips[1]).toMatch(/^\d{14}$/)
+    expect(chips).toContain('WPM139')
+    expect(chips).toContain('KPM300')
+    expect(chips).toContain('Accuracy99')
+  })
+  it('uses mode (language) label for normal modes', () => {
+    const chips = buildResultNameChips({ ...base, mode: 'words', language: 'english' }, tStub)
+    expect(chips[0]).toBe('words (english)')
+  })
+  it('prepends the keyboard name when provided', () => {
+    const chips = buildResultNameChips({ ...base, mode: 'words', language: 'english' }, tStub, 'Ieneko54R')
+    expect(chips[0]).toBe('Ieneko54R')
+    expect(chips[1]).toBe('words (english)')
   })
 })

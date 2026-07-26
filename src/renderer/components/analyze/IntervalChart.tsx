@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { PeakRecords, TypingMinuteStatsRow } from '../../../shared/types/typing-analytics'
-import { isHashScope, isOwnScope, primaryDeviceScope, scopeToSelectValue } from '../../../shared/types/analyze-filters'
+import { distributionForcesOwnDevice, isHashScope, isOwnScope, primaryDeviceScope, scopeToSelectValue } from '../../../shared/types/analyze-filters'
 import type { DeviceScope, GranularityChoice, IntervalUnit, IntervalViewMode, RangeMs } from './analyze-types'
 import { bucketMinuteStats, pickBucketMs } from './analyze-bucket'
 import { listMinuteStatsForScope } from './analyze-fetch'
@@ -46,6 +46,8 @@ interface Props {
   deviceScopes: readonly DeviceScope[]
   /** App filter — see WpmChart.Props.appScopes. */
   appScopes: string[]
+  typingTestScopes: string[]
+  runIdScopes: string[]
   unit: IntervalUnit
   granularity: GranularityChoice
   viewMode: IntervalViewMode
@@ -87,7 +89,7 @@ function formatShare(v: number): string {
   return `${formatSharePercent(v)}%`
 }
 
-export function IntervalChart({ uid, range, deviceScopes, appScopes, unit, granularity, viewMode }: Props) {
+export function IntervalChart({ uid, range, deviceScopes, appScopes, typingTestScopes, runIdScopes, unit, granularity, viewMode }: Props) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<TypingMinuteStatsRow[]>([])
   const [peakRecords, setPeakRecords] = useState<PeakRecords | null>(null)
@@ -98,27 +100,23 @@ export function IntervalChart({ uid, range, deviceScopes, appScopes, unit, granu
 
   const deviceScope = primaryDeviceScope(deviceScopes)
 
-  // Distribution mode needs per-scope raw quartiles — the cross-scope
-  // `all` query already aggregates MIN / AVG / MAX over contributing
-  // scopes, so redistributing those meta-aggregates as "four samples
-  // per minute" would muddy the histogram. Force `own` for distribution
-  // regardless of the outer scope (including per-hash selections) and
-  // hide the device filter at the parent when the user picks
-  // Distribution.
-  const effectiveDeviceScope: DeviceScope = viewMode === 'distribution' ? 'own' : deviceScope
+  // See `distributionForcesOwnDevice` — Distribution forces `own`
+  // regardless of the outer scope (including per-hash selections); the
+  // filter modal disables the Device row when this rule is active.
+  const effectiveDeviceScope: DeviceScope = distributionForcesOwnDevice(viewMode) ? 'own' : deviceScope
   const scopeKey = scopeToSelectValue(effectiveDeviceScope)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    listMinuteStatsForScope(uid, effectiveDeviceScope, range.fromMs, range.toMs, appScopes)
+    listMinuteStatsForScope(uid, effectiveDeviceScope, range.fromMs, range.toMs, appScopes, typingTestScopes, runIdScopes)
       .then((data) => { if (!cancelled) setRows(data) })
       .catch(() => { if (!cancelled) setRows([]) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
     // `scopeKey` encodes `effectiveDeviceScope` identity; including the
     // object would refetch every parent rerender.
-  }, [uid, scopeKey, range, appScopes])
+  }, [uid, scopeKey, range, appScopes, typingTestScopes, runIdScopes])
 
   // Longest session comes from a narrow aggregation IPC rather than
   // the minute-stats rows so it surfaces the run that straddles bucket
@@ -130,15 +128,15 @@ export function IntervalChart({ uid, range, deviceScopes, appScopes, unit, granu
     }
     let cancelled = false
     const peakPromise = isHashScope(effectiveDeviceScope)
-      ? window.vialAPI.typingAnalyticsGetPeakRecordsForHash(uid, effectiveDeviceScope.machineHash, range.fromMs, range.toMs, appScopes)
+      ? window.vialAPI.typingAnalyticsGetPeakRecordsForHash(uid, effectiveDeviceScope.machineHash, range.fromMs, range.toMs, appScopes, typingTestScopes, runIdScopes)
       : isOwnScope(effectiveDeviceScope)
-        ? window.vialAPI.typingAnalyticsGetPeakRecordsLocal(uid, range.fromMs, range.toMs, appScopes)
-        : window.vialAPI.typingAnalyticsGetPeakRecords(uid, range.fromMs, range.toMs, appScopes)
+        ? window.vialAPI.typingAnalyticsGetPeakRecordsLocal(uid, range.fromMs, range.toMs, appScopes, typingTestScopes, runIdScopes)
+        : window.vialAPI.typingAnalyticsGetPeakRecords(uid, range.fromMs, range.toMs, appScopes, typingTestScopes, runIdScopes)
     void peakPromise
       .then((r) => { if (!cancelled) setPeakRecords(r) })
       .catch(() => { if (!cancelled) setPeakRecords(null) })
     return () => { cancelled = true }
-  }, [uid, scopeKey, range, appScopes])
+  }, [uid, scopeKey, range, appScopes, typingTestScopes, runIdScopes])
 
   // Log-axis can't plot 0 ms, but min often legitimately rounds to 0
   // on fast adjacent keystrokes. Clamp the axis floor at 1 ms so the
@@ -299,7 +297,7 @@ export function IntervalChart({ uid, range, deviceScopes, appScopes, unit, granu
           />
           <Tooltip
             {...ANALYZE_TOOLTIP_DEFAULTS}
-            labelFormatter={(v: number) => formatBucketAxisLabel(v, bucketMs)}
+            labelFormatter={(v) => formatBucketAxisLabel(v as number, bucketMs)}
             formatter={(value) => {
               const n = typeof value === 'number' ? value : Number(value)
               if (!Number.isFinite(n)) return boldValue(String(value))

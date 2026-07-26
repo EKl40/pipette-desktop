@@ -80,6 +80,7 @@ Settings tied to a specific keyboard, identified by its unique ID.
 | Split key mode | How split-key tiles are displayed (split or flat) |
 | Quick select | Quick-select mode for the keycode popover |
 | Keymap scale | Keymap zoom level |
+| View matrix | Custom key positions for the Auto Move advance order (sparse — only overridden keys; others follow the physical matrix) |
 | View mode | Last active view (Editor / Typing Test / Typing View) — auto-restored on reconnect |
 | Typing test history | WPM/accuracy records (up to 500 entries) |
 | Typing test config | Mode, word count, and other test preferences |
@@ -95,7 +96,7 @@ Settings tied to a specific keyboard, identified by its unique ID.
 
 ### Typing Analytics
 
-Per-keyboard typing history that feeds the Analyze page (see OPERATION-GUIDE §1.4). Recorded while you are in Typing View and the Record toggle in the typing-test pane is set to Start; typing-test results flow into the same stream.
+Per-keyboard typing history that feeds the Analyze page (see OPERATION-GUIDE §1.4). Two sources feed the same stream: typing tests run in the editor are always recorded (each keystroke tagged with the test material and run id), while ambient typing is recorded only while you are in Typing View with the REC toggle set to Start — the REC toggle gates the Typing View stream only, not typing tests.
 
 | Item | Description |
 |------|-------------|
@@ -346,4 +347,6 @@ Pipette can export keymap data in several formats. These are local file download
 
 > **Note**: Reset Local Data allows you to select individual targets — keyboard data, favorites, and app settings can each be reset independently.
 >
-> **Note**: Reset Local Data and Reset Sync Data do not delete the local keyboard name index (`sync/meta/keyboard-names.json`) or the remote index file (`meta_keyboard-names.enc`). Reset Keyboard Data and Reset Sync Data mark the affected UIDs as deleted in the index (tombstone, 30-day TTL) so other signed-in devices see the removal; the index file itself is retained.
+> **Note**: Reset Keyboard Data also removes that keyboard's typing analytics: the active recording session is flushed and closed, the keyboard's rows are tombstoned in the SQLite query cache, and its JSONL master files are unlinked — so the keyboard disappears from the Analyze view immediately instead of lingering in the stale cache.
+>
+> **Note**: Reset Local Data and Reset Sync Data do not delete the local keyboard name index (`sync/meta/keyboard-names.json`) or the remote index file (`meta_keyboard-names.enc`). Reset Keyboard Data and Reset Sync Data mark the affected UIDs as deleted in the index (tombstone, 30-day TTL) so other signed-in devices see the removal; the index file itself is retained. Reconnecting the physical keyboard revives a tombstoned name: on connect the entry is restored from the USB product name (and propagates via the index merge), while a name the user set on an active entry is never overwritten.

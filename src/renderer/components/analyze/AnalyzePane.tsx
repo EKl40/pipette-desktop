@@ -13,10 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
-  TypingAnalyticsDeviceInfo,
   TypingKeyboardSummary,
   TypingKeymapSnapshot,
-  TypingKeymapSnapshotSummary,
 } from '../../../shared/types/typing-analytics'
 import type { FingerType } from '../../../shared/kle/kle-ergonomics'
 import {
@@ -31,6 +29,7 @@ import {
   WPM_VIEW_MODES,
   isAllScope,
   isHashScope,
+  parseFilterDimension,
   type LayoutComparisonFilters,
 } from '../../../shared/types/analyze-filters'
 import type {
@@ -51,14 +50,16 @@ import type { SyncProgress } from '../../../shared/types/sync'
 import { SlidersHorizontal } from 'lucide-react'
 import { ICON_MD } from '../../constants/ui-tokens'
 import { useAnalyzeFilters } from '../../hooks/useAnalyzeFilters'
+import { useRunLabels } from '../../hooks/useRunLabels'
+import { useAnalyzeScopeOptions } from '../../hooks/useAnalyzeScopeOptions'
 import { useAnalyzeFilterStore, type AnalyzeFilterSnapshotPayload } from '../../hooks/useAnalyzeFilterStore'
 import { useEscapeClose } from '../../hooks/useEscapeClose'
 import { AnalyzeFilterStorePanel } from './AnalyzeFilterStorePanel'
 import { ConnectingOverlay } from '../ConnectingOverlay'
 import { ActivityChart } from './ActivityChart'
-import { DeviceMultiSelect } from './DeviceMultiSelect'
-import { AppSelect } from './AppSelect'
-import { RangeDayPicker } from './RangeDayPicker'
+import { AnalyzeFilterSummaryChip } from './AnalyzeFilterSummaryChip'
+import { AnalyzeFilterModal, type AnalyzeFilterDraft } from './AnalyzeFilterModal'
+import { buildDeviceLabel, buildFilterConditionLabels, buildPeriodLabel } from './filter-labels'
 import { clampRangeToBoundaries, getSnapshotBoundaries } from './clamp-range'
 import { resolveAnalyzeLoadingPhase } from './analyze-loading-phase'
 import { BigramsChart } from './BigramsChart'
@@ -68,11 +69,9 @@ import { LayoutComparisonView } from './LayoutComparisonView'
 import { FingerAssignmentModal } from './FingerAssignmentModal'
 import { AnalyzeExportModal, type AnalyzeExportContext } from './AnalyzeExportModal'
 import { generateAnalyzeThumbnail } from './analyze-thumbnail'
-import { formatDeviceLabel } from './DeviceMultiSelect'
 import { formatDateTime } from '../editors/store-modal-shared'
 import { IntervalChart } from './IntervalChart'
 import { KeyHeatmapChart } from './KeyHeatmapChart'
-import { KeymapSnapshotTimeline } from './KeymapSnapshotTimeline'
 import { LayerUsageChart } from './LayerUsageChart'
 import { SummaryView } from './SummaryView'
 import { WpmChart } from './WpmChart'
@@ -130,6 +129,14 @@ const ANALYSIS_TABS: AnalysisTabKey[] = [
   'keyHeatmap', 'ergonomics', 'bigrams', 'layer',
   'layoutComparison',
 ]
+
+/** Tabs whose chart consumes `fingerAssignments` (Summary's peak-record
+ * finger stat, Ergonomics, Bigrams' finger quadrant, and Layout
+ * Comparison's finger-load metric). The Row 2 finger-assignment button
+ * shows on all four so the user can jump to the editor from wherever
+ * they're looking at finger-derived data, not just Ergonomics. */
+const FINGER_ASSIGNMENT_TABS = new Set<AnalysisTabKey>(['summary', 'ergonomics', 'bigrams', 'layoutComparison'])
+
 const DAY_MS = 86_400_000
 /** Default analyze window: most keyboards generate enough data in a
  * week for the charts to feel populated without the user needing to
@@ -189,11 +196,6 @@ export interface AnalyzePaneProps {
    * independent when two panes render side-by-side. Defaults to `'A'`
    * for the historical single-pane case. */
   paneKey?: AnalyzePaneKey
-  /** True when the parent is rendering two panes side-by-side. The
-   * pane re-arranges the filter row to keep Row 1 short (Keyboards /
-   * Device / Keymap snapshots) and pushes Period plus the per-tab
-   * filters down to Row 2 so the dense split layout stays readable. */
-  splitMode?: boolean
   /** Keyboards eligible for selection in this pane's dropdown — owned
    * by the parent so multiple panes share a single fetch. */
   keyboards: readonly TypingKeyboardSummary[]
@@ -213,7 +215,6 @@ export interface AnalyzePaneProps {
 
 export function AnalyzePane({
   paneKey = 'A',
-  splitMode = false,
   keyboards,
   loading,
   selectedUid,
@@ -248,6 +249,9 @@ export function AnalyzePane({
     filters: {
       deviceScopes,
       appScopes,
+      typingTestScopes,
+      runIdScopes,
+      filterDimension,
       heatmap: heatmapFilter,
       wpm: wpmFilter,
       interval: intervalFilter,
@@ -258,8 +262,14 @@ export function AnalyzePane({
       layoutComparison: layoutComparisonFilter,
     },
     ready: filtersReady,
+    rawAppScopes,
+    rawTypingTestScopes,
+    rawRunIdScopes,
     setDeviceScopes,
     setAppScopes,
+    setTypingTestScopes,
+    setRunIdScopes,
+    setFilterDimension,
     setHeatmap,
     setWpm,
     setInterval: setIntervalFilter,
@@ -268,12 +278,13 @@ export function AnalyzePane({
     setErgonomics,
     setBigrams,
     setLayoutComparison,
-  } = useAnalyzeFilters(selectedUid, paneKey)
+    applyBatch,
+    applyBatchForUid,
+  } = useAnalyzeFilters(selectedUid, paneKey, analysisTab)
   const [keymapSnapshot, setKeymapSnapshot] = useState<TypingKeymapSnapshot | null>(null)
   const layoutLookup = useKeyLabelLookup()
   const [snapshotLoading, setSnapshotLoading] = useState(false)
-  const [snapshotSummaries, setSnapshotSummaries] = useState<TypingKeymapSnapshotSummary[]>([])
-  const [summariesLoading, setSummariesLoading] = useState(false)
+  const { deviceInfos, snapshotSummaries, summariesLoading } = useAnalyzeScopeOptions(selectedUid)
   // The snapshot the timeline picker is currently pointing at. The
   // primary range is clamped to this snapshot's `[savedAt, nextSavedAt)`
   // window via `clampRangeToBoundaries` so charts that rely on the
@@ -285,6 +296,27 @@ export function AnalyzePane({
   const [fingerAssignments, setFingerAssignments] = useState<Record<string, FingerType>>({})
   const [fingersLoading, setFingersLoading] = useState(false)
   const [fingerModalOpen, setFingerModalOpen] = useState(false)
+  // Staged filter editor (Plan-analyze-filter-modal) — Row 1 collapsed
+  // to a summary chip; every filter row now lives behind this modal.
+  // Conditionally mounted so its draft state re-seeds from committed
+  // props on every open and its option fetches only run while open.
+  const [filterModalOpen, setFilterModalOpen] = useState(false)
+  // Display names for the currently-filtered runs so the summary chip's
+  // Source segment can show "words · <run name>" instead of a bare run
+  // id. History-less runs fall back to their first analytics minute via
+  // the same run-rows query RunSelect uses, so the chip and the modal's
+  // Results dropdown always agree. Both fetches stay lazy: nothing runs
+  // until a run filter is actually active.
+  const runLabelsQuery = useMemo(
+    () => runIdScopes.length > 0
+      ? { range, deviceScopes, materialScopes: rawTypingTestScopes }
+      : null,
+    [runIdScopes, range, deviceScopes, rawTypingTestScopes],
+  )
+  const { labelFor: runLabelFor } = useRunLabels(
+    runIdScopes.length > 0 ? selectedUid : null,
+    runLabelsQuery,
+  )
   // The export modal does double duty: CSV export when invoked with
   // mode 'export', Hub upload when invoked with mode 'upload'. The
   // upload variant pins the saved entry id so the modal's onConfirm
@@ -320,24 +352,6 @@ export function AnalyzePane({
     window.addEventListener('mousedown', onMouseDown, true)
     return () => window.removeEventListener('mousedown', onMouseDown, true)
   }, [storePanelOpen])
-  // `loaded` gates the "persisted hash no longer exists" fallback so a
-  // slow fetch doesn't clobber a valid selection before the list
-  // resolves; `error` lets the loading-phase overlay release after a
-  // transient IPC failure instead of stalling on "preparing" forever.
-  // The two are distinct because the fallback must not fire on error.
-  // `own` carries this machine's OS info so the Device filter can
-  // label the local entry without a separate IPC.
-  const [deviceInfos, setDeviceInfos] = useState<{
-    own: TypingAnalyticsDeviceInfo | null
-    remotes: readonly TypingAnalyticsDeviceInfo[]
-    loaded: boolean
-    error: boolean
-  }>({
-    own: null,
-    remotes: [],
-    loaded: false,
-    error: false,
-  })
   // Analytics-only sync runs on Analyze mount (see
   // .claude/rules/settings-persistence.md). The per-uid rate-limit map
   // lives at module scope so split-view panes that share a uid don't
@@ -357,47 +371,29 @@ export function AnalyzePane({
     return () => { cancelled = true }
   }, [selectedUid, range])
 
-  // Snapshot timeline data is uid-scoped, not range-scoped — we want
-  // every snapshot the user has ever recorded so the options stay
-  // stable across range edits. Re-fetch only when the keyboard
-  // changes. On the first fetch for a given uid, jump the primary
-  // range to the latest snapshot's active window so the user lands on
-  // "current keymap" data; subsequent range edits within the same
-  // keyboard are not overridden.
+  // Snapshot summaries themselves are fetched by `useAnalyzeScopeOptions`
+  // (uid-scoped, not range-scoped — every snapshot the user has ever
+  // recorded, so the options stay stable across range edits). What's left
+  // here is the pane-specific reaction to that list: reset the picker
+  // synchronously on uid change (so it never shows a stale pick against a
+  // list still loading for the new keyboard), then on the first resolved
+  // list for a given uid, jump the primary range to the latest snapshot's
+  // active window so the user lands on "current keymap" data. Subsequent
+  // range edits within the same keyboard are not overridden.
+  useEffect(() => {
+    setSelectedSnapshotSavedAt(null)
+  }, [selectedUid])
+
   const autoSetRangeForUidRef = useRef<string | null>(null)
   useEffect(() => {
-    // Clear the previous keyboard's snapshot state up-front so the
-    // timeline / boundary hint / compare window don't briefly render
-    // stale data while the new fetch is in flight, and so a fetch
-    // error doesn't leave them pointing at the previous keyboard.
-    setSnapshotSummaries([])
-    setSelectedSnapshotSavedAt(null)
-    if (!selectedUid) {
-      setSummariesLoading(false)
-      return
-    }
-    let cancelled = false
-    setSummariesLoading(true)
-    void window.vialAPI
-      .typingAnalyticsListKeymapSnapshots(selectedUid)
-      .then((list) => {
-        if (cancelled) return
-        setSnapshotSummaries(list)
-        if (list.length > 0 && autoSetRangeForUidRef.current !== selectedUid) {
-          const latest = list[list.length - 1]
-          setRange({ fromMs: latest.savedAt, toMs: nowMs })
-          setSelectedSnapshotSavedAt(latest.savedAt)
-          autoSetRangeForUidRef.current = selectedUid
-        }
-      })
-      .catch(() => {
-        if (cancelled) return
-        setSnapshotSummaries([])
-        setSelectedSnapshotSavedAt(null)
-      })
-      .finally(() => { if (!cancelled) setSummariesLoading(false) })
-    return () => { cancelled = true }
-  }, [selectedUid, nowMs])
+    if (!selectedUid) return
+    if (snapshotSummaries.length === 0) return
+    if (autoSetRangeForUidRef.current === selectedUid) return
+    const latest = snapshotSummaries[snapshotSummaries.length - 1]
+    setRange({ fromMs: latest.savedAt, toMs: nowMs })
+    setSelectedSnapshotSavedAt(latest.savedAt)
+    autoSetRangeForUidRef.current = selectedUid
+  }, [selectedUid, snapshotSummaries, nowMs])
 
   // Reset the Base Layer select when the snapshot's layer count shrinks
   // past the current selection (device switch, keymap edit). Without
@@ -424,36 +420,7 @@ export function AnalyzePane({
     return () => { cancelled = true }
   }, [selectedUid])
 
-  // Per-keyboard device infos (own + remotes) power the Device
-  // select's labelled options. Mark `loaded` after the fetch resolves
-  // so the fallback below doesn't race the first paint and wipe a
-  // valid persisted hash selection.
-  useEffect(() => {
-    if (!selectedUid) {
-      setDeviceInfos({ own: null, remotes: [], loaded: false, error: false })
-      return
-    }
-    let cancelled = false
-    setDeviceInfos({ own: null, remotes: [], loaded: false, error: false })
-    void window.vialAPI
-      .typingAnalyticsListDeviceInfos(selectedUid)
-      .then((bundle) => {
-        if (cancelled) return
-        if (bundle === null) {
-          setDeviceInfos({ own: null, remotes: [], loaded: true, error: false })
-          return
-        }
-        setDeviceInfos({ own: bundle.own, remotes: bundle.remotes, loaded: true, error: false })
-      })
-      // `loaded: false` on error keeps the "missing from list" fallback
-      // from wiping a valid persisted hash selection; `error: true`
-      // lets the overlay release instead of stalling on preparing.
-      .catch(() => {
-        if (!cancelled) setDeviceInfos({ own: null, remotes: [], loaded: false, error: true })
-      })
-    return () => { cancelled = true }
-  }, [selectedUid])
-
+  // Device infos (own + remotes) come from `useAnalyzeScopeOptions` above.
   // Fallback: when persisted hashes no longer exist in the remote
   // list, drop them. Runs after the list resolves so a slow fetch
   // can't strip a valid selection on first mount. The hook's setter
@@ -500,15 +467,22 @@ export function AnalyzePane({
     setRange((prev) => clampRangeToBoundaries(prev, snapshotBoundaries))
   }, [snapshotBoundaries, analysisTab, activityFilter.view])
 
-  // Selecting a snapshot resets the range to the snapshot's active
-  // window; narrowing inside the window leaves `selectedSnapshotSavedAt`
-  // untouched so the picker keeps reflecting the user's choice.
-  const handleSelectSnapshot = useCallback((savedAt: number) => {
-    const bounds = getSnapshotBoundaries(savedAt, snapshotSummaries, nowMs)
-    if (bounds === null) return
-    setSelectedSnapshotSavedAt(savedAt)
-    setRange({ fromMs: bounds.lo, toMs: bounds.hi })
-  }, [snapshotSummaries, nowMs])
+  // Commit routing for the staged filter modal. Same uid: one batched
+  // filter write + the modal's pre-clamped range/snapshot. Different
+  // uid: stage the patch via `applyBatchForUid`, then switch — the
+  // pane's own fresh-load behaviour (persisted-hash fallback, jump to
+  // latest snapshot) picks the range/snapshot for the new keyboard, so
+  // the draft's are deliberately ignored on this path.
+  const handleFilterModalApply = useCallback((draft: AnalyzeFilterDraft) => {
+    if (draft.uid !== selectedUid) {
+      if (draft.uid !== null) applyBatchForUid(draft.uid, draft.filtersPatch)
+      onSelectUid(draft.uid)
+      return
+    }
+    applyBatch(draft.filtersPatch)
+    setSelectedSnapshotSavedAt(draft.snapshotSavedAt)
+    setRange(draft.range)
+  }, [selectedUid, applyBatch, applyBatchForUid, onSelectUid])
 
   // Uid-prefixed filter — the backend allows parallel per-uid
   // analytics syncs, so a plain analytics-prefix filter would display
@@ -579,13 +553,12 @@ export function AnalyzePane({
       setFingerAssignments(next)
       if (!selectedUid) return
       try {
-        const prefs = await window.vialAPI.pipetteSettingsGet(selectedUid)
-        if (!prefs) return
-        const hasAny = Object.keys(next).length > 0
-        const analyze = hasAny
-          ? { ...prefs.analyze, fingerAssignments: next }
-          : { ...prefs.analyze, fingerAssignments: undefined }
-        await window.vialAPI.pipetteSettingsSet(selectedUid, { ...prefs, analyze })
+        // PATCH only this sub-field; the main-side deep merge on `analyze`
+        // preserves filters/goal. An empty map clears all overrides (each
+        // absent key falls back to the geometry estimate).
+        await window.vialAPI.pipetteSettingsPatch(selectedUid, {
+          analyze: { fingerAssignments: next },
+        })
       } catch {
         // best-effort save
       }
@@ -611,18 +584,9 @@ export function AnalyzePane({
         ? 'all'
         : (deviceInfos.own?.machineHash ?? 'own')
 
-    // Reuse the same labels the filter row already shows so the modal
+    // Reuse the same label builders the summary chip uses so the modal
     // reads as a context echo, not a separate source of truth.
-    const remoteHit = isHashScope(scope)
-      ? deviceInfos.remotes.find((r) => r.machineHash === scope.machineHash) ?? null
-      : null
-    const deviceLabel = isAllScope(scope)
-      ? t('analyze.filters.deviceOption.all')
-      : isHashScope(scope) && remoteHit !== null
-        ? formatDeviceLabel(remoteHit)
-        : deviceInfos.own !== null
-          ? formatDeviceLabel(deviceInfos.own)
-          : t('analyze.filters.deviceOption.own')
+    const deviceLabel = buildDeviceLabel(t, scope, deviceInfos)
     // KeymapSnapshotTimeline labels the newest snapshot as "current",
     // so mirror that here: if the explicit pick matches the latest
     // savedAt the row is logically still "current keymap" — printing
@@ -635,7 +599,7 @@ export function AnalyzePane({
       : selectedSnapshotSavedAt === null || selectedSnapshotSavedAt === latestSnapshotSavedAt
         ? t('analyze.snapshotTimeline.current')
         : formatDateTime(selectedSnapshotSavedAt)
-    const rangeLabel = `${formatDateTime(range.fromMs)} - ${formatDateTime(range.toMs)}`
+    const rangeLabel = buildPeriodLabel(range)
     const appLabel = appScopes.length === 0
       ? t('analyze.filters.appOption.none')
       : appScopes.join(', ')
@@ -647,6 +611,8 @@ export function AnalyzePane({
       range,
       deviceScope: scope,
       appScopes,
+      typingTestScopes,
+      runIdScopes,
       snapshot: effectiveSnapshot,
       heatmap: heatmapFilter,
       wpm: {
@@ -663,15 +629,38 @@ export function AnalyzePane({
         minActiveMs: wpmFilter.minActiveMs,
       },
       layer: { baseLayer: layerFilter.baseLayer },
+      bigrams: { gram: bigramsFilter.gram },
       layoutComparison: layoutComparisonFilter,
       fingerOverrides: fingerAssignments,
       conditions: { device: deviceLabel, app: appLabel, keymap: keymapLabel, range: rangeLabel },
     }
   }, [
-    selected, deviceScopes, appScopes, deviceInfos, range, effectiveSnapshot, selectedSnapshotSavedAt,
-    snapshotSummaries, heatmapFilter, wpmFilter, intervalFilter, activityFilter, layerFilter,
+    selected, deviceScopes, appScopes, typingTestScopes, runIdScopes, deviceInfos, range, effectiveSnapshot, selectedSnapshotSavedAt,
+    snapshotSummaries, heatmapFilter, wpmFilter, intervalFilter, activityFilter, layerFilter, bigramsFilter.gram,
     layoutComparisonFilter, fingerAssignments, t,
   ])
+
+  const chipRunLabels = useMemo(
+    () => runIdScopes.map(runLabelFor),
+    [runIdScopes, runLabelFor],
+  )
+
+  // Summary chip labels — dimension-aware, built from the *effective*
+  // (already-zeroed) filter state so the chip always echoes what the
+  // active chart is actually querying, not raw edit-in-progress picks.
+  const chipLabels = useMemo(
+    () => buildFilterConditionLabels(t, {
+      keyboardName: selected ? selected.productName : null,
+      deviceScope: deviceScopes[0] ?? 'own',
+      deviceInfos: { own: deviceInfos.own, remotes: deviceInfos.remotes },
+      filterDimension,
+      appScopes,
+      typingTestScopes,
+      runLabels: chipRunLabels,
+      range,
+    }),
+    [t, selected, deviceScopes, deviceInfos, filterDimension, appScopes, typingTestScopes, chipRunLabels, range],
+  )
 
   // Pull the saved-entry list when the keyboard changes so the count /
   // list reflects the new uid even before the user opens the panel.
@@ -695,7 +684,15 @@ export function AnalyzePane({
       range,
       filters: {
         deviceScopes,
-        appScopes,
+        // Persist the raw (un-zeroed) selections so a snapshot saved on
+        // a tab that forces a dimension off (byApp) still round-trips the
+        // user's real picks. The dimension itself is pinned to typingTest
+        // on byApp so a later Load (which lands on Summary) doesn't snap
+        // back to an App filter the user never chose there.
+        appScopes: rawAppScopes,
+        typingTestScopes: rawTypingTestScopes,
+        runIdScopes: rawRunIdScopes,
+        filterDimension,
         heatmap: heatmapFilter,
         wpm: wpmFilter,
         interval: intervalFilter,
@@ -722,7 +719,8 @@ export function AnalyzePane({
     return { payload, summary }
   }, [
     analysisTab, range,
-    deviceScopes, appScopes, heatmapFilter, wpmFilter, intervalFilter,
+    deviceScopes, rawAppScopes, rawTypingTestScopes, rawRunIdScopes, filterDimension,
+    heatmapFilter, wpmFilter, intervalFilter,
     activityFilter, layerFilter, ergonomicsFilter, bigramsFilter,
     layoutComparisonFilter, exportCtx,
   ])
@@ -760,6 +758,10 @@ export function AnalyzePane({
       setRange(payload.range)
       setDeviceScopes(payload.filters.deviceScopes)
       setAppScopes(payload.filters.appScopes)
+      setTypingTestScopes(payload.filters.typingTestScopes)
+      setRunIdScopes(payload.filters.runIdScopes)
+      // Snapshots saved before this field existed restore as 'app'.
+      setFilterDimension(parseFilterDimension(payload.filters.filterDimension))
       setHeatmap(payload.filters.heatmap)
       setWpm(payload.filters.wpm)
       setIntervalFilter(payload.filters.interval)
@@ -771,8 +773,8 @@ export function AnalyzePane({
       return true
     },
     [
-      filterStore, setAnalysisTab, setRange, setDeviceScopes, setAppScopes,
-      setHeatmap, setWpm, setIntervalFilter, setActivity, setLayer,
+      filterStore, setAnalysisTab, setRange, setDeviceScopes, setAppScopes, setTypingTestScopes,
+      setRunIdScopes, setFilterDimension, setHeatmap, setWpm, setIntervalFilter, setActivity, setLayer,
       setErgonomics, setBigrams, setLayoutComparison,
     ],
   )
@@ -1076,140 +1078,46 @@ export function AnalyzePane({
           </div>
         )}
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {/* Filter row — always visible. Keyboard select is the first
-         * column so the user can pick a keyboard from inside the filter
-         * group; the rest of the filters render once a keyboard is
-         * selected. Wrapped (with the chart below) inside the
-         * `relative overflow-hidden` block so the slide-in panel
-         * starts directly under the tab bar and covers the filter row
-         * along with the chart. */}
+        {/* Filter row — always visible. Row 1 is a collapsed summary chip
+         * (keyboard / device / source / period) that opens the staged
+         * `AnalyzeFilterModal`; every common condition — including the
+         * keymap snapshot pick — is edited inside the modal, so the chip
+         * gets the full row width for its labels. Row 2 (tab-specific
+         * filters) renders once a keyboard is selected. Wrapped (with
+         * the chart below) inside the `relative overflow-hidden` block
+         * so the slide-in panel starts directly under the tab bar and
+         * covers the filter row along with the chart. */}
         <div
-          className={`grid min-w-0 shrink-0 items-center gap-x-3 gap-y-2 overflow-x-auto border-b border-edge pb-3 mt-3 ${
+          className={`flex min-w-0 shrink-0 flex-col gap-y-2 overflow-x-auto border-b border-edge pb-3 mt-3 ${
             selected !== null && (!filtersReady || syncingAnalytics) ? 'pointer-events-none opacity-60' : ''
           }`}
-          // 10 outer columns shared via `grid-cols-subgrid` on each row
-          // so the label / control widths line up vertically across rows
-          // even when the per-tab filters change. `display: contents`
-          // on each FILTER_LABEL flattens its text + control into the
-          // subgrid.
-          style={{ gridTemplateColumns: 'repeat(10, max-content)' }}
           data-testid={tid("analyze-filters")}
           aria-busy={selected !== null && (!filtersReady || syncingAnalytics)}
         >
-          {/* Row 1: Keyboard select (always) + Device / Keymap / Period
-           * (only after a keyboard is picked). */}
-          <div className="col-span-10 grid grid-cols-subgrid items-center gap-x-3 gap-y-2">
-            <label className={FILTER_LABEL}>
-              <span>{t('analyze.filters.keyboard')}</span>
-              <select
-                className={FILTER_SELECT}
-                value={selectedUid ?? ''}
-                onChange={(e) => onSelectUid(e.target.value || null)}
-                disabled={loading || currentPhase !== null || keyboards.length === 0}
-                aria-label={t('analyze.filters.keyboard')}
-                data-testid={tid("analyze-filter-keyboard")}
-              >
-                {loading ? (
-                  <option value="">{t('common.loading')}</option>
-                ) : keyboards.length === 0 ? (
-                  <option value="" data-testid={tid("analyze-no-keyboards")}>{t('analyze.noKeyboards')}</option>
-                ) : (
-                  <>
-                    {selectedUid === null && (
-                      <option value="">{t('analyze.selectKeyboard')}</option>
-                    )}
-                    {keyboards.map((kb) => (
-                      <option key={kb.uid} value={kb.uid} data-testid={tid(`analyze-kb-${kb.uid}`)}>
-                        {kb.productName || kb.uid}
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
-            </label>
-            {selected && (
-              <>
-                {!(analysisTab === 'interval' && intervalFilter.viewMode === 'distribution') ? (
-                  <>
-                    <label className={FILTER_LABEL}>
-                      <span>{t('analyze.filters.device')}</span>
-                      <DeviceMultiSelect
-                        value={deviceScopes}
-                        ownDevice={deviceInfos.own}
-                        remoteDevices={deviceInfos.remotes}
-                        onChange={setDeviceScopes}
-                        ariaLabel={t('analyze.filters.device')}
-                      />
-                    </label>
-                    {/* App filter sits next to the Device picker so the
-                        user reads the scope in the same row: keyboard,
-                        device, app, period. Hidden on the By App tab —
-                        those charts compare across apps so any single-
-                        app filter would collapse the result to one
-                        slice / bar. The empty span keeps the grid
-                        column count stable across tabs. */}
-                    {analysisTab === 'byApp' ? (
-                      <span />
-                    ) : (
-                      <label className={FILTER_LABEL}>
-                        <span>{t('analyze.filters.app')}</span>
-                        <AppSelect
-                          uid={selected.uid}
-                          range={range}
-                          deviceScopes={deviceScopes}
-                          value={appScopes}
-                          onChange={setAppScopes}
-                          ariaLabel={t('analyze.filters.app')}
-                        />
-                      </label>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <span />
-                    <span />
-                  </>
-                )}
-                <KeymapSnapshotTimeline
-                  summaries={snapshotSummaries}
-                  selectedSavedAt={selectedSnapshotSavedAt}
-                  onSelectSnapshot={handleSelectSnapshot}
-                />
-                {/* Period stays on Row 1 in single-pane mode but
-                 * slides down to Row 2 when split-view is on so the
-                 * per-pane row stays narrow enough for two panes to
-                 * fit. */}
-                {!splitMode && (
-                  <RangeDayPicker
-                    range={range}
-                    snapshotBoundaries={snapshotBoundaries}
-                    nowMs={nowMs}
-                    onChange={setRange}
-                    labelKey="analyze.filters.period"
-                    testIdPrefix={tid("analyze-filter-range")}
-                  />
-                )}
-              </>
-            )}
+          {/* Row 1: the filter summary chip. */}
+          <div className="flex min-w-0 items-center">
+            <AnalyzeFilterSummaryChip
+              keyboardLabel={chipLabels.keyboardLabel}
+              deviceLabel={chipLabels.deviceLabel}
+              sourceLabel={chipLabels.sourceLabel}
+              periodLabel={chipLabels.periodLabel}
+              onClick={() => setFilterModalOpen(true)}
+              testId={tid('analyze-filter-chip')}
+            />
           </div>
-          {/* Per-tab filter row: in single-pane mode this is just the
-           * tab-specific filters; in split mode the period picker and
-           * the Ergonomics finger-assignment button slide down here so
-           * Row 1 stays narrow enough for the two panes side-by-side.
-           * Subgrid alignment keeps every row's labels left and
-           * values right under the keyboard / device columns above. */}
+          {/* Row 2: tab-specific filters, unchanged by the chip/modal
+           * restructure. Its own 10-column max-content grid keeps every
+           * row's labels left and values right as the per-tab filter set
+           * changes shape across tabs. `min-w-max` on the outer flex
+           * keeps the finger-assignment button from squeezing into (or
+           * overlapping) the grid when this row's ancestor scrolls
+           * horizontally (`overflow-x-auto` above). */}
           {selected && (
-            <div className="col-span-10 grid grid-cols-subgrid items-center gap-x-3 gap-y-2">
-              {splitMode && (
-                <RangeDayPicker
-                  range={range}
-                  snapshotBoundaries={snapshotBoundaries}
-                  nowMs={nowMs}
-                  onChange={setRange}
-                  labelKey="analyze.filters.period"
-                  testIdPrefix={tid("analyze-filter-range")}
-                />
-              )}
+            <div className="flex w-full min-w-max items-center">
+            <div
+              className="grid min-w-0 items-center gap-x-3 gap-y-2"
+              style={{ gridTemplateColumns: 'repeat(10, max-content)' }}
+            >
               {analysisTab === 'wpm' && (
                 <>
                   <label className={FILTER_LABEL}>
@@ -1347,6 +1255,17 @@ export function AnalyzePane({
                * the base-layer select rides next to the activations
                * heading instead of in this global filter row. */}
             </div>
+            {FINGER_ASSIGNMENT_TABS.has(analysisTab) && effectiveSnapshot !== null && (
+              <button
+                type="button"
+                className="ml-auto shrink-0 rounded-md border border-edge bg-surface px-3 py-1 text-xs text-content-secondary transition-colors hover:border-accent hover:text-content"
+                onClick={() => setFingerModalOpen(true)}
+                data-testid="analyze-finger-assignment-open"
+              >
+                {t('analyze.fingerAssignment.button')}
+              </button>
+            )}
+            </div>
           )}
         </div>
 
@@ -1358,6 +1277,8 @@ export function AnalyzePane({
                   uid={selected.uid}
                   deviceScope={deviceScopes[0]}
                   appScopes={appScopes}
+                  typingTestScopes={typingTestScopes}
+                  runIdScopes={runIdScopes}
                   snapshot={effectiveSnapshot}
                   fingerOverrides={fingerAssignments}
                 />
@@ -1367,6 +1288,8 @@ export function AnalyzePane({
                   range={range}
                   deviceScopes={deviceScopes}
                   appScopes={appScopes}
+                  typingTestScopes={typingTestScopes}
+                  runIdScopes={runIdScopes}
                   granularity={wpmFilter.granularity}
                   viewMode={wpmFilter.viewMode}
                   minActiveMs={wpmFilter.minActiveMs}
@@ -1377,6 +1300,8 @@ export function AnalyzePane({
                   range={range}
                   deviceScopes={deviceScopes}
                   appScopes={appScopes}
+                  typingTestScopes={typingTestScopes}
+                  runIdScopes={runIdScopes}
                   unit={intervalFilter.unit}
                   granularity={wpmFilter.granularity}
                   viewMode={intervalFilter.viewMode}
@@ -1387,6 +1312,8 @@ export function AnalyzePane({
                   range={range}
                   deviceScope={deviceScopes[0]}
                   appScopes={appScopes}
+                  typingTestScopes={typingTestScopes}
+                  runIdScopes={runIdScopes}
                   metric={activityFilter.metric}
                   view={activityFilter.view}
                   minActiveMs={wpmFilter.minActiveMs}
@@ -1401,6 +1328,8 @@ export function AnalyzePane({
                     range={range}
                     deviceScope={deviceScopes[0]}
                     appScopes={appScopes}
+                    typingTestScopes={typingTestScopes}
+                    runIdScopes={runIdScopes}
                     snapshot={effectiveSnapshot}
                     heatmap={heatmapFilter}
                     onHeatmapChange={setHeatmap}
@@ -1417,12 +1346,13 @@ export function AnalyzePane({
                     range={range}
                     deviceScopes={deviceScopes}
                     appScopes={appScopes}
+                    typingTestScopes={typingTestScopes}
+                    runIdScopes={runIdScopes}
                     snapshot={effectiveSnapshot}
                     fingerOverrides={fingerAssignments}
                     viewMode={ergonomicsFilter.viewMode}
                     period={ergonomicsFilter.period}
                     learningMinSampleKeystrokes={ergonomicsFilter.minSampleKeystrokes}
-                    onOpenFingerAssignment={() => setFingerModalOpen(true)}
                   />
                 ) : (
                   <div className="py-4 text-center text-sm text-content-muted" data-testid={tid("analyze-ergonomics-no-snapshot")}>
@@ -1435,14 +1365,18 @@ export function AnalyzePane({
                   range={range}
                   deviceScopes={deviceScopes}
                   appScopes={appScopes}
+                  typingTestScopes={typingTestScopes}
+                  runIdScopes={runIdScopes}
                   topLimit={bigramsFilter.topLimit}
                   slowLimit={bigramsFilter.slowLimit}
                   fingerLimit={bigramsFilter.fingerLimit}
                   pairIntervalThresholdMs={bigramsFilter.pairIntervalThresholdMs}
+                  gram={bigramsFilter.gram}
                   onTopLimitChange={(topLimit) => setBigrams({ topLimit })}
                   onSlowLimitChange={(slowLimit) => setBigrams({ slowLimit })}
                   onFingerLimitChange={(fingerLimit) => setBigrams({ fingerLimit })}
                   onPairIntervalThresholdChange={(pairIntervalThresholdMs) => setBigrams({ pairIntervalThresholdMs })}
+                  onGramChange={(gram) => setBigrams({ gram })}
                   snapshot={effectiveSnapshot}
                   fingerOverrides={fingerAssignments}
                 />
@@ -1452,8 +1386,11 @@ export function AnalyzePane({
                   range={range}
                   deviceScopes={deviceScopes}
                   appScopes={appScopes}
+                  typingTestScopes={typingTestScopes}
+                  runIdScopes={runIdScopes}
                   snapshot={effectiveSnapshot}
                   filter={layoutComparisonFilter}
+                  fingerOverrides={fingerAssignments}
                   onSkipPercentChange={onSkipPercentChange}
                 />
               ) : analysisTab === 'layer' ? (
@@ -1470,6 +1407,8 @@ export function AnalyzePane({
                       range={range}
                       deviceScopes={deviceScopes}
                       appScopes={appScopes}
+                      typingTestScopes={typingTestScopes}
+                      runIdScopes={runIdScopes}
                       snapshot={effectiveSnapshot}
                       viewMode="keystrokes"
                       baseLayer={layerFilter.baseLayer}
@@ -1481,6 +1420,8 @@ export function AnalyzePane({
                       range={range}
                       deviceScopes={deviceScopes}
                       appScopes={appScopes}
+                      typingTestScopes={typingTestScopes}
+                      runIdScopes={runIdScopes}
                       snapshot={effectiveSnapshot}
                       viewMode="activations"
                       baseLayer={layerFilter.baseLayer}
@@ -1544,6 +1485,28 @@ export function AnalyzePane({
           </div>
         </div>
       </section>
+      {filterModalOpen && (
+        <AnalyzeFilterModal
+          onClose={() => setFilterModalOpen(false)}
+          keyboards={keyboards}
+          keyboardsLoading={loading}
+          analysisTab={analysisTab}
+          intervalViewMode={intervalFilter.viewMode}
+          nowMs={nowMs}
+          committed={{
+            uid: selectedUid,
+            deviceScopes,
+            filterDimension,
+            appScopes: rawAppScopes,
+            typingTestScopes: rawTypingTestScopes,
+            runIdScopes: rawRunIdScopes,
+            range,
+            snapshotSavedAt: selectedSnapshotSavedAt,
+          }}
+          onApply={handleFilterModalApply}
+          tid={tid}
+        />
+      )}
       <FingerAssignmentModal
         isOpen={fingerModalOpen}
         onClose={() => setFingerModalOpen(false)}

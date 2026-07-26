@@ -69,9 +69,23 @@ export type TypingMatrixAction = 'tap' | 'hold'
 /** Partial event emitted by `useTypingTest` before the active keyboard is
  * attached. `useInputModes` wraps it into a full {@link TypingAnalyticsEvent}
  * before dispatching to the main process. */
+interface TypingAnalyticsEventCommon {
+  /** Identifies the typing test producing this keystroke (custom = text
+   *  name, normal = `mode (language)`). Absent for ordinary Typing View REC
+   *  input. Resolved per-minute into the `typing_test` dimension (like the
+   *  active-app tag), so Analyze can slice by which test it was. */
+  typingTest?: string
+  /** Identifies the individual test run producing this keystroke (one
+   *  uuid per run, regenerated on every (re)start and carried across
+   *  pause/resume). Absent for ordinary Typing View REC input. Resolved
+   *  per-run into the `run_id` dimension so Analyze can slice a single
+   *  test material down to specific History runs. */
+  runId?: string
+}
+
 export type TypingAnalyticsEventPayload =
-  | { kind: 'char'; key: string; ts: number }
-  | {
+  | (TypingAnalyticsEventCommon & { kind: 'char'; key: string; ts: number })
+  | (TypingAnalyticsEventCommon & {
       kind: 'matrix'
       row: number
       col: number
@@ -83,7 +97,7 @@ export type TypingAnalyticsEventPayload =
        * and presses that have not yet seen a release leave this
        * undefined; the count still lands in the `count` total column. */
       action?: TypingMatrixAction
-    }
+    })
 
 /** Normalized analytics event carried over the IPC to the main process. */
 export type TypingAnalyticsEvent = TypingAnalyticsEventPayload & {
@@ -297,7 +311,15 @@ export interface TypingTombstoneResult {
   charMinutes: number
   matrixMinutes: number
   minuteStats: number
+  bigramMinutes: number
+  trigramMinutes: number
   sessions: number
+}
+
+/** All-zero {@link TypingTombstoneResult}, for call sites that need to
+ * return early (invalid input, empty range) before any table is touched. */
+export function emptyTombstoneResult(): TypingTombstoneResult {
+  return { charMinutes: 0, matrixMinutes: 0, minuteStats: 0, bigramMinutes: 0, trigramMinutes: 0, sessions: 0 }
 }
 
 /** Sub-view requested from the bigram aggregate IPC. `top` ranks by
@@ -314,16 +336,25 @@ export interface TypingBigramAggregateOptions {
   /** Maximum number of pairs returned. Defaults to 30 at the handler
    * level if absent. */
   limit?: number
+  /** 2 = bigram (`typing_bigram_minute`), 3 = trigram
+   * (`typing_trigram_minute`). Defaults to 2 at the handler level if
+   * absent or invalid. */
+  gram?: 2 | 3
 }
 
-/** Per-pair entry in a `top` view response. `avgIki` is null when the
- * pair has no recorded IKI samples (count = 0 — usually filtered
- * upstream but kept defensive). */
+/** Per-pair entry in a `top` view response. `ngramId` is the
+ * `_`-joined keycode chain — 2 codes for a bigram, 3 for a trigram
+ * (see `gram` on {@link TypingBigramAggregateOptions}). `avgIki` is
+ * null when the pair has no recorded IKI samples (count = 0 — usually
+ * filtered upstream but kept defensive). `sd` is null when any
+ * contributing row predates the sum/sumSq columns — see
+ * aggregatePairTotals. */
 export interface TypingBigramTopEntry {
-  bigramId: string
+  ngramId: string
   count: number
   hist: number[]
   avgIki: number | null
+  sd: number | null
 }
 
 /** Per-pair entry in a `slow` view response. Adds `p95` so the UI can
@@ -335,10 +366,15 @@ export interface TypingBigramSlowEntry extends TypingBigramTopEntry {
 
 /** Discriminated result for the bigram aggregate IPC. The view tag
  * matches the request so the renderer can narrow without inspecting
- * fields. */
+ * fields. `truncated` is true when the period holds more distinct
+ * pairs than the requested `limit`, so `entries` (which is always
+ * count-ranked before any avgIki re-ranking) may be missing low-
+ * frequency-but-slow pairs. Computed server-side from the full pair
+ * universe rather than guessed from `entries.length` on the renderer,
+ * so a period with exactly `limit` distinct pairs isn't misreported. */
 export type TypingBigramAggregateResult =
-  | { view: 'top'; entries: TypingBigramTopEntry[] }
-  | { view: 'slow'; entries: TypingBigramSlowEntry[] }
+  | { view: 'top'; entries: TypingBigramTopEntry[]; truncated: boolean }
+  | { view: 'slow'; entries: TypingBigramSlowEntry[]; truncated: boolean }
 
 /** Phase 1 metrics for the Layout Comparison. Bigram-derived ones
  * (travel distance / SFB) are added in Phase 2. */
@@ -360,6 +396,10 @@ export type LayoutComparisonRowKey = RowCategory
  * resolver needs, so the main process stays data-agnostic. */
 export interface LayoutComparisonInputLayout {
   id: string
+  /** Display name for the layout. Renderer sends this for `targets`
+   * entries (Hub analytics export uses it to label the comparison
+   * table); `source` entries typically omit it. */
+  name?: string
   map: Record<string, string>
 }
 
@@ -370,6 +410,13 @@ export interface LayoutComparisonOptions {
   /** Subset of metrics to compute. Empty array yields just the
    * total / skipped event counts. */
   metrics: LayoutComparisonMetric[]
+  /** Per-cell finger assignments the live Ergonomics / Bigrams charts
+   * already use. Applied at the TARGET physical position's posKey —
+   * same physical-key rule as the Ergonomics chart — so a user
+   * override reclassifies fingerLoad / handBalance the same way
+   * whether the chart is comparing layouts or just showing the
+   * current one. Absent / empty means "use the geometry estimate". */
+  fingerOverrides?: Record<string, FingerType>
 }
 
 export interface LayoutComparisonTargetResult {

@@ -1,6 +1,6 @@
 {
   "name": "pipette-desktop",
-  "version": "0.5.1",
+  "version": "0.4.13",
   "description": "Pipette — Vial-compatible keyboard configurator built with Electron and TypeScript",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:linux": "electron-vite dev --noSandbox",
+    "typecheck": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
     "build": "rm -rf out && electron-vite build",
     "build:win": "if exist out (rd /s /q \"out\") && electron-vite build",
     "dist": "rm -rf out dist && electron-vite build && electron-builder",
@@ -39,6 +40,7 @@
     "better-sqlite3": "^12.9.0",
     "date-fns": "^4.1.0",
     "electron-store": "^11.0.2",
+    "fflate": "^0.8.3",
     "i18next": "^25.8.4",
     "jspdf": "^4.1.0",
     "lucide-react": "^0.564.0",
@@ -65,14 +67,13 @@
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@types/sql.js": "^1.4.11",
-    "@typescript-eslint/eslint-plugin": "^8.54.0",
-    "@typescript-eslint/parser": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^8.60.1",
+    "@typescript-eslint/parser": "^8.60.1",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "~41.7.1",
     "electron-builder": "^26.7.0",
     "electron-vite": "^5.0.0",
-    "eslint": "^9.27.0",
-    "eslint-plugin-react": "^7.37.5",
+    "eslint": "^10.4.1",
     "jsdom": "^28.0.0",
     "prettier": "^3.8.1",
     "sql.js": "^1.14.1",
@@ -88,8 +89,9 @@
       "output": "dist"
     },
     "files": [
-      "out",
-      "package.json"
+      "out/**/*",
+      "package.json",
+      "build/icon.png"
     ],
     "artifactName": "${productName}-${os}-${arch}.${ext}",
     "generateUpdatesFilesForAllChannels": false,

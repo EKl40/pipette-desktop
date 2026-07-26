@@ -1,102 +1,58 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState, useCallback, useEffect, useMemo, useRef, useImperativeHandle, forwardRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useImperativeHandle, forwardRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TabbedKeycodes } from '../keycodes/TabbedKeycodes'
-import { KeyPopover } from '../keycodes/KeyPopover'
-import { serialize, isMask, findKeycode } from '../../../shared/keycodes/keycodes'
 import { useTileContentOverride } from '../../hooks/useTileContentOverride'
-import { useUnlockGate } from '../../hooks/useUnlockGate'
-import type { Keycode } from '../../../shared/keycodes/keycodes'
-import type { TapDanceEntry, ComboEntry, KeyOverrideEntry, AltRepeatKeyEntry } from '../../../shared/types/protocol'
-import { deserializeAllMacros, serializeAllMacros, type MacroAction } from '../../../preload/macro'
-import { TapDanceModal } from './TapDanceModal'
-import { MacroModal } from './MacroModal'
-import { TapDanceJsonEditor } from './TapDanceJsonEditor'
-import { JsonEditorModal } from './JsonEditorModal'
-import { comboToJson, parseCombo, keyOverrideToJson, parseKeyOverride, altRepeatKeyToJson, parseAltRepeatKey, macroToJson, parseMacro } from './json-entry-serializers'
 import { KeycodesOverlayPanel } from './KeycodesOverlayPanel'
-import { ZoomIn, ZoomOut, SlidersHorizontal, Undo2, Redo2 } from 'lucide-react'
-import { ICON_SM, ICON_MD } from '../../constants/ui-tokens'
-import { parseKle } from '../../../shared/kle/kle-parser'
-import { decodeLayoutOptions } from '../../../shared/kle/layout-options'
-import { posKey } from '../../../shared/kle/pos-key'
-import { isVilFile, isVilFileV1, recordToMap, deriveLayerCount } from '../../../shared/vil-file'
-import type { KeyboardLayout } from '../../../shared/kle/types'
-import type { StoredKeyboardInfo } from '../../../shared/types/sync'
-import type { SnapshotMeta } from '../../../shared/types/snapshot-store'
+import { ViewMatrixPanel } from './ViewMatrixPanel'
+import { ZoomIn, ZoomOut, SlidersHorizontal } from 'lucide-react'
+import { ICON_SM, ICON_MD, BTN_PRIMARY_FOOTER } from '../../constants/ui-tokens'
 
 // Extracted modules
-import type { KeymapEditorProps as Props, PopoverState } from './keymap-editor-types'
-import { MIN_SCALE, MAX_SCALE, PANEL_COLLAPSED_WIDTH, EMPTY_KEYCODES, EMPTY_REMAPPED, EMPTY_ENCODER_KEYCODES } from './keymap-editor-types'
+import type { KeymapEditorProps as Props } from './keymap-editor-types'
+import { MIN_SCALE, MAX_SCALE, PANEL_COLLAPSED_WIDTH, EMPTY_REMAPPED } from './keymap-editor-types'
 export type { KeymapEditorHandle } from './keymap-editor-types'
 import { KeyboardPane } from './KeyboardPane'
 import { LayerListPanel } from './LayerListPanel'
-import { ScaleInput, toggleButtonClass } from './keymap-editor-toolbar'
+import { ScaleInput, ghostZoomButtonClass, KeymapToolbar } from './keymap-editor-toolbar'
+import { PopoverForState } from './keymap-editor-popover'
 import { Tooltip } from '../ui/Tooltip'
-import { QmkSettingsModals } from './QmkSettingsModal'
 import { useInputModes } from './useInputModes'
 import { useKeymapMultiSelect } from './useKeymapMultiSelect'
 import { useLayoutOptionsPanel } from './useLayoutOptionsPanel'
 import { useKeymapSelectionHandlers } from './useKeymapSelectionHandlers'
 import { useKeymapHistory } from './useKeymapHistory'
+import type { SingleHistoryEntry } from './useKeymapHistory'
+import { useKeyFlash } from './useKeyFlash'
+import { rewriteNumericKeycode } from '../../../shared/keymap/keymap-apply'
+import type { KeymapRewriteTable } from '../../../shared/keymap/keymap-apply'
+import type { KeymapApplyResult } from './keymap-editor-types'
 import { useAppConfig } from '../../hooks/useAppConfig'
 import { TypingTestPane } from './TypingTestPane'
-
-
-interface PopoverForStateProps {
-  popoverState: NonNullable<PopoverState>
-  keymap: Map<string, number>
-  encoderLayout: Map<string, number>
-  currentLayer: number
-  layers: number
-  onLayerChange?: (layer: number) => void
-  layerNames?: string[]
-  onKeycodeSelect: (kc: Keycode) => void
-  onRawKeycodeSelect: (code: number) => void
-  onModMaskChange?: (newMask: number) => void
-  onClose: () => void
-  quickSelect?: boolean
-  previousKeycode?: number
-  onUndo?: () => void
-  nextKeycode?: number
-  onRedo?: () => void
-}
-
-function PopoverForState({
-  popoverState, keymap, encoderLayout, currentLayer, layers,
-  onLayerChange, layerNames,
-  onKeycodeSelect, onRawKeycodeSelect, onModMaskChange, onClose,
-  quickSelect, previousKeycode, onUndo, nextKeycode, onRedo,
-}: PopoverForStateProps) {
-  const currentKeycode = popoverState.kind === 'key'
-    ? keymap.get(`${currentLayer},${popoverState.row},${popoverState.col}`) ?? 0
-    : encoderLayout.get(`${currentLayer},${popoverState.idx},${popoverState.dir}`) ?? 0
-  const maskOnly = popoverState.maskClicked && isMask(serialize(currentKeycode))
-  return (
-    <KeyPopover
-      anchorRect={popoverState.anchorRect} currentKeycode={currentKeycode} maskOnly={maskOnly} layers={layers}
-      currentLayer={currentLayer} onLayerChange={onLayerChange} layerNames={layerNames}
-      onKeycodeSelect={onKeycodeSelect} onRawKeycodeSelect={onRawKeycodeSelect} onModMaskChange={onModMaskChange}
-      onClose={onClose} quickSelect={quickSelect} previousKeycode={previousKeycode} onUndo={onUndo}
-      nextKeycode={nextKeycode} onRedo={onRedo}
-    />
-  )
-}
+import { useLayoutPicker } from './useLayoutPicker'
+import { useKeymapJsonEditors } from './useKeymapJsonEditors'
+import { useViewMatrixEditing } from './useViewMatrixEditing'
+import { KeymapEditorModals } from './KeymapEditorModals'
+import { useLayerKeycodes } from './use-layer-keycodes'
+import { KeymapPackTabs, type KeymapPackTab } from './KeymapPackTabs'
+import { KeymapApplyConfirmModal } from '../key-labels/KeymapApplyConfirmModal'
 
 export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEditorHandle, Props>(function KeymapEditor({
   keyboardUid, layout, layers, currentLayer, onLayerChange, keymap, encoderLayout, encoderCount,
   layoutOptions, layoutLabels, packedLayoutOptions, onSetLayoutOptions,
-  remapLabel, isRemapped, onSetKey, onSetKeysBulk, onSetEncoder,
+  remapLabel, isRemapped, remapKind, pickerRemapLabel, onSetKey, onSetKeysBulk, onSetEncoder,
   rows, cols, getMatrixState, unlocked, onUnlock,
   tapDanceEntries, onSetTapDanceEntry,
   macroCount, macroBufferSize, macroBuffer, vialProtocol, parsedMacros, onSaveMacros,
   tapHoldSupported, mouseKeysSupported, magicSupported, graveEscapeSupported,
   autoShiftSupported, oneShotKeysSupported, comboSettingsSupported,
   supportedQsids, qmkSettingsGet, qmkSettingsSet, qmkSettingsReset, onSettingsUpdate,
-  autoAdvance = true, onAutoAdvanceChange,
+  autoAdvance = true, onAutoAdvanceChange, viewMatrix, onViewMatrixChange,
   basicViewType, onBasicViewTypeChange, splitKeyMode, onSplitKeyModeChange,
-  quickSelect, onQuickSelectChange, keyboardLayout: _keyboardLayout = 'qwerty', onKeyboardLayoutChange: _onKeyboardLayoutChange,
+  quickSelect, onQuickSelectChange, keyboardLayout = 'qwerty', onKeyboardLayoutChange: _onKeyboardLayoutChange,
+  keymapPackName, onRequestKeymapApply,
+  keymapApplyOpen, keymapApplyLabelName, keymapApplyBusy, onKeymapApplyConfirm, onKeymapApplyCancel, keymapApplyError,
   onLock, onMatrixModeChange, onOpenLighting,
   onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronSocd, onOpenKeychronFlasher,
   comboEntries, onOpenCombo, onSetComboEntry,
@@ -107,18 +63,23 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   layerPanelOpen: layerPanelOpenProp, onLayerPanelOpenChange,
   scale: scaleProp = 1, onScaleChange,
   keyEditorZoom, onKeyEditorZoomChange,
-  typingTestMode, onTypingTestModeChange, onSaveTypingTestResult, typingTestHistory,
-  typingTestConfig: savedTypingTestConfig, typingTestLanguage: savedTypingTestLanguage,
+  typingTestMode, onTypingTestModeChange, onSaveTypingTestResult, onRenameTypingTestResult, onDeleteTypingTestResult, typingTestHistory,
+  typingTestConfig: savedTypingTestConfig, typingTestMonkeytypeConfig, typingTestLanguage: savedTypingTestLanguage,
   onTypingTestConfigChange, onTypingTestLanguageChange,
   typingTestViewOnly, onTypingTestViewOnlyChange,
   typingTestViewOnlyWindowSize, onTypingTestViewOnlyWindowSizeChange,
   typingTestViewOnlyAlwaysOnTop, onTypingTestViewOnlyAlwaysOnTopChange,
-  typingRecordEnabled, onTypingRecordEnabledChange,
+  typingTestMemory: savedTypingTestMemory, onTypingTestMemoryChange,
+  typingTestDisplayLines, typingTestFontSize, onTypingTestDisplayLinesChange, onTypingTestFontSizeChange,
+  typingTestHideKeymap, typingTestHideStatsRow, typingTestHideControls, typingTestSaveUnnamed = true, typingTestComparisonBaselines, onTypingTestHideKeymapChange, onTypingTestHideStatsRowChange, onTypingTestHideControlsChange, onTypingTestSaveUnnamedChange, onTypingTestComparisonBaselineChange,
+  typingTestSettingsPanelOpen, onTypingTestSettingsPanelOpenChange,
+  typingRecordEnabled, onTypingRecordEnabledChange, onRecKeystroke,
   typingRecordingConsentAccepted, onTypingRecordingConsentAccepted,
   typingHeatmapWindowMin, onTypingHeatmapWindowMinChange,
   typingMonitorAppEnabled, onTypingMonitorAppEnabledChange,
+  typingTrayResident, onTypingTrayResidentChange, typingStartInTray, onTypingStartInTrayChange,
   typingViewMenuTab, onTypingViewMenuTabChange,
-  onViewAnalytics,
+  onViewAnalytics, onTypingTestRunningChange,
   tappingTermMs,
   deviceName, isDummy, onExportLayoutPdfAll, onExportLayoutPdfCurrent,
   favHubOrigin, favHubNeedsDisplayName, favHubUploading, favHubUploadResult,
@@ -127,47 +88,20 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
 }, ref) {
   const { t } = useTranslation()
   const keyboardContentRef = useRef<HTMLDivElement>(null)
-  const [pickerLayer, setPickerLayer] = useState(0)
-  const [pickerSource, setPickerSource] = useState<'file' | 'device'>('device')
-  const [pickerFileData, setPickerFileData] = useState<{
-    layout: KeyboardLayout; keymap: Map<string, number>; layers: number
-    encoderKeycodes: Map<string, [string, string]>; layoutOptions: Map<number, number>
-    name: string; layerNames?: string[]; uid?: string
-  } | null>(null)
-  const [storedKeyboards, setStoredKeyboards] = useState<StoredKeyboardInfo[]>([])
-  const [selectedFileUid, setSelectedFileUid] = useState<string | null>(null)
-  const [storedEntries, setStoredEntries] = useState<SnapshotMeta[]>([])
-  const [fileBrowseView, setFileBrowseView] = useState<'list' | 'entries'>('list')
-  const [pickerLoadError, setPickerLoadError] = useState<string | null>(null)
-  const [probeStatus, setProbeStatus] = useState<'idle' | 'probing' | 'error'>('idle')
-  const [deviceBrowsing, setDeviceBrowsing] = useState(true)
-  const [pickerScale, setPickerScale] = useState<number | undefined>(undefined)
-  const [pickerTooltip, setPickerTooltip] = useState<{ keycode: string; top: number; left: number } | null>(null)
-  // pickerClickedPositions removed — now tracked via pickerSelectedIndices in useKeymapMultiSelect
-  const pickerContainerRef = useRef<HTMLDivElement>(null)
-
-  const handlePickerHover = useCallback((_key: import('../../../shared/kle/types').KleKey, keycode: string, rect: DOMRect) => {
-    const containerRect = pickerContainerRef.current?.getBoundingClientRect()
-    if (!containerRect) return
-    setPickerTooltip({
-      keycode,
-      top: rect.top - containerRect.top,
-      left: rect.left - containerRect.left + rect.width / 2,
-    })
-  }, [])
-
-  const handlePickerHoverEnd = useCallback(() => { setPickerTooltip(null) }, [])
 
   // --- Input modes (matrix tester + typing test) ---
   const {
     matrixMode, pressedKeys, everPressedKeys, hasMatrixTester,
     handleMatrixToggle, handleTypingTestToggle,
     typingTest, handleTypingTestConfigChange, handleTypingTestLanguageChange,
+    finishedResult, nameFinishedResult,
+    pauseTypingTest, resumeTypingTest, restartTypingTestFromStart,
   } = useInputModes({
     rows, cols, getMatrixState, unlocked, onUnlock, onMatrixModeChange, keymap,
     typingTestMode, onTypingTestModeChange, savedTypingTestConfig, savedTypingTestLanguage,
-    onTypingTestConfigChange, onTypingTestLanguageChange, onSaveTypingTestResult, typingTestHistory,
-    typingTestViewOnly, typingRecordEnabled,
+    onTypingTestConfigChange, onTypingTestLanguageChange, onSaveTypingTestResult, onRenameTypingTestResult, saveUnnamed: typingTestSaveUnnamed, typingTestHistory,
+    savedTypingTestMemory, onTypingTestMemoryChange,
+    typingTestViewOnly, typingRecordEnabled, onRecKeystroke,
     typingRecordKeyboard: keyboardUid && connectedDevice
       ? {
           uid: keyboardUid,
@@ -194,15 +128,10 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   const { config: appCfg } = useAppConfig()
   const history = useKeymapHistory(appCfg.maxKeymapHistory)
 
-  // Clear history on keyboard/context switch or disconnect
-  const prevUidRef = useRef(keyboardUid)
-  const keymapSize = keymap.size
-  useEffect(() => {
-    if (keyboardUid !== prevUidRef.current || keymapSize === 0) {
-      prevUidRef.current = keyboardUid
-      history.clear()
-    }
-  }, [keyboardUid, keymapSize, history.clear])
+  // --- Key flash (Key Label "apply to keymap" bulk rewrite, and undo/redo)
+  // — must run before `useKeymapSelectionHandlers` below so `triggerFlash`
+  // exists to pass in as `onHistoryApplied`. ---
+  const { flash, triggerFlash } = useKeyFlash(currentLayer)
 
   // --- Selection + handlers ---
   const {
@@ -217,9 +146,10 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
     tdModalIndex, macroModalIndex, handleTdModalSave, handleTdModalClose, handleMacroModalClose,
   } = useKeymapSelectionHandlers({
     layout, keymap, encoderLayout, currentLayer,
-    selectableKeys, autoAdvance,
+    selectableKeys, autoAdvance, viewMatrix,
     onSetKey, onSetKeysBulk, onSetEncoder, unlocked, onUnlock,
     multiSelect, history,
+    onHistoryApplied: triggerFlash,
     tapDanceEntries, onSetTapDanceEntry,
     macroCount, macroBufferSize, macroBuffer, onSaveMacros,
   })
@@ -227,21 +157,78 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
   hasActiveSingleSelectionRef.current = !!(selectedKey || selectedEncoder)
   const { multiSelectedKeys, pickerSelectedIndices, handlePickerMultiSelect } = multiSelect
 
-  // --- Notify parent when device list browsing state changes ---
-  useEffect(() => {
-    onDeviceListActiveChange?.(pickerSource === 'device' && deviceBrowsing)
-  }, [pickerSource, deviceBrowsing, onDeviceListActiveChange])
+  // --- View Matrix mode ---
+  const {
+    viewMatrixMode, handleToggleViewMatrixMode, handleViewMatrixKeyClick,
+    viewMatrixSelectedPositions, viewMatrixEffectiveSingle, handleViewMatrixAxisChange,
+    viewMatrixAxisOptionCount, viewMatrixLabelOverrides, viewMatrixDuplicateKeyColors,
+    gatedHandleKeycodeSelect,
+  } = useViewMatrixEditing({
+    layout, viewMatrix, onViewMatrixChange, rows, cols, selectableKeys,
+    matrixMode, handleMatrixToggle, handleDeselect, handleKeycodeSelect,
+  })
 
-  // Save picker zoom back to target keyboard's settings
+  // --- Simulation/Base tab (Plan-qwerty-select-no-rewrite v7 — シミュレー
+  // ションタブ方式). Local to this component: which of the two vertical
+  // tabs (pack-name simulation vs. the real "Base" keymap) is showing when
+  // `remapKind === 'simulated'` shows them at all — see `showPackTabs`
+  // below. Defaults to the simulation tab; a user switch to Base persists
+  // only until the next uid change (see the reset in the effect below), not
+  // across a select change or a re-render. ---
+  const [packTab, setPackTab] = useState<KeymapPackTab>('pack')
+  // Switching TO the simulation tab also drops any live selection/multi-
+  // select/picker-selection state — belt-and-braces on top of that pane's
+  // own `readOnly` (which already blocks every click/dblclick path into
+  // it): without this, a key selected on Base right before switching tabs
+  // would stay selected in the (invisible) shared selection state, and a
+  // picker click while viewing the simulation tab would still paste into
+  // it. handleDeselect is defined further below (useKeymapSelectionHandlers)
+  // but is stable across renders, so referencing it from this callback
+  // (declared after) is safe — see its own useCallback deps.
+  const handlePackTabChange = useCallback((tab: KeymapPackTab) => {
+    setPackTab(tab)
+    if (tab === 'pack') handleDeselect()
+  }, [handleDeselect])
+
+  // Clear history and exit View Matrix mode on keyboard/context switch or disconnect
+  const prevUidRef = useRef(keyboardUid)
+  const keymapSize = keymap.size
   useEffect(() => {
-    const uid = pickerFileData?.uid
-    if (pickerScale == null || !uid) return
-    window.vialAPI.pipetteSettingsGet(uid).then((prefs) => {
-      if (prefs) {
-        window.vialAPI.pipetteSettingsSet(uid, { ...prefs, keymapScale: pickerScale }).catch(() => {})
-      }
-    }).catch(() => {})
-  }, [pickerScale, pickerFileData?.uid])
+    if (keyboardUid !== prevUidRef.current || keymapSize === 0) {
+      prevUidRef.current = keyboardUid
+      history.clear()
+      viewMatrixMode.exit()
+      setPackTab('pack')
+    }
+  }, [keyboardUid, keymapSize, history.clear, viewMatrixMode.exit])
+
+  // Reset to the simulation tab whenever the selected Key Label / layout
+  // changes (the footer's Keyboard Layout select — `keyboardLayout` here is
+  // the exact same value `useDevicePrefs.layout` feeds into `remapKind`'s
+  // own derivation). Without this, a user parked on the Base tab who then
+  // picks a different pack sees no visible change: the newly selected
+  // pack's simulated keymap only ever renders on the pack tab, and
+  // `remapKind` alone can't signal the switch since it stays `'simulated'`
+  // across two different permutation packs. Same prev-value-ref idiom as
+  // the uid reset above (own ref, not folded into it — that effect also
+  // clears history/View Matrix, which a same-uid layout change must not
+  // trigger) — only acts on an actual change, not on mount or every
+  // render, so a manual tab click right after a layout change isn't
+  // immediately undone by a stray re-render.
+  const prevKeyboardLayoutRef = useRef(keyboardLayout)
+  useEffect(() => {
+    if (keyboardLayout !== prevKeyboardLayoutRef.current) {
+      prevKeyboardLayoutRef.current = keyboardLayout
+      setPackTab('pack')
+    }
+  }, [keyboardLayout])
+
+  // Surface the editor test's run state so the host can disable the
+  // StatusBar "View Analytics" button mid-run (it lives in the footer, not
+  // this component). False whenever the test isn't running or mode is off.
+  useEffect(() => {
+    onTypingTestRunningChange?.(!!typingTestMode && typingTest.state.status === 'running')
+  }, [typingTestMode, typingTest.state.status, onTypingTestRunningChange])
 
   // --- Escape clears picker selection ---
   useEffect(() => {
@@ -251,405 +238,251 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [pickerSelectedIndices.size, multiSelect])
 
-  // --- Layout picker: stored keyboards browsing ---
-  useEffect(() => {
-    if (pickerSource !== 'file') return
-    window.vialAPI.listStoredKeyboards().then(setStoredKeyboards).catch(() => {})
-  }, [pickerSource])
-
-  useEffect(() => {
-    if (!selectedFileUid) { setStoredEntries([]); return }
-    window.vialAPI.snapshotStoreList(selectedFileUid).then((r) => {
-      if (r.success && r.entries) setStoredEntries(r.entries.filter((e) => !e.deletedAt && e.vilVersion !== 1))
-    }).catch(() => {})
-  }, [selectedFileUid])
-
-  // --- Layout picker file loading ---
-  const loadPickerFromJson = useCallback((jsonStr: string) => {
-    try {
-      const parsed = JSON.parse(jsonStr)
-      if (!isVilFile(parsed)) {
-        setPickerLoadError(t('error.loadFailed'))
-        return false
-      }
-      if (isVilFileV1(parsed) || !parsed.definition) {
-        setPickerLoadError(t('error.vilV1NotSupported'))
-        return false
-      }
-      const fileLayout = parseKle(parsed.definition.layouts.keymap)
-      const fileKeymap = recordToMap(parsed.keymap)
-      const fileLayers = deriveLayerCount(parsed.keymap)
-      const remap = remapLabel ?? ((id: string) => id)
-      const encoderKeycodes = new Map<string, [string, string]>()
-      if (parsed.encoderLayout) {
-        const encMap = recordToMap(parsed.encoderLayout)
-        const encCount = new Set([...encMap.keys()].map((k) => k.split(',')[1])).size
-        for (let i = 0; i < encCount; i++) {
-          for (let layer = 0; layer < fileLayers; layer++) {
-            const cw = encMap.get(`${layer},${i},0`) ?? 0
-            const ccw = encMap.get(`${layer},${i},1`) ?? 0
-            encoderKeycodes.set(`${layer},${i}`, [remap(serialize(cw)), remap(serialize(ccw))])
-          }
-        }
-      }
-      const fileUid = typeof parsed.uid === 'string' ? parsed.uid : undefined
-      setPickerFileData({
-        layout: fileLayout, keymap: fileKeymap, layers: fileLayers, encoderKeycodes,
-        layoutOptions: parsed.definition.layouts?.labels
-          ? decodeLayoutOptions(parsed.layoutOptions ?? 0, parsed.definition.layouts.labels) : new Map(),
-        name: parsed.definition.name ?? 'File', layerNames: parsed.layerNames, uid: fileUid,
-      })
-      if (fileUid) {
-        window.vialAPI.pipetteSettingsGet(fileUid).then((prefs) => {
-          if (prefs?.keymapScale != null) setPickerScale(prefs.keymapScale)
-        }).catch(() => {})
-      } else {
-        setPickerScale(undefined)
-      }
-      setPickerLayer(0)
-      setFileBrowseView('list')
-      return true
-    } catch {
-      setPickerLoadError(t('error.loadFailed'))
-      return false
-    }
-  }, [remapLabel, t])
-
-  const handleLoadPickerFile = useCallback(async () => {
-    setPickerLoadError(null)
-    const result = await window.vialAPI.loadLayout(t('editor.keymap.pickerLoadFile'), ['.pipette', '.vil'])
-    if (!result.success || !result.data) {
-      if (result.error !== 'cancelled') setPickerLoadError(t('error.loadFailed'))
-      return
-    }
-    loadPickerFromJson(result.data)
-  }, [t, loadPickerFromJson])
-
-  const handleLoadSnapshotEntry = useCallback(async (uid: string, entryId: string) => {
-    setPickerLoadError(null)
-    const result = await window.vialAPI.snapshotStoreLoad(uid, entryId)
-    if (!result.success || !result.data) {
-      setPickerLoadError(t('error.loadFailed'))
-      return
-    }
-    loadPickerFromJson(result.data)
-  }, [t, loadPickerFromJson])
-
-  // --- Device probe handler ---
-  const handleProbeDevice = useCallback(async (vendorId: number, productId: number, serialNumber: string) => {
-    setProbeStatus('probing')
-    try {
-      const result = await window.vialAPI.probeDevice(vendorId, productId, serialNumber)
-      const fileLayout = parseKle(result.definition.layouts.keymap)
-      const fileKeymap = new Map<string, number>(Object.entries(result.keymap))
-      const remap = remapLabel ?? ((id: string) => id)
-      const encoderKeycodes = new Map<string, [string, string]>()
-      const encMap = new Map<string, number>(Object.entries(result.encoderLayout))
-      for (let i = 0; i < result.encoderCount; i++) {
-        for (let layer = 0; layer < result.layers; layer++) {
-          const cw = encMap.get(`${layer},${i},0`) ?? 0
-          const ccw = encMap.get(`${layer},${i},1`) ?? 0
-          encoderKeycodes.set(`${layer},${i}`, [remap(serialize(cw)), remap(serialize(ccw))])
-        }
-      }
-      let probeKeymapScale: number | undefined
-      if (result.uid) {
-        try {
-          const prefs = await window.vialAPI.pipetteSettingsGet(result.uid)
-          if (prefs?.keymapScale != null) probeKeymapScale = prefs.keymapScale
-        } catch { /* best-effort */ }
-      }
-      setPickerScale(probeKeymapScale)
-      setPickerFileData({
-        layout: fileLayout, keymap: fileKeymap, layers: result.layers, encoderKeycodes,
-        layoutOptions: result.definition.layouts?.labels
-          ? decodeLayoutOptions(result.layoutOptions, result.definition.layouts.labels) : new Map(),
-        name: result.name, uid: result.uid,
-      })
-      setPickerLayer(0)
-      setProbeStatus('idle')
-    } catch {
-      setProbeStatus('error')
-    }
-  }, [remapLabel])
-
-  // --- Device list for probe picker (includes connected device) ---
-  const isConnectedDevice = useCallback((d: import('../../../shared/types/protocol').DeviceInfo) => {
-    return !!connectedDevice && d.vendorId === connectedDevice.vendorId && d.productId === connectedDevice.productId && d.serialNumber === connectedDevice.serialNumber
-  }, [connectedDevice])
-
-  const handleDeviceSelect = useCallback((d: import('../../../shared/types/protocol').DeviceInfo) => {
-    if (isConnectedDevice(d)) {
-      // Connected device → use existing keymap/layout (clear pickerFileData)
-      setPickerFileData(null)
-      setPickerScale(undefined)
-      setPickerLayer(0)
-      setDeviceBrowsing(false)
-    } else {
-      setDeviceBrowsing(false)
-      handleProbeDevice(d.vendorId, d.productId, d.serialNumber)
-    }
-  }, [isConnectedDevice, handleProbeDevice])
-
-  // --- QMK settings modals ---
-  const [showSettings, setShowSettings] = useState<Record<string, boolean>>({})
-  const openSettings = useCallback((key: string) => setShowSettings((prev) => ({ ...prev, [key]: true })), [])
-  const closeSettings = useCallback((key: string) => setShowSettings((prev) => ({ ...prev, [key]: false })), [])
-
-  // --- Tap Dance JSON editor ---
-  const [showTdJsonEditor, setShowTdJsonEditor] = useState(false)
-  const tdJsonGate = useUnlockGate({ unlocked, onUnlock })
-  const handleTdJsonApply = useCallback(
-    async (entries: TapDanceEntry[]) => {
-      if (!onSetTapDanceEntry || !tapDanceEntries) return
-      const allCodes = entries.flatMap((e) => [e.onTap, e.onHold, e.onDoubleTap, e.onTapHold])
-      await tdJsonGate.guard(allCodes, async () => {
-        for (let i = 0; i < entries.length; i++) {
-          const prev = tapDanceEntries[i]
-          const next = entries[i]
-          if (prev.onTap !== next.onTap || prev.onHold !== next.onHold ||
-              prev.onDoubleTap !== next.onDoubleTap || prev.onTapHold !== next.onTapHold ||
-              prev.tappingTerm !== next.tappingTerm) {
-            await onSetTapDanceEntry(i, next)
-          }
-        }
-      })
-    },
-    [onSetTapDanceEntry, tapDanceEntries, tdJsonGate],
-  )
-
-  // --- Combo JSON editor ---
-  const [showComboJsonEditor, setShowComboJsonEditor] = useState(false)
-  const comboJsonGate = useUnlockGate({ unlocked, onUnlock })
-  const handleComboJsonApply = useCallback(
-    async (entries: ComboEntry[]) => {
-      if (!onSetComboEntry || !comboEntries) return
-      const allCodes = entries.flatMap((e) => [e.key1, e.key2, e.key3, e.key4, e.output])
-      await comboJsonGate.guard(allCodes, async () => {
-        for (let i = 0; i < entries.length; i++) {
-          const prev = comboEntries[i]
-          const next = entries[i]
-          if (prev.key1 !== next.key1 || prev.key2 !== next.key2 || prev.key3 !== next.key3 ||
-              prev.key4 !== next.key4 || prev.output !== next.output) {
-            await onSetComboEntry(i, next)
-          }
-        }
-      })
-    },
-    [onSetComboEntry, comboEntries, comboJsonGate],
-  )
-
-  // --- Key Override JSON editor ---
-  const [showKoJsonEditor, setShowKoJsonEditor] = useState(false)
-  const koJsonGate = useUnlockGate({ unlocked, onUnlock })
-  const handleKoJsonApply = useCallback(
-    async (entries: KeyOverrideEntry[]) => {
-      if (!onSetKeyOverrideEntry || !keyOverrideEntries) return
-      const allCodes = entries.flatMap((e) => [e.triggerKey, e.replacementKey])
-      await koJsonGate.guard(allCodes, async () => {
-        for (let i = 0; i < entries.length; i++) {
-          const prev = keyOverrideEntries[i]
-          const next = entries[i]
-          if (prev.triggerKey !== next.triggerKey || prev.replacementKey !== next.replacementKey ||
-              prev.layers !== next.layers || prev.triggerMods !== next.triggerMods ||
-              prev.negativeMods !== next.negativeMods || prev.suppressedMods !== next.suppressedMods ||
-              prev.options !== next.options || prev.enabled !== next.enabled) {
-            await onSetKeyOverrideEntry(i, next)
-          }
-        }
-      })
-    },
-    [onSetKeyOverrideEntry, keyOverrideEntries, koJsonGate],
-  )
-
-  // --- Alt Repeat Key JSON editor ---
-  const [showArkJsonEditor, setShowArkJsonEditor] = useState(false)
-  const arkJsonGate = useUnlockGate({ unlocked, onUnlock })
-  const handleArkJsonApply = useCallback(
-    async (entries: AltRepeatKeyEntry[]) => {
-      if (!onSetAltRepeatKeyEntry || !altRepeatKeyEntries) return
-      const allCodes = entries.flatMap((e) => [e.lastKey, e.altKey])
-      await arkJsonGate.guard(allCodes, async () => {
-        for (let i = 0; i < entries.length; i++) {
-          const prev = altRepeatKeyEntries[i]
-          const next = entries[i]
-          if (prev.lastKey !== next.lastKey || prev.altKey !== next.altKey ||
-              prev.allowedMods !== next.allowedMods || prev.options !== next.options ||
-              prev.enabled !== next.enabled) {
-            await onSetAltRepeatKeyEntry(i, next)
-          }
-        }
-      })
-    },
-    [onSetAltRepeatKeyEntry, altRepeatKeyEntries, arkJsonGate],
-  )
-
-  // --- Macro JSON editor ---
-  const [showMacroJsonEditor, setShowMacroJsonEditor] = useState(false)
-  const macroJsonGate = useUnlockGate({ unlocked, onUnlock })
-  const handleMacroJsonApply = useCallback(
-    async (macros: MacroAction[][]) => {
-      if (!onSaveMacros || !macroBufferSize) return
-      await macroJsonGate.guardAll(async () => {
-        const buffer = serializeAllMacros(macros, vialProtocol ?? 0)
-        if (buffer.length > macroBufferSize) {
-          throw new Error(t('editor.macro.memoryUsage', { used: buffer.length, total: macroBufferSize }))
-        }
-        await onSaveMacros(buffer, macros)
-      })
-    },
-    [onSaveMacros, macroBufferSize, vialProtocol, t, macroJsonGate],
-  )
-
-  const visibleModals = useMemo(() => ({
-    tapHold: !!showSettings.tapHold && !!tapHoldSupported,
-    mouseKeys: !!showSettings.mouseKeys && !!mouseKeysSupported,
-    magic: !!showSettings.magic && !!magicSupported,
-    graveEscape: !!showSettings.graveEscape && !!graveEscapeSupported,
-    autoShift: !!showSettings.autoShift && !!autoShiftSupported,
-    oneShotKeys: !!showSettings.oneShotKeys && !!oneShotKeysSupported,
-    combo: !!showSettings.combo && !!comboSettingsSupported,
-  }), [showSettings, tapHoldSupported, mouseKeysSupported, magicSupported, graveEscapeSupported, autoShiftSupported, oneShotKeysSupported, comboSettingsSupported])
+  // --- QMK settings modals + Tap Dance / Combo / Key Override / Alt Repeat
+  // Key / Macro "Edit JSON" modals ---
+  const {
+    openSettings, closeSettings, visibleModals,
+    tdJson, comboJson, koJson, arkJson, macroJson,
+  } = useKeymapJsonEditors({
+    unlocked, onUnlock,
+    tapDanceEntries, onSetTapDanceEntry,
+    comboEntries, onSetComboEntry,
+    keyOverrideEntries, onSetKeyOverrideEntry,
+    altRepeatKeyEntries, onSetAltRepeatKeyEntry,
+    onSaveMacros, macroBufferSize, vialProtocol,
+    tapHoldSupported, mouseKeysSupported, magicSupported, graveEscapeSupported,
+    autoShiftSupported, oneShotKeysSupported, comboSettingsSupported,
+  })
 
   // --- Layer panel ---
   const layerPanelCollapsed = layerPanelOpenProp === false
   const toggleLayerPanel = useCallback(() => { onLayerPanelOpenChange?.(!layerPanelOpenProp) }, [onLayerPanelOpenChange, layerPanelOpenProp])
 
-  // --- Macros ---
-  const deserializedMacros = useMemo(
-    () => parsedMacros ?? (macroBuffer && macroCount ? deserializeAllMacros(macroBuffer, vialProtocol ?? 0, macroCount) : undefined),
-    [parsedMacros, macroBuffer, macroCount, vialProtocol],
-  )
+  // --- Key Label "apply to keymap" bulk rewrite (Plan-key-label-keymap-apply
+  // Phase 3). Reachable from the footer's layout select via the imperative
+  // handle below, so the write lands on this same `history` instance
+  // instead of a second undo stack. Writes go through `onSetKey` /
+  // `onSetEncoder` sequentially (not `onSetKeysBulk`) so a mid-way failure
+  // leaves both the local keymap state and the pushed history entry
+  // containing only the positions that actually succeeded.
+  //
+  // Same "ref mirrors the latest prop for use inside a stable callback"
+  // idiom as `hasActiveSingleSelectionRef` above: `keymap`/`encoderLayout`
+  // are re-read fresh from these refs before every single write below, so a
+  // concurrent edit that lands on a position between two `await`s (or
+  // during a re-render triggered by one of this function's own writes) is
+  // detected instead of silently clobbered.
+  const keymapRef = useRef(keymap)
+  keymapRef.current = keymap
+  const encoderLayoutRef = useRef(encoderLayout)
+  encoderLayoutRef.current = encoderLayout
+  const isApplyingRewriteRef = useRef(false)
+  // Belt-and-braces unmount guard: the editor-footer Analyze button can open
+  // AnalyzePage (unmounting this component) while a rewrite's sequential
+  // `await`ed device writes are still in flight — the caller-side guard in
+  // App.tsx disables that button while a rewrite is running, but this ref
+  // is the last line of defense so a rewrite already past that guard still
+  // stops cleanly instead of pushing history / firing callbacks / setting
+  // state on an unmounted component.
+  const isMountedRef = useRef(true)
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => { isMountedRef.current = false }
+  }, [])
 
-  const configuredKeycodes = useMemo(() => {
-    const set = new Set<string>()
-    if (tapDanceEntries) {
-      for (let i = 0; i < tapDanceEntries.length; i++) {
-        const e = tapDanceEntries[i]
-        if (e.onTap || e.onHold || e.onDoubleTap || e.onTapHold) set.add(`TD(${i})`)
-      }
-    }
-    if (deserializedMacros) {
-      for (let i = 0; i < deserializedMacros.length; i++) {
-        if (deserializedMacros[i].length > 0) set.add(`M${i}`)
-      }
-    }
-    return set.size > 0 ? set : undefined
-  }, [tapDanceEntries, deserializedMacros])
+  const applyKeymapRewrite = useCallback(async (
+    table: KeymapRewriteTable,
+  ): Promise<KeymapApplyResult> => {
+    // Re-entrancy guard: a double Apply click (or any other concurrent
+    // caller) must never interleave two rewrite passes against the same
+    // undo stack. No-op rather than throwing — the in-flight call already
+    // owns the operation.
+    if (isApplyingRewriteRef.current) return { appliedCount: 0 }
+    isApplyingRewriteRef.current = true
 
-  const remap = remapLabel ?? ((id: string) => id)
+    try {
+      const keyChanges: { layer: number; row: number; col: number; oldKeycode: number; newKeycode: number }[] = []
+      for (const [posKey, code] of keymap) {
+        const newKeycode = rewriteNumericKeycode(code, table)
+        if (newKeycode === code) continue
+        const [layer, row, col] = posKey.split(',').map(Number)
+        keyChanges.push({ layer, row, col, oldKeycode: code, newKeycode })
+      }
+      const encoderChanges: { layer: number; idx: number; dir: number; oldKeycode: number; newKeycode: number }[] = []
+      for (const [posKey, code] of encoderLayout) {
+        const newKeycode = rewriteNumericKeycode(code, table)
+        if (newKeycode === code) continue
+        const [layer, idx, dir] = posKey.split(',').map(Number)
+        encoderChanges.push({ layer, idx, dir, oldKeycode: code, newKeycode })
+      }
+
+      const applied: SingleHistoryEntry[] = []
+      let error: string | undefined
+      try {
+        for (const c of keyChanges) {
+          // Stop immediately once the component has unmounted (e.g. the
+          // Analyze button navigated away mid-rewrite) — no further writes.
+          if (!isMountedRef.current) break
+          // Freshness check: skip this position if a concurrent edit
+          // already moved it away from the value this rewrite was
+          // computed against, instead of overwriting whatever that edit
+          // just wrote.
+          const current = keymapRef.current.get(`${c.layer},${c.row},${c.col}`) ?? 0
+          if (current !== c.oldKeycode) continue
+          await onSetKey(c.layer, c.row, c.col, c.newKeycode)
+          applied.push({ kind: 'key', layer: c.layer, row: c.row, col: c.col, oldKeycode: c.oldKeycode, newKeycode: c.newKeycode })
+        }
+        for (const c of encoderChanges) {
+          if (!isMountedRef.current) break
+          const current = encoderLayoutRef.current.get(`${c.layer},${c.idx},${c.dir}`) ?? 0
+          if (current !== c.oldKeycode) continue
+          await onSetEncoder(c.layer, c.idx, c.dir, c.newKeycode)
+          applied.push({ kind: 'encoder', layer: c.layer, idx: c.idx, dir: c.dir as 0 | 1, oldKeycode: c.oldKeycode, newKeycode: c.newKeycode })
+        }
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err)
+      }
+
+      // Unmounted mid-rewrite: skip ALL bookkeeping below (history clear,
+      // post-apply flash state/timer) — the component is gone, so there is
+      // nothing left to flash and no history stack of this instance to
+      // touch. The device is left mid-rewrite exactly like a
+      // partial-failure apply; the counts are still returned to the caller
+      // for its own error surfacing.
+      //
+      // Rewrite is a destructive one-shot (Plan-qwerty-select-no-rewrite v5
+      // 最終仕様), same class of operation as a snapshot/.vil restore: the
+      // moment ANY write actually landed, both undo/redo stacks are wiped
+      // rather than gaining a revertible batch entry — no history entry is
+      // ever pushed for a rewrite, success or partial failure alike.
+      // Recovery from a bad or partial rewrite is the user's own
+      // .vil/snapshot backup (the confirm modal recommends saving before
+      // applying), not Undo. A rewrite that touched nothing (table matched
+      // no live keycode, or the very first write itself failed) leaves
+      // history untouched — nothing was destroyed, so there's nothing to
+      // protect the user from.
+      //
+      // This clear fires on ANY landed write, including a partial failure —
+      // it is unconditional on `error`. The OTHER half of the destructive
+      // one-shot contract — resetting the footer's select back to QWERTY —
+      // lives one layer up, in `useKeymapApplyPrompt.handleApplyConfirm`,
+      // and fires ONLY on a clean (error-free) success; a partial failure
+      // leaves the select untouched there. Shared invariant: a rewrite
+      // leaves no undo trail; only a clean success returns the select to
+      // QWERTY.
+      if (applied.length > 0 && isMountedRef.current) {
+        history.clear()
+        // Flash the rewritten positions (see `useKeyFlash`) — only for a
+        // clean, error-free pass. A partial failure leaves the keymap
+        // mixed, which isn't the "here's what changed" story this visual
+        // is telling.
+        if (error === undefined) triggerFlash(applied)
+      }
+      return { appliedCount: applied.length, error }
+    } finally {
+      isApplyingRewriteRef.current = false
+    }
+  }, [keymap, encoderLayout, onSetKey, onSetEncoder, history, triggerFlash])
 
   useImperativeHandle(ref, () => ({
     toggleMatrix: handleMatrixToggle, toggleTypingTest: handleTypingTestToggle,
     matrixMode, hasMatrixTester,
-  }), [handleMatrixToggle, handleTypingTestToggle, matrixMode, hasMatrixTester])
+    applyKeymapRewrite,
+    clearHistory: history.clear,
+  }), [handleMatrixToggle, handleTypingTestToggle, matrixMode, hasMatrixTester, applyKeymapRewrite, history.clear])
 
-  // --- Build keycodes for layers ---
-  const buildKeycodesForLayer = useCallback((layer: number) => {
-    const keycodes = new Map<string, string>()
-    const remapped = new Set<string>()
-    const checkRemapped = isRemapped ?? (() => false)
-    for (const [key, code] of keymap) {
-      const [l, r, c] = key.split(',')
-      if (Number(l) === layer) {
-        const pos = posKey(Number(r), Number(c))
-        const qmkId = serialize(code)
-        keycodes.set(pos, remap(qmkId))
-        if (!isMask(qmkId) && checkRemapped(qmkId)) remapped.add(pos)
-      }
-    }
-    return { keycodes, remapped }
-  }, [keymap, remap, isRemapped])
+  // --- Layer keycode builders (current layer / typing test / picker) ---
+  const {
+    deserializedMacros, configuredKeycodes,
+    buildKeycodesForLayer, buildEncoderKeycodesForLayer,
+    layerKeycodes, remappedKeys, layerEncoderKeycodes, layerEncoderRemapped,
+    typingTestKeycodes, typingTestRemapped, typingTestEncoderKeycodes, typingTestEncoderRemapped,
+  } = useLayerKeycodes({
+    parsedMacros, macroBuffer, macroCount, vialProtocol, tapDanceEntries,
+    remapLabel, isRemapped, keymap, encoderLayout, encoderCount, currentLayer,
+    typingTestMode, typingTestEffectiveLayer: typingTest.effectiveLayer,
+  })
 
-  const buildEncoderKeycodesForLayer = useCallback((layer: number) => {
-    const map = new Map<string, [string, string]>()
-    for (let i = 0; i < encoderCount; i++) {
-      const cw = encoderLayout.get(`${layer},${i},0`) ?? 0
-      const ccw = encoderLayout.get(`${layer},${i},1`) ?? 0
-      map.set(String(i), [remap(serialize(cw)), remap(serialize(ccw))])
-    }
-    return map
-  }, [encoderLayout, encoderCount, remap])
+  // FIX C (external review): a keymap must actually be loaded for a
+  // Rewrite to mean anything — `useKeymapApplyPrompt.requestApply` already
+  // no-ops when `keymapEditable` is false (App.tsx passes `keyboard.keymap
+  // .size > 0` into that hook), but nothing here previously folded that
+  // into tab/button VISIBILITY, so a permutation pack could show a
+  // tabs+Apply UI that silently did nothing when clicked. Derived straight
+  // from this component's own `keymap` prop — the exact same `Map` App.tsx
+  // reads `.size` off of for the hook — rather than a second prop that
+  // could drift out of sync with it.
+  const keymapEditable = keymap.size > 0
 
-  const { keycodes: layerKeycodes, remapped: remappedKeys } = useMemo(() => buildKeycodesForLayer(currentLayer), [buildKeycodesForLayer, currentLayer])
-  const layerEncoderKeycodes = useMemo(() => buildEncoderKeycodesForLayer(currentLayer), [buildEncoderKeycodesForLayer, currentLayer])
+  // SINGLE PREDICATE (Plan-qwerty-select-no-rewrite v7): `remapKind` is
+  // ALREADY the unified "does the active pack want a keymap rewrite"
+  // signal (see `useDevicePrefs.ts` — it's gated on `keymapApplicable &&
+  // buildKeymapRewriteTable(map).ok`, not `.ok` alone); combined with
+  // `keymapEditable` above, this is the SAME condition `requestApply`
+  // itself requires, so tab AND Apply-button visibility (the button only
+  // ever renders nested inside the tabs branch below, never standalone)
+  // both collapse onto this one boolean rather than needing separate
+  // checks that could disagree. Suppressed during typing test / View
+  // Matrix mode too, neither of which has a concept of a second (Base)
+  // keymap surface to switch to.
+  const showPackTabs = remapKind === 'simulated' && keymapEditable && !typingTestMode && !viewMatrixMode.active
+  // True exactly while the visible pane is the read-only simulation tab —
+  // gates both `KeyboardPane`'s own `readOnly` and every picker edit path
+  // (TabbedKeycodes/tabContentOverride below), belt-and-braces on top of
+  // `handlePackTabChange` already clearing any live selection when this
+  // becomes true.
+  const packTabReadOnly = showPackTabs && packTab === 'pack'
 
+  // Raw (never remapped) keycodes for the Base tab — same underlying
+  // keymap/macro data as `layerKeycodes` above, built with `remapLabel`/
+  // `isRemapped` omitted so `useLayerKeycodes` falls back to identity (see
+  // its own `remap`/`checkRemapped` defaults). `enabled` skips the whole
+  // O(keymap size) build (and the duplicate macro parse) whenever this
+  // instance's output isn't actually being shown — tabs hidden, or the
+  // simulation tab active — rather than paying for it every render.
+  const { layerKeycodes: baseLayerKeycodes, layerEncoderKeycodes: baseLayerEncoderKeycodes } = useLayerKeycodes({
+    parsedMacros, macroBuffer, macroCount, vialProtocol, tapDanceEntries,
+    keymap, encoderLayout, encoderCount, currentLayer,
+    typingTestMode: false, typingTestEffectiveLayer: 0,
+    enabled: showPackTabs && packTab === 'base',
+  })
 
-  const { keycodes: typingTestKeycodes, remapped: typingTestRemapped } = useMemo(
-    () => typingTestMode ? buildKeycodesForLayer(typingTest.effectiveLayer) : { keycodes: EMPTY_KEYCODES, remapped: EMPTY_REMAPPED },
-    [buildKeycodesForLayer, typingTest.effectiveLayer, typingTestMode])
-  const typingTestEncoderKeycodes = useMemo(
-    () => typingTestMode ? buildEncoderKeycodesForLayer(typingTest.effectiveLayer) : EMPTY_ENCODER_KEYCODES,
-    [buildEncoderKeycodesForLayer, typingTest.effectiveLayer, typingTestMode])
-
-  // --- Layout picker keycodes ---
-  const { keycodes: pickerKeycodes, remapped: pickerRemapped } = useMemo(
-    () => buildKeycodesForLayer(pickerLayer), [buildKeycodesForLayer, pickerLayer])
-  const pickerEncoderKeycodes = useMemo(
-    () => buildEncoderKeycodesForLayer(pickerLayer), [buildEncoderKeycodesForLayer, pickerLayer])
-
-  // Build ordered keycode numbers for picker multi-select (Shift+click range)
-  const pickerTabKeycodeNumbers = useMemo(() => {
-    const sourceKeymap = pickerFileData ? pickerFileData.keymap : keymap
-    const keys = pickerFileData ? pickerFileData.layout.keys : layout?.keys ?? []
-    const numbers: number[] = []
-    for (const key of keys) {
-      if (key.row == null || key.col == null) continue
-      const code = sourceKeymap.get(`${pickerLayer},${key.row},${key.col}`)
-      if (code != null) numbers.push(code)
-    }
-    return numbers
-  }, [pickerFileData, keymap, pickerLayer, layout])
-
-  const handlePickerKeyClick = useCallback((key: import('../../../shared/kle/types').KleKey, _maskClicked: boolean, event?: { ctrlKey: boolean; shiftKey: boolean }) => {
-    const sourceKeymap = pickerFileData ? pickerFileData.keymap : keymap
-    const code = sourceKeymap.get(`${pickerLayer},${key.row},${key.col}`)
-    if (code == null) return
-    // Always assign the full composite keycode (e.g. LT1(KC_SPC) as-is)
-    const qmkId = serialize(code)
-    const kc = findKeycode(qmkId) ?? { qmkId, label: qmkId, keycode: code }
-    const isModified = event && (event.ctrlKey || event.shiftKey)
-    if (isModified && handlePickerMultiSelect) {
-      // Find the index of this key in the picker's ordered list
-      const keys = pickerFileData ? pickerFileData.layout.keys : layout?.keys ?? []
-      let index = 0
-      for (const k of keys) {
-        if (k.row == null || k.col == null) continue
-        if (k.row === key.row && k.col === key.col) break
-        if (sourceKeymap.has(`${pickerLayer},${k.row},${k.col}`)) index++
-      }
-      handlePickerMultiSelect(index, code, { ctrlKey: !!event.ctrlKey, shiftKey: !!event.shiftKey }, pickerTabKeycodeNumbers)
-    } else if (handlePickerMultiSelect && !selectedKey && !selectedEncoder) {
-      // Normal click (no key selected): select single key and set anchor
-      const keys = pickerFileData ? pickerFileData.layout.keys : layout?.keys ?? []
-      let index = 0
-      for (const k of keys) {
-        if (k.row == null || k.col == null) continue
-        if (k.row === key.row && k.col === key.col) break
-        if (sourceKeymap.has(`${pickerLayer},${k.row},${k.col}`)) index++
-      }
-      handlePickerMultiSelect(index, code, { ctrlKey: false, shiftKey: false }, pickerTabKeycodeNumbers)
-    } else {
-      handleKeycodeSelect(kc)
-    }
-  }, [keymap, pickerLayer, pickerFileData, layout, handleKeycodeSelect, handlePickerMultiSelect, pickerTabKeycodeNumbers])
+  // --- Layout picker (device browse / file browse / probe / keyboard view) ---
+  // The Keyboard tab's keyboard-as-picker (`LayoutPickerContent`'s
+  // secondary `<KeyboardPane>`) has its OWN click handler
+  // (`handlePickerKeyClick`), entirely separate from `TabbedKeycodes`'
+  // `onKeycodeSelect`/`onKeycodeMultiSelect` gated below — gating those
+  // alone left this surface fully live during the simulation tab (it can
+  // paste into whatever `selectedKey`/`selectedEncoder` the shared state
+  // holds, or start a picker multi-select, regardless of what's selected
+  // on THIS surface). Same `packTabReadOnly` gate as every other edit path.
+  const { layoutPickerContent } = useLayoutPicker({
+    layout, layers, layerNames, keymap, effectiveLayoutOptions, remapLabel,
+    scale: scaleProp, onScaleChange,
+    devices, connectedDevice, onDeviceListActiveChange,
+    selectedKey, selectedEncoder,
+    handleKeycodeSelect: packTabReadOnly ? undefined : handleKeycodeSelect,
+    handlePickerMultiSelect: packTabReadOnly ? undefined : handlePickerMultiSelect,
+    pickerSelectedIndices, clearPickerSelection: multiSelect.clearPickerSelection,
+    buildKeycodesForLayer, buildEncoderKeycodesForLayer,
+  })
 
   // --- Tab footer ---
   const tabFooterContent = useMemo(() => {
     const btnClass = 'rounded border border-edge px-3 py-1 text-xs text-content-secondary hover:text-content hover:bg-surface-dim'
     const buttonDefs = [
-      { tab: 'tapDance', key: 'tdJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => setShowTdJsonEditor(true), testId: 'tap-dance-json-editor-btn', enabled: !!tapDanceEntries && tapDanceEntries.length > 0 },
+      { tab: 'tapDance', key: 'tdJsonEditor', label: t('editor.tapDance.editJson'), onClick: tdJson.open, testId: 'tap-dance-json-editor-btn', enabled: !!tapDanceEntries && tapDanceEntries.length > 0 },
       { tab: 'tapDance', key: 'tapHold', label: t('editor.keymap.tapHoldLabel'), onClick: () => openSettings('tapHold'), testId: 'tap-hold-settings-btn', enabled: tapHoldSupported },
       { tab: 'system', key: 'mouseKeys', label: t('editor.keymap.mouseKeysLabel'), onClick: () => openSettings('mouseKeys'), testId: 'mouse-keys-settings-btn', enabled: mouseKeysSupported },
       { tab: 'modifiers', key: 'graveEscape', label: t('editor.keymap.graveEscapeLabel'), onClick: () => openSettings('graveEscape'), testId: 'grave-escape-settings-btn', enabled: graveEscapeSupported },
       { tab: 'modifiers', key: 'oneShotKeys', label: t('editor.keymap.oneShotKeysLabel'), onClick: () => openSettings('oneShotKeys'), testId: 'one-shot-keys-settings-btn', enabled: oneShotKeysSupported },
       { tab: 'behavior', key: 'magic', label: t('editor.keymap.magicLabel'), onClick: () => openSettings('magic'), testId: 'magic-settings-btn', enabled: magicSupported },
       { tab: 'behavior', key: 'autoshift', label: t('editor.keymap.autoShiftLabel'), onClick: () => openSettings('autoShift'), testId: 'auto-shift-settings-btn', enabled: autoShiftSupported },
-      { tab: 'macro', key: 'macroJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => void macroJsonGate.guardAll(async () => setShowMacroJsonEditor(true)), testId: 'macro-json-editor-btn', enabled: !!deserializedMacros && deserializedMacros.length > 0 },
-      { tab: 'combo', key: 'comboJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => setShowComboJsonEditor(true), testId: 'combo-json-editor-btn', enabled: !!comboEntries && comboEntries.length > 0 },
+      { tab: 'macro', key: 'macroJsonEditor', label: t('editor.tapDance.editJson'), onClick: macroJson.openGated, testId: 'macro-json-editor-btn', enabled: !!deserializedMacros && deserializedMacros.length > 0 },
+      { tab: 'combo', key: 'comboJsonEditor', label: t('editor.tapDance.editJson'), onClick: comboJson.open, testId: 'combo-json-editor-btn', enabled: !!comboEntries && comboEntries.length > 0 },
       { tab: 'combo', key: 'combo', label: t('common.configuration'), onClick: () => openSettings('combo'), testId: 'combo-settings-btn', enabled: comboSettingsSupported },
-      { tab: 'keyOverride', key: 'koJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => setShowKoJsonEditor(true), testId: 'ko-json-editor-btn', enabled: !!keyOverrideEntries && keyOverrideEntries.length > 0 },
-      { tab: 'altRepeatKey', key: 'arkJsonEditor', label: t('editor.tapDance.editJson'), onClick: () => setShowArkJsonEditor(true), testId: 'ark-json-editor-btn', enabled: !!altRepeatKeyEntries && altRepeatKeyEntries.length > 0 },
+      { tab: 'keyOverride', key: 'koJsonEditor', label: t('editor.tapDance.editJson'), onClick: koJson.open, testId: 'ko-json-editor-btn', enabled: !!keyOverrideEntries && keyOverrideEntries.length > 0 },
+      { tab: 'altRepeatKey', key: 'arkJsonEditor', label: t('editor.tapDance.editJson'), onClick: arkJson.open, testId: 'ark-json-editor-btn', enabled: !!altRepeatKeyEntries && altRepeatKeyEntries.length > 0 },
       { tab: 'lighting', key: 'lighting', label: t('common.configuration'), onClick: onOpenLighting, testId: 'lighting-settings-btn', enabled: !!onOpenLighting },
       { tab: 'behavior', key: 'keychron', label: t('keychron.settings', 'Keychron'), onClick: onOpenKeychron, testId: 'keychron-settings-btn', enabled: Boolean(onOpenKeychron) },
       { tab: 'lighting', key: 'keychron-rgb', label: t('keychron.rgb', 'Keychron RGB'), onClick: onOpenKeychronRgb, testId: 'keychron-rgb-settings-btn', enabled: Boolean(onOpenKeychronRgb) },
@@ -669,285 +502,169 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
       )
     }
     return content
-  }, [tapDanceEntries, comboEntries, keyOverrideEntries, altRepeatKeyEntries, deserializedMacros, tapHoldSupported, mouseKeysSupported, magicSupported, autoShiftSupported, graveEscapeSupported, oneShotKeysSupported, comboSettingsSupported, onOpenLighting, onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronSocd, onOpenKeychronFlasher, t, openSettings])
+  }, [tapDanceEntries, comboEntries, keyOverrideEntries, altRepeatKeyEntries, deserializedMacros, tapHoldSupported, mouseKeysSupported, magicSupported, autoShiftSupported, graveEscapeSupported, oneShotKeysSupported, comboSettingsSupported, onOpenLighting, t, openSettings, tdJson.open, comboJson.open, koJson.open, arkJson.open, macroJson.openGated, onOpenKeychron, onOpenKeychronRgb, onOpenKeychronAnalog, onOpenKeychronSocd, onOpenKeychronFlasher])
 
   const tabContentOverride = useTileContentOverride({
     tapDanceEntries,
     deserializedMacros,
-    onSelect: handleKeycodeSelect,
+    // Same simulation-tab read-only gate as the picker's own
+    // onKeycodeSelect below — the "configured" tile overlay is another
+    // click-driven edit entry point into the shared selection state.
+    // `useTileContentOverride`'s own `onSelect` is optional, so `undefined`
+    // is enough (it falls back to its own internal no-op).
+    onSelect: packTabReadOnly ? undefined : gatedHandleKeycodeSelect,
     settings: { comboEntries, onOpenCombo, keyOverrideEntries, onOpenKeyOverride, altRepeatKeyEntries, onOpenAltRepeatKey },
   })
 
-  // For file/device mode, build keycodes per-layer on the fly
-  const filePickerKeycodes = useMemo(() => {
-    if (!pickerFileData) return pickerKeycodes
-    const remap = remapLabel ?? ((id: string) => id)
-    const keycodes = new Map<string, string>()
-    for (const [key, code] of pickerFileData.keymap) {
-      const [l, r, c] = key.split(',')
-      if (Number(l) === pickerLayer) keycodes.set(posKey(Number(r), Number(c)), remap(serialize(code)))
-    }
-    return keycodes
-  }, [pickerFileData, pickerLayer, remapLabel, pickerKeycodes])
-
-  // Convert picker selected indices to position strings for keyboard widget highlight
-  const pickerHighlightPositions = useMemo(() => {
-    if (pickerSelectedIndices.size === 0) return undefined
-    const keys = pickerFileData ? pickerFileData.layout.keys : layout?.keys ?? []
-    const sourceKeymap = pickerFileData ? pickerFileData.keymap : keymap
-    const positions = new Set<string>()
-    let idx = 0
-    for (const key of keys) {
-      if (key.row == null || key.col == null) continue
-      if (!sourceKeymap.has(`${pickerLayer},${key.row},${key.col}`)) continue
-      if (pickerSelectedIndices.has(idx)) positions.add(`${key.row},${key.col}`)
-      idx++
-    }
-    return positions.size > 0 ? positions : undefined
-  }, [pickerSelectedIndices, pickerFileData, layout, keymap, pickerLayer])
-
   if (!layout) return <div className="p-4 text-content-muted">{t('common.loading')}</div>
+
+  const applyButtonNode = onRequestKeymapApply ? (
+    <span className="flex items-center gap-2">
+      <button
+        type="button"
+        className={BTN_PRIMARY_FOOTER}
+        onClick={onRequestKeymapApply}
+        disabled={!!keymapApplyBusy}
+        data-testid="keymap-pack-apply-button"
+      >
+        {t('common.apply')}
+      </button>
+      {keymapApplyError && (
+        <span className="text-xs text-danger" data-testid="keymap-apply-error">
+          {t('keyLabels.keymapApply.errorPartial')}
+        </span>
+      )}
+    </span>
+  ) : undefined
 
   function layerLabel(layer: number): string {
     return layerNames?.[layer] || t('editor.keymap.layerN', { n: layer })
   }
 
-  // Layout picker: keyboard-as-keycode-picker shown inside the picker panel
-  const pickerData = pickerFileData
-    ? { keys: pickerFileData.layout.keys, keycodes: pickerKeycodes, encoderKeycodes: pickerEncoderKeycodes, remapped: pickerRemapped, layoutOpts: pickerFileData.layoutOptions, totalLayers: pickerFileData.layers, names: pickerFileData.layerNames }
-    : { keys: layout.keys, keycodes: pickerKeycodes, encoderKeycodes: pickerEncoderKeycodes, remapped: pickerRemapped, layoutOpts: effectiveLayoutOptions, totalLayers: layers, names: layerNames }
-
-  const pickerEffectiveScale = pickerFileData ? (pickerScale ?? scaleProp) : scaleProp
-  const activPickerKeycodes = pickerFileData ? filePickerKeycodes : pickerKeycodes
-
-  const layerBtnClass = (active: boolean) =>
-    `min-w-7 max-w-20 shrink-0 truncate rounded-md border px-1.5 py-1 text-center text-xs font-semibold tabular-nums transition-colors ${
-      active ? 'border-accent bg-accent text-content-inverse' : 'border-edge bg-surface/20 text-content-muted hover:bg-surface-dim'
-    }`
-  const sourceBtnClass = (active: boolean) =>
-    `rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-      active ? 'bg-surface-dim text-content' : 'text-content-muted hover:text-content hover:bg-surface-dim/50'
-    }`
-
-  const pickerBrowseMode = (pickerSource === 'device' && deviceBrowsing) || (pickerSource === 'file' && !pickerFileData)
-
-  const layoutPickerContent = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
-        {pickerSource === 'device' && deviceBrowsing ? (
-          /* --- Device browse view --- */
-          <div className="mx-auto flex w-full max-w-md flex-col px-3 py-3">
-            <div className="flex min-h-device-list max-h-device-list flex-col gap-1.5 overflow-y-auto pb-2 pr-1">
-              <span className="mb-1 text-xs text-content-secondary">{t('editor.keymap.pickerCurrentState')}</span>
-              {probeStatus === 'probing' ? (
-                <p className="py-4 text-center text-xs text-content-muted">{t('editor.keymap.pickerProbing')}</p>
-              ) : probeStatus === 'error' ? (
-                <p className="py-4 text-center text-xs text-danger">{t('editor.keymap.pickerProbeError')}</p>
-              ) : devices?.length ? devices.map((d) => (
-                <button key={`${d.vendorId}:${d.productId}:${d.serialNumber}`} type="button"
-                  className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-surface-dim ${isConnectedDevice(d) ? 'border-accent/40 bg-accent/5' : 'border-edge'}`}
-                  onClick={() => handleDeviceSelect(d)}>
-                  <span className="font-medium text-content">{d.productName || `${d.vendorId.toString(16)}:${d.productId.toString(16)}`}</span>
-                  <span className="text-xs text-content-muted">›</span>
-                </button>
-              )) : (
-                <p className="py-4 text-center text-xs text-content-muted">{t('editor.keymap.pickerNoDevices')}</p>
-              )}
-            </div>
-            <div className="mt-2 rounded-lg border border-dashed border-transparent px-3 py-2 text-center text-xs invisible">&#8203;</div>
-          </div>
-        ) : pickerSource === 'file' && !pickerFileData ? (
-          /* --- File browse view --- */
-          <div className="mx-auto flex w-full max-w-md flex-col px-3 py-3">
-            <div className="flex min-h-device-list max-h-device-list flex-col gap-1.5 overflow-y-auto pb-2 pr-1">
-            {pickerLoadError && (
-              <div className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
-                {pickerLoadError}
-              </div>
-            )}
-            {fileBrowseView === 'list' && (
-              <span className="mb-1 text-xs text-content-secondary">{t('editor.keymap.pickerSavedFiles')}</span>
-            )}
-            {fileBrowseView === 'entries' && (
-              <button type="button" className="mb-2 self-start text-xs text-content-secondary hover:text-content"
-                onClick={() => { setFileBrowseView('list'); setSelectedFileUid(null); setPickerLoadError(null) }}>
-                ← {t('common.back')}
-              </button>
-            )}
-            {fileBrowseView === 'list' ? (
-              storedKeyboards.length > 0 ? storedKeyboards.map((kb) => (
-                <button key={kb.uid} type="button"
-                  className="flex items-center justify-between rounded-lg border border-edge px-3 py-2 text-left text-sm transition-colors hover:bg-surface-dim"
-                  onClick={() => { setSelectedFileUid(kb.uid); setFileBrowseView('entries'); setPickerLoadError(null) }}>
-                  <span className="font-medium text-content">{kb.name}</span>
-                  <span className="text-xs text-content-muted">›</span>
-                </button>
-              )) : (
-                <p className="py-4 text-center text-xs text-content-muted">{t('editor.keymap.pickerNoSavedFiles')}</p>
-              )
-            ) : (
-              storedEntries.length > 0 ? storedEntries.map((entry) => (
-                <button key={entry.id} type="button"
-                  className="flex flex-col rounded-lg border border-edge px-3 py-2 text-left text-sm transition-colors hover:bg-surface-dim"
-                  onClick={() => handleLoadSnapshotEntry(selectedFileUid!, entry.id)}>
-                  <span className="font-medium text-content">{entry.label || entry.filename}</span>
-                  <span className="text-xs text-content-muted">{new Date(entry.savedAt).toLocaleString()}</span>
-                </button>
-              )) : (
-                <p className="py-4 text-center text-xs text-content-muted">{t('editor.keymap.pickerNoEntries')}</p>
-              )
-            )}
-            </div>
-            <button type="button"
-              className="mt-2 rounded-lg border border-dashed border-edge px-3 py-2 text-center text-xs text-content-muted transition-colors hover:border-edge hover:bg-surface-dim hover:text-content"
-              onClick={handleLoadPickerFile}>
-              {t('editor.keymap.pickerLoadFile')}
-            </button>
-          </div>
-        ) : (
-          /* --- Keyboard view (current / loaded file / probed device) --- */
-          <div ref={pickerContainerRef} className="picker-hover-keys relative flex h-full min-h-0 items-center justify-center">
-            <KeyboardPane
-              paneId="secondary" isActive={true}              keys={pickerData.keys} keycodes={activPickerKeycodes} encoderKeycodes={pickerData.encoderKeycodes}
-              selectedKey={null} selectedEncoder={null} selectedMaskPart={false} selectedKeycode={null}
-              remappedKeys={pickerData.remapped} multiSelectedKeys={pickerHighlightPositions}
-              layoutOptions={pickerData.layoutOpts} scale={pickerEffectiveScale}
-              layerLabel={(pickerData.names?.[pickerLayer] || t('editor.keymap.layerN', { n: pickerLayer })) + (pickerFileData ? ` — ${pickerFileData.name}` : '')}
-              layerLabelTestId="picker-layer-label"
-              onKeyClick={handlePickerKeyClick}
-              onKeyHover={handlePickerHover}
-              onKeyHoverEnd={handlePickerHoverEnd}
-            />
-            {pickerTooltip && (
-              <div
-                className="pointer-events-none absolute z-50 rounded-md border border-edge bg-surface-alt px-2.5 py-1.5 shadow-lg"
-                style={{ top: pickerTooltip.top - 4, left: pickerTooltip.left, transform: 'translate(-50%, -100%)' }}
-              >
-                <div className="text-2xs leading-snug text-content-muted whitespace-nowrap">{pickerTooltip.keycode}</div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center justify-between px-2 pb-1">
-        <div className="flex items-center gap-1">
-          <button type="button" className={sourceBtnClass(pickerSource === 'device')}
-            onClick={() => {
-              setPickerSource('device'); setPickerLayer(0); setPickerFileData(null); setPickerScale(undefined); setDeviceBrowsing(true); setProbeStatus('idle'); setPickerLoadError(null)
-            }}>
-            {pickerSource === 'device' && !deviceBrowsing
-              ? t('editor.keymap.pickerBackToDevices')
-              : t('editor.keymap.pickerSourceDevice')}
-          </button>
-          <button type="button" className={sourceBtnClass(pickerSource === 'file')}
-            onClick={() => { setPickerSource('file'); setPickerLayer(0); setPickerFileData(null); setPickerScale(undefined); setFileBrowseView('list'); setDeviceBrowsing(false); setPickerLoadError(null) }}>
-            {pickerSource === 'file' && pickerFileData ? t('editor.keymap.pickerBackToFiles') : t('editor.keymap.pickerSourceFile')}
-          </button>
-        </div>
-        <div className={`flex items-center gap-1 ${pickerBrowseMode ? 'invisible' : ''}`}>
-          <Tooltip content={t('editor.keymap.zoomOut')}>
-            <button type="button" aria-label={t('editor.keymap.zoomOut')}
-              className="rounded-md p-1 text-content-muted transition-colors hover:bg-surface-dim hover:text-content disabled:opacity-30 disabled:pointer-events-none"
-              disabled={pickerEffectiveScale <= MIN_SCALE}
-              onClick={() => { if (pickerFileData) setPickerScale(Math.max(MIN_SCALE, +(pickerEffectiveScale - 0.1).toFixed(1))); else onScaleChange?.(-0.1) }}>
-              <ZoomOut size={ICON_SM} aria-hidden="true" />
-            </button>
-          </Tooltip>
-          <ScaleInput scale={pickerEffectiveScale} onScaleChange={(delta) => {
-            if (pickerFileData) setPickerScale(Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(pickerEffectiveScale + delta).toFixed(1))))
-            else onScaleChange?.(delta)
-          }} />
-          <Tooltip content={t('editor.keymap.zoomIn')}>
-            <button type="button" aria-label={t('editor.keymap.zoomIn')}
-              className="rounded-md p-1 text-content-muted transition-colors hover:bg-surface-dim hover:text-content disabled:opacity-30 disabled:pointer-events-none"
-              disabled={pickerEffectiveScale >= MAX_SCALE}
-              onClick={() => { if (pickerFileData) setPickerScale(Math.min(MAX_SCALE, +(pickerEffectiveScale + 0.1).toFixed(1))); else onScaleChange?.(0.1) }}>
-              <ZoomIn size={ICON_SM} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        </div>
-        <div className={`flex min-w-0 items-center gap-1 overflow-x-auto ${pickerBrowseMode ? 'invisible' : ''}`}>
-          {Array.from({ length: pickerData.totalLayers }, (_, i) => {
-            const label = pickerData.names?.[i]?.trim()
-            return (
-              <Tooltip key={i} content={label} disabled={!label}>
-                <button type="button" className={layerBtnClass(pickerLayer === i)}
-                  onClick={() => { setPickerLayer(i); multiSelect.clearPickerSelection() }}>
-                  {label || i}
-                </button>
-              </Tooltip>
-            )
-          })}
-        </div>
-      </div>
-    </div>
-  )
-
-  const zoomButtonClass = `${toggleButtonClass(false)} disabled:opacity-30 disabled:pointer-events-none`
-
-  const toolbar = (
-    <div className="flex shrink-0 flex-col items-center gap-3 self-stretch" style={{ width: PANEL_COLLAPSED_WIDTH }}>
-      {!typingTestMode && (
-        <>
-          <Tooltip content={t('editor.keymap.undo')} side="right">
-            <button type="button" data-testid="undo-button" aria-label={t('editor.keymap.undo')} className={zoomButtonClass} disabled={!history.canUndo} onClick={() => void handleUndo()}>
-              <Undo2 size={ICON_MD} aria-hidden="true" />
-            </button>
-          </Tooltip>
-          <Tooltip content={t('editor.keymap.redo')} side="right">
-            <button type="button" data-testid="redo-button" aria-label={t('editor.keymap.redo')} className={zoomButtonClass} disabled={!history.canRedo} onClick={() => void handleRedo()}>
-              <Redo2 size={ICON_MD} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        </>
-      )}
-      <div className="flex-1" />
-      {!typingTestMode && onScaleChange && (
-        <>
-          <Tooltip content={t('editor.keymap.zoomIn')} side="right">
-            <button type="button" data-testid="zoom-in-button" aria-label={t('editor.keymap.zoomIn')} className={zoomButtonClass} disabled={scaleProp >= MAX_SCALE} onClick={() => onScaleChange(0.1)}>
-              <ZoomIn size={ICON_MD} aria-hidden="true" />
-            </button>
-          </Tooltip>
-          <ScaleInput scale={scaleProp} onScaleChange={onScaleChange} />
-          <Tooltip content={t('editor.keymap.zoomOut')} side="right">
-            <button type="button" data-testid="zoom-out-button" aria-label={t('editor.keymap.zoomOut')} className={zoomButtonClass} disabled={scaleProp <= MIN_SCALE} onClick={() => onScaleChange(-0.1)}>
-              <ZoomOut size={ICON_MD} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        </>
-      )}
-      <div className="flex-1" />
-    </div>
-  )
+  // Base tab's data source (Plan-qwerty-select-no-rewrite v7): the SAME
+  // "no tabs" `<KeyboardPane>` JSX below renders both the plain (no-tabs)
+  // state and `showPackTabs && packTab === 'base'` — only these source
+  // variables differ between the two. Raw/identity (`baseLayer*`,
+  // `EMPTY_REMAPPED`, `undefined` remapLabel) while on the Base tab;
+  // otherwise the normal `remapLabel`/`isRemapped`-driven values every
+  // other state (JIS, QWERTY, View Matrix, ...) already used.
+  const onBaseTab = showPackTabs && packTab === 'base'
+  const primaryKeycodes = onBaseTab ? baseLayerKeycodes : layerKeycodes
+  const primaryEncoderKeycodes = onBaseTab ? baseLayerEncoderKeycodes : layerEncoderKeycodes
+  const primaryRemappedKeys = onBaseTab ? EMPTY_REMAPPED : remappedKeys
+  const primaryRemappedEncoders = onBaseTab ? EMPTY_REMAPPED : layerEncoderRemapped
+  const primaryRemapLabel = onBaseTab ? undefined : remapLabel
 
   return (
     <div className={`flex min-h-0 flex-1 flex-col ${typingTestMode && typingTestViewOnly ? '' : 'gap-3'}`}>
       <div
-        className={typingTestMode && typingTestViewOnly ? 'flex flex-1 items-stretch gap-2' : 'flex items-start gap-2 overflow-auto'}
+        className={typingTestMode
+          ? (typingTestViewOnly ? 'flex flex-1 items-stretch gap-2' : 'flex min-h-0 flex-1 items-stretch gap-2 overflow-auto')
+          // View Matrix mode hides the keycode picker row entirely (see
+          // below), so this row alone must fill the remaining vertical
+          // space it would otherwise have shared with the picker.
+          : viewMatrixMode.active ? 'flex min-h-0 flex-1 items-start gap-2 overflow-auto' : 'flex items-start gap-2 overflow-auto'}
         style={!typingTestMode && keyboardAreaMinHeight ? { minHeight: keyboardAreaMinHeight } : undefined}
         onClick={!typingTestMode ? handleDeselectClick : undefined}
       >
-        {!(typingTestMode && typingTestViewOnly) && toolbar}
-        <div className={typingTestMode ? 'flex min-w-0 flex-1 flex-col gap-3' : 'flex min-w-0 flex-1 items-center justify-center gap-4 overflow-auto'}>
+        {/* The toolbar (undo/redo/zoom) is empty in typing-test mode — all its
+            controls are editor-only — so drop the whole 50px column there.
+            View Matrix mode also drops it: undo/redo are hidden (keymap
+            edits are disabled for the mode's duration) and zoom relocates
+            to a row under the keymap pane (see below), so nothing would be
+            left in the column. */}
+        {!typingTestMode && !viewMatrixMode.active && (
+          <KeymapToolbar
+            typingTestMode={typingTestMode} viewMatrixActive={viewMatrixMode.active}
+            canUndo={history.canUndo} canRedo={history.canRedo}
+            onUndo={handleUndo} onRedo={handleRedo}
+            scale={scaleProp} onScaleChange={onScaleChange}
+          />
+        )}
+        {/* View Matrix mode's left pane — replaces the layer selector slot
+            that normally sits below, since this row is now the only one
+            rendered (the keycode picker row is hidden for the mode's
+            duration). Its Edit toggle (rendered ON) is the sole way back
+            to normal editing now that the overlay panel's own toggle is
+            hidden along with the rest of the picker. */}
+        {!typingTestMode && viewMatrixMode.active && (
+          <ViewMatrixPanel
+            onReset={() => onViewMatrixChange?.(undefined)}
+            onToggle={handleToggleViewMatrixMode}
+            selectionCount={viewMatrixSelectedPositions.length}
+            effectiveRow={viewMatrixEffectiveSingle?.row ?? 0}
+            effectiveCol={viewMatrixEffectiveSingle?.col ?? 0}
+            matrixRows={viewMatrixAxisOptionCount}
+            matrixCols={viewMatrixAxisOptionCount}
+            onAxisChange={handleViewMatrixAxisChange}
+          />
+        )}
+        {/* Single container for the active keymap surface (TypingTestPane OR
+            KeyboardPane — only one renders at a time). `remap-simulated`
+            (style.css) overrides `--key-label-remap` for every descendant
+            KeyWidget/EncoderWidget, so a permutation pack's Display Only
+            tint is a pure CSS cascade override rather than a `remapKind`
+            prop threaded through KeyboardPane/TypingTestPane/KeyboardWidget/
+            KeyWidget/EncoderWidget. The key picker and popover render as
+            siblings further down (or in the sibling `TabbedKeycodes` block),
+            never inside this container, so their "actual" tint is
+            unaffected — see `useDevicePrefs.ts`'s `remapKind` doc comment
+            for the simulated/actual decision itself. */}
+        <div
+          data-testid="keymap-surface"
+          className={`${typingTestMode
+            ? 'flex min-h-0 min-w-0 flex-1 flex-col gap-3'
+            // View Matrix mode stacks the keymap above its relocated zoom
+            // row (sketch: "keymap" over "zoom controls" in the right
+            // column); normal mode keeps the single-child centered row.
+            : viewMatrixMode.active ? 'flex min-w-0 flex-1 flex-col items-center justify-center gap-2 overflow-auto' : 'flex min-w-0 flex-1 items-center justify-center gap-4 overflow-auto'
+          }${remapKind === 'simulated' && (!showPackTabs || packTab === 'pack') ? ' remap-simulated' : ''}`}
+        >
           {typingTestMode ? (
             <TypingTestPane
               typingTest={typingTest}
               onConfigChange={handleTypingTestConfigChange}
+              monkeytypeConfig={typingTestMonkeytypeConfig}
               onLanguageChange={handleTypingTestLanguageChange}
               layers={layers}
               layerNames={layerNames}
               typingTestHistory={typingTestHistory}
+              onRenameTypingTestResult={onRenameTypingTestResult}
+              onDeleteTypingTestResult={onDeleteTypingTestResult}
               deviceName={deviceName}
               pressedKeys={pressedKeys}
               keycodes={typingTestKeycodes}
               encoderKeycodes={typingTestEncoderKeycodes}
               remappedKeys={typingTestRemapped}
+              remappedEncoders={typingTestEncoderRemapped}
+              remapLabel={remapLabel}
               layoutOptions={effectiveLayoutOptions}
               scale={scaleProp}
               keys={layout.keys}
               layerLabel={layerLabel(typingTest.effectiveLayer)}
               contentRef={keyboardContentRef}
+              hasSavedMemory={!!savedTypingTestMemory}
+              displayLines={typingTestDisplayLines}
+              fontSize={typingTestFontSize}
+              onDisplayLinesChange={onTypingTestDisplayLinesChange}
+              onFontSizeChange={onTypingTestFontSizeChange}
+              hideKeymap={typingTestHideKeymap}
+              hideStatsRow={typingTestHideStatsRow}
+              hideControls={typingTestHideControls}
+              saveUnnamed={typingTestSaveUnnamed}
+              finishedResult={finishedResult}
+              onNameFinishedResult={nameFinishedResult}
+              comparisonBaselines={typingTestComparisonBaselines}
+              onToggleHideKeymap={onTypingTestHideKeymapChange}
+              onToggleHideStatsRow={onTypingTestHideStatsRowChange}
+              onToggleHideControls={onTypingTestHideControlsChange}
+              onToggleSaveUnnamed={onTypingTestSaveUnnamedChange}
+              onComparisonBaselineChange={onTypingTestComparisonBaselineChange}
+              settingsPanelOpen={typingTestSettingsPanelOpen}
+              onToggleSettingsPanel={onTypingTestSettingsPanelOpenChange}
+              onPauseTest={pauseTypingTest}
+              onResumeTest={resumeTypingTest}
+              onRestartTestFromStart={restartTypingTestFromStart}
               viewOnly={typingTestViewOnly}
               onViewOnlyChange={onTypingTestViewOnlyChange}
               viewOnlyWindowSize={typingTestViewOnlyWindowSize}
@@ -962,23 +679,109 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
               onHeatmapWindowMinChange={onTypingHeatmapWindowMinChange}
               monitorAppEnabled={typingMonitorAppEnabled}
               onMonitorAppEnabledChange={onTypingMonitorAppEnabledChange}
+              trayResident={typingTrayResident}
+              onTrayResidentChange={onTypingTrayResidentChange}
+              startInTray={typingStartInTray}
+              onStartInTrayChange={onTypingStartInTrayChange}
               menuTab={typingViewMenuTab}
               onMenuTabChange={onTypingViewMenuTabChange}
               onViewAnalytics={onViewAnalytics}
               keyboardUid={keyboardUid}
             />
           ) : (
-            <KeyboardPane
-              paneId="primary" isActive={true}              keys={layout.keys} keycodes={layerKeycodes} encoderKeycodes={layerEncoderKeycodes}
-              selectedKey={selectedKey} selectedEncoder={selectedEncoder} selectedMaskPart={selectedMaskPart} selectedKeycode={selectedKeycode}
-              pressedKeys={matrixMode ? pressedKeys : undefined} everPressedKeys={matrixMode ? everPressedKeys : undefined}
-              remappedKeys={remappedKeys} multiSelectedKeys={multiSelectedKeys}
-              layoutOptions={effectiveLayoutOptions} scale={scaleProp}
-              layerLabel={layerLabel(currentLayer)} layerLabelTestId="layer-label"
-              onKeyClick={handleKeyClick} onKeyDoubleClick={handleKeyDoubleClick}
-              onEncoderClick={handleEncoderClick} onEncoderDoubleClick={handleEncoderDoubleClick}
-              onDeselect={handleDeselect} contentRef={keyboardContentRef}
-            />
+            <>
+              {/* Simulation/Base tabs (Plan-qwerty-select-no-rewrite v7):
+                  the vertical tab strip sits to the RIGHT of the keymap
+                  pane, attached flush to its edge (index/sticky-note style
+                  — see `KeymapPackTabs`). The wrapping `flex items-stretch`
+                  div with no gap is what keeps the strip touching the pane
+                  regardless of this row's own `gap-4` (which only spaces
+                  this pane+tabs unit from its own siblings, e.g. the
+                  overlay-panel spacer). View Matrix mode is excluded from
+                  `showPackTabs` above, so it can never overlap with either
+                  tab. */}
+              <div className="flex items-stretch">
+                {showPackTabs && packTab === 'pack' ? (
+                  // Simulation pane: display data only — no selection props,
+                  // no click/double-click/deselect handlers at all. `readOnly`
+                  // (always `true` here, not a ternary) already makes
+                  // `KeyboardWidget` null out every handler it's given
+                  // regardless, and `KeyboardPane`'s own deselect-on-
+                  // background-click checks `!readOnly` too — omitting the
+                  // handlers here as well means read-only holds by
+                  // construction, not by three separate `packTab === 'pack'`
+                  // checks that could drift out of sync.
+                  <KeyboardPane
+                    paneId="primary" isActive={true}
+                    keys={layout.keys} keycodes={layerKeycodes} encoderKeycodes={layerEncoderKeycodes}
+                    selectedKey={null} selectedEncoder={null} selectedMaskPart={false} selectedKeycode={null}
+                    pressedKeys={matrixMode ? pressedKeys : undefined} everPressedKeys={matrixMode ? everPressedKeys : undefined}
+                    remappedKeys={remappedKeys} remappedEncoders={layerEncoderRemapped}
+                    layoutOptions={effectiveLayoutOptions} scale={scaleProp}
+                    remapLabel={remapLabel}
+                    layerLabel={layerLabel(currentLayer)} layerLabelTestId="layer-label"
+                    preview
+                    footerExtra={applyButtonNode}
+                    readOnly
+                    contentRef={keyboardContentRef}
+                  />
+                ) : (
+                  // Also the "no tabs" pane (JIS/QWERTY/typing-test-adjacent
+                  // states) — the `showPackTabs && packTab === 'base'`
+                  // case reuses this exact block rather than a second copy,
+                  // swapping only the keycode/remap source variables below
+                  // (`primaryKeycodes` etc.) for the Base tab's raw data.
+                  <KeyboardPane
+                    paneId="primary" isActive={true}              keys={layout.keys} keycodes={primaryKeycodes} encoderKeycodes={primaryEncoderKeycodes}
+                    selectedKey={selectedKey} selectedEncoder={selectedEncoder} selectedMaskPart={selectedMaskPart} selectedKeycode={selectedKeycode}
+                    pressedKeys={matrixMode ? pressedKeys : undefined} everPressedKeys={matrixMode ? everPressedKeys : undefined}
+                    remappedKeys={primaryRemappedKeys} remappedEncoders={primaryRemappedEncoders} flash={flash} multiSelectedKeys={viewMatrixMode.active ? viewMatrixMode.selectedKeys : multiSelectedKeys}
+                    layoutOptions={effectiveLayoutOptions} scale={scaleProp}
+                    labelOverrides={viewMatrixLabelOverrides} keyColors={viewMatrixDuplicateKeyColors} remapLabel={primaryRemapLabel}
+                    layerLabel={viewMatrixMode.active ? undefined : layerLabel(currentLayer)} layerLabelTestId="layer-label"
+                    onKeyClick={viewMatrixMode.active ? handleViewMatrixKeyClick : handleKeyClick}
+                    onKeyDoubleClick={viewMatrixMode.active ? undefined : handleKeyDoubleClick}
+                    onEncoderClick={viewMatrixMode.active ? undefined : handleEncoderClick}
+                    onEncoderDoubleClick={viewMatrixMode.active ? undefined : handleEncoderDoubleClick}
+                    onDeselect={viewMatrixMode.active ? viewMatrixMode.clearSelection : handleDeselect} contentRef={keyboardContentRef}
+                  />
+                )}
+                {showPackTabs && (
+                  <KeymapPackTabs activeTab={packTab} onTabChange={handlePackTabChange} packName={keymapPackName ?? ''} />
+                )}
+              </div>
+              {/* View Matrix mode's relocated zoom row — same controls as
+                  the normal-mode toolbar, moved below the keymap pane —
+                  plus the same Ctrl/Shift multi-select hint the keycode
+                  picker shows in normal mode (reused key: the picker is
+                  hidden entirely for the mode's duration, but the
+                  Ctrl+click / Shift+click gestures it describes still
+                  drive this mode's own multi-selection). */}
+              {viewMatrixMode.active && (
+                <div className="flex flex-col items-center gap-1">
+                  <p className="text-xs text-content-muted">{t('editor.keymap.pickerHint')}</p>
+                  {/* Same arrangement as the picker Keyboard tab's zoom
+                      row: ZoomOut, scale, ZoomIn in ghost styling. */}
+                  {onScaleChange && (
+                    <div className="flex items-center gap-1">
+                      <Tooltip content={t('editor.keymap.zoomOut')}>
+                        <button type="button" data-testid="zoom-out-button" aria-label={t('editor.keymap.zoomOut')}
+                          className={ghostZoomButtonClass} disabled={scaleProp <= MIN_SCALE} onClick={() => onScaleChange(-0.1)}>
+                          <ZoomOut size={ICON_SM} aria-hidden="true" />
+                        </button>
+                      </Tooltip>
+                      <ScaleInput scale={scaleProp} onScaleChange={onScaleChange} />
+                      <Tooltip content={t('editor.keymap.zoomIn')}>
+                        <button type="button" data-testid="zoom-in-button" aria-label={t('editor.keymap.zoomIn')}
+                          className={ghostZoomButtonClass} disabled={scaleProp >= MAX_SCALE} onClick={() => onScaleChange(0.1)}>
+                          <ZoomIn size={ICON_SM} aria-hidden="true" />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
         {!typingTestMode && <div style={{ width: PANEL_COLLAPSED_WIDTH }} className="shrink-0" />}
@@ -994,10 +797,16 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
           onClose={() => setPopoverState(null)} quickSelect={quickSelect}
           previousKeycode={popoverUndoKeycode} onUndo={handlePopoverUndo}
           nextKeycode={popoverRedoKeycode} onRedo={handlePopoverRedo}
+          remapLabel={pickerRemapLabel}
         />
       )}
 
-      {!typingTestMode && (
+      {/* The entire keycode picker area — tabs, tiles, and the overlay panel
+          (incl. its own View Matrix Edit/Done button) — is hidden while
+          View Matrix mode is active; ViewMatrixPanel above is the mode's
+          only surface, and its own toggle is the sole way back to normal
+          editing. */}
+      {!typingTestMode && !viewMatrixMode.active && (
         <div className="flex min-h-0 flex-1 gap-2">
           {onLayerChange && layers > 1 && (
             <LayerListPanel layers={layers} currentLayer={currentLayer} onLayerChange={onLayerChange}
@@ -1005,14 +814,20 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
           )}
           <TabbedKeycodes
             keyboardPickerContent={layoutPickerContent}
-            onKeycodeSelect={handleKeycodeSelect} onKeycodeMultiSelect={handlePickerMultiSelect}
+            // Simulation tab is completely read-only (Plan-qwerty-select-
+            // no-rewrite v7): no picker click can paste into the shared
+            // selection state, and no picker multi-select can accumulate a
+            // selection that would still be sitting there — pasteable —
+            // once the user switches back to Base.
+            onKeycodeSelect={packTabReadOnly ? undefined : gatedHandleKeycodeSelect}
+            onKeycodeMultiSelect={packTabReadOnly ? undefined : handlePickerMultiSelect}
             pickerSelectedIndices={pickerSelectedIndices}
-            pickerMultiSelectEnabled={!selectedKey && !selectedEncoder}
+            pickerMultiSelectEnabled={!packTabReadOnly && !selectedKey && !selectedEncoder}
             onBackgroundClick={handleDeselect}
             onTabChange={() => { multiSelect.clearPickerSelection() }}
             highlightedKeycodes={configuredKeycodes} maskOnly={isMaskKey} lmMode={isLMMask} showHint={!isMaskKey}
             tabFooterContent={tabFooterContent} tabContentOverride={tabContentOverride}
-            basicViewType={basicViewType} onBasicViewTypeChange={onBasicViewTypeChange} splitKeyMode={splitKeyMode} remapLabel={remapLabel}
+            basicViewType={basicViewType} onBasicViewTypeChange={onBasicViewTypeChange} splitKeyMode={splitKeyMode} remapLabel={pickerRemapLabel}
             tabBarRight={
               <Tooltip content={t('editorSettings.title')}>
                 <button ref={layoutButtonRef} type="button" aria-label={t('editorSettings.title')}
@@ -1032,9 +847,10 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
                 <KeycodesOverlayPanel
                   hasLayoutOptions={hasLayoutOptions} layoutOptions={parsedOptions} layoutValues={layoutValues}
                   onLayoutOptionChange={handleLayoutOptionChange} autoAdvance={autoAdvance} onAutoAdvanceChange={onAutoAdvanceChange}
+                  viewMatrixActive={viewMatrixMode.active} onToggleViewMatrixMode={handleToggleViewMatrixMode}
                   splitKeyMode={splitKeyMode} onSplitKeyModeChange={onSplitKeyModeChange}
                   quickSelect={quickSelect} onQuickSelectChange={onQuickSelectChange}
-                  matrixMode={matrixMode} hasMatrixTester={hasMatrixTester} onToggleMatrix={handleMatrixToggle}
+                  matrixMode={matrixMode} hasMatrixTester={hasMatrixTester} onToggleMatrix={viewMatrixMode.active ? undefined : handleMatrixToggle}
                   unlocked={unlocked ?? false} onLock={onLock} isDummy={isDummy}
                   toolsExtra={toolsExtra} dataPanel={dataPanel}
                   keyEditorZoom={keyEditorZoom} onKeyEditorZoomChange={onKeyEditorZoomChange}
@@ -1046,97 +862,33 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
         </div>
       )}
 
-      {tdModalIndex !== null && tapDanceEntries && onSetTapDanceEntry && (
-        <TapDanceModal index={tdModalIndex} entry={tapDanceEntries[tdModalIndex]}
-          onSave={handleTdModalSave} onClose={handleTdModalClose} isDummy={isDummy}
-          tapDanceEntries={tapDanceEntries} deserializedMacros={deserializedMacros}
-          quickSelect={quickSelect} splitKeyMode={splitKeyMode} basicViewType={basicViewType}
-          vialProtocol={vialProtocol ?? 0}
-          hubOrigin={favHubOrigin} hubNeedsDisplayName={favHubNeedsDisplayName}
-          hubUploading={favHubUploading} hubUploadResult={favHubUploadResult}
-          onUploadToHub={onFavUploadToHub ? (entryId) => onFavUploadToHub('tapDance', entryId) : undefined}
-          onUpdateOnHub={onFavUpdateOnHub ? (entryId) => onFavUpdateOnHub('tapDance', entryId) : undefined}
-          onRemoveFromHub={onFavRemoveFromHub ? (entryId) => onFavRemoveFromHub('tapDance', entryId) : undefined}
-          onRenameOnHub={onFavRenameOnHub} />
-      )}
+      <KeymapEditorModals
+        tdModalIndex={tdModalIndex} tapDanceEntries={tapDanceEntries} onSetTapDanceEntry={onSetTapDanceEntry}
+        handleTdModalSave={handleTdModalSave} handleTdModalClose={handleTdModalClose}
+        macroModalIndex={macroModalIndex} macroBuffer={macroBuffer} macroCount={macroCount}
+        macroBufferSize={macroBufferSize} vialProtocol={vialProtocol} onSaveMacros={onSaveMacros}
+        parsedMacros={parsedMacros} handleMacroModalClose={handleMacroModalClose}
+        unlocked={unlocked} onUnlock={onUnlock} autoAdvance={autoAdvance} layers={layers}
+        isDummy={isDummy} deserializedMacros={deserializedMacros} quickSelect={quickSelect}
+        splitKeyMode={splitKeyMode} basicViewType={basicViewType}
+        favHubOrigin={favHubOrigin} favHubNeedsDisplayName={favHubNeedsDisplayName}
+        favHubUploading={favHubUploading} favHubUploadResult={favHubUploadResult}
+        onFavUploadToHub={onFavUploadToHub} onFavUpdateOnHub={onFavUpdateOnHub}
+        onFavRemoveFromHub={onFavRemoveFromHub} onFavRenameOnHub={onFavRenameOnHub}
+        comboEntries={comboEntries} keyOverrideEntries={keyOverrideEntries} altRepeatKeyEntries={altRepeatKeyEntries}
+        tdJson={tdJson} comboJson={comboJson} koJson={koJson} arkJson={arkJson} macroJson={macroJson}
+        supportedQsids={supportedQsids} qmkSettingsGet={qmkSettingsGet} qmkSettingsSet={qmkSettingsSet}
+        qmkSettingsReset={qmkSettingsReset} onSettingsUpdate={onSettingsUpdate}
+        visibleModals={visibleModals} closeSettings={closeSettings}
+      />
 
-      {macroModalIndex !== null && macroBuffer && macroCount != null && onSaveMacros && (
-        <MacroModal index={macroModalIndex} macroCount={macroCount} macroBufferSize={macroBufferSize ?? 0}
-          macroBuffer={macroBuffer} vialProtocol={vialProtocol ?? 0} onSaveMacros={onSaveMacros}
-          parsedMacros={parsedMacros} onClose={handleMacroModalClose} unlocked={unlocked} onUnlock={onUnlock}
-          isDummy={isDummy} tapDanceEntries={tapDanceEntries} deserializedMacros={deserializedMacros}
-          quickSelect={quickSelect} autoAdvance={autoAdvance} splitKeyMode={splitKeyMode} basicViewType={basicViewType}
-          layers={layers}
-          hubOrigin={favHubOrigin} hubNeedsDisplayName={favHubNeedsDisplayName}
-          hubUploading={favHubUploading} hubUploadResult={favHubUploadResult}
-          onUploadToHub={onFavUploadToHub ? (entryId) => onFavUploadToHub('macro', entryId) : undefined}
-          onUpdateOnHub={onFavUpdateOnHub ? (entryId) => onFavUpdateOnHub('macro', entryId) : undefined}
-          onRemoveFromHub={onFavRemoveFromHub ? (entryId) => onFavRemoveFromHub('macro', entryId) : undefined}
-          onRenameOnHub={onFavRenameOnHub} />
-      )}
-
-      {showTdJsonEditor && tapDanceEntries && tapDanceEntries.length > 0 && (
-        <TapDanceJsonEditor
-          entries={tapDanceEntries}
-          onApply={handleTdJsonApply}
-          onClose={() => setShowTdJsonEditor(false)}
-        />
-      )}
-
-      {showComboJsonEditor && comboEntries && comboEntries.length > 0 && (
-        <JsonEditorModal<ComboEntry[]>
-          title={t('editor.tapDance.editJson')}
-          initialText={comboToJson(comboEntries)}
-          parse={(text) => parseCombo(text, comboEntries.length, t)}
-          onApply={handleComboJsonApply}
-          onClose={() => setShowComboJsonEditor(false)}
-          testIdPrefix="combo-json-editor"
-          exportFileName="combo"
-        />
-      )}
-
-      {showKoJsonEditor && keyOverrideEntries && keyOverrideEntries.length > 0 && (
-        <JsonEditorModal<KeyOverrideEntry[]>
-          title={t('editor.tapDance.editJson')}
-          initialText={keyOverrideToJson(keyOverrideEntries)}
-          parse={(text) => parseKeyOverride(text, keyOverrideEntries.length, t)}
-          onApply={handleKoJsonApply}
-          onClose={() => setShowKoJsonEditor(false)}
-          testIdPrefix="ko-json-editor"
-          exportFileName="ko"
-        />
-      )}
-
-      {showArkJsonEditor && altRepeatKeyEntries && altRepeatKeyEntries.length > 0 && (
-        <JsonEditorModal<AltRepeatKeyEntry[]>
-          title={t('editor.tapDance.editJson')}
-          initialText={altRepeatKeyToJson(altRepeatKeyEntries)}
-          parse={(text) => parseAltRepeatKey(text, altRepeatKeyEntries.length, t)}
-          onApply={handleArkJsonApply}
-          onClose={() => setShowArkJsonEditor(false)}
-          testIdPrefix="ark-json-editor"
-          exportFileName="ark"
-        />
-      )}
-
-      {showMacroJsonEditor && deserializedMacros && deserializedMacros.length > 0 && (
-        <JsonEditorModal<MacroAction[][]>
-          title={t('editor.tapDance.editJson')}
-          initialText={macroToJson(deserializedMacros)}
-          parse={(text) => parseMacro(text, deserializedMacros.length, t)}
-          onApply={handleMacroJsonApply}
-          onClose={() => setShowMacroJsonEditor(false)}
-          testIdPrefix="macro-json-editor"
-          warning={t('editor.macro.unlockWarning')}
-          exportFileName="macro"
-        />
-      )}
-
-      {supportedQsids && qmkSettingsGet && qmkSettingsSet && qmkSettingsReset && (
-        <QmkSettingsModals supportedQsids={supportedQsids} qmkSettingsGet={qmkSettingsGet}
-          qmkSettingsSet={qmkSettingsSet} qmkSettingsReset={qmkSettingsReset}
-          onSettingsUpdate={onSettingsUpdate} visibleModals={visibleModals} onCloseModal={closeSettings} />
-      )}
+      <KeymapApplyConfirmModal
+        open={!!keymapApplyOpen}
+        labelName={keymapApplyLabelName ?? ''}
+        onApply={() => onKeymapApplyConfirm?.()}
+        onCancel={() => onKeymapApplyCancel?.()}
+        busy={!!keymapApplyBusy}
+      />
     </div>
   )
 })

@@ -1,5 +1,5 @@
 {
-  "version": "0.1.3",
+  "version": "0.1.43",
   "name": "Japanese - 紳士",
   "common": {
     "save": "保存を承る",
@@ -18,7 +18,7 @@
     "refreshing": "ただいま再点検中でございます…",
     "disconnect": "お別れ",
     "loading": "ただいま準備を整えております…",
-    "apply": "反映",
+    "apply": "反映する",
     "notConfigured": "未設定でございます",
     "settingsLabel": "設定項目:",
     "configuration": "構成案",
@@ -27,6 +27,7 @@
     "exported": "お届けいたしました",
     "imported": "お受け取りいたしました",
     "load": "拝読",
+    "confirmLoad": "こちらを読み込んでもよろしいでしょうか？",
     "labelPlaceholder": "名札",
     "noLabel": "（名札がございません）",
     "synced": "足並みが揃いました",
@@ -35,7 +36,15 @@
     "installed": "御用意済み",
     "searchPlaceholder": "Pipette Hub を探索いたします（2文字以上にて）…",
     "done": "完了",
-    "edit": "推敲"
+    "edit": "推敲",
+    "sortByName": "御名前",
+    "importing": "ただいまお取り込み中でございます…",
+    "importedNamed": "{{name}} をお受け取りいたしました",
+    "updatedNamed": "{{name}} を更新いたしました",
+    "importBatchFailed_one": "誠に恐縮ながら、{{count}} 件のファイルをお受け取りできませんでした。",
+    "importBatchFailed_other": "誠に恐縮ながら、{{count}} 件のファイルをお受け取りできませんでした。",
+    "importSummary_one": "{{count}} 件のファイルをお受け取りいたしました (成功 {{success}} 件、失敗 {{failure}} 件)。",
+    "importSummary_other": "{{count}} 件のファイルをお受け取りいたしました (成功 {{success}} 件、失敗 {{failure}} 件)。"
   },
   "app": {
     "title": "Pipette",
@@ -66,6 +75,14 @@
   },
   "editor": {
     "autoAdvance": "自動巡回",
+    "viewMatrix": {
+      "label": "座標表",
+      "edit": "推敲",
+      "done": "完了",
+      "rowLabel": "行",
+      "colLabel": "列",
+      "blankOption": "—"
+    },
     "keymap": {
       "title": "地図",
       "layer": "階層 {{number}}",
@@ -90,6 +107,7 @@
       "previousLayers": "前の階層",
       "nextLayers": "次の階層",
       "layerN": "階層 {{n}}",
+      "layerPreview": "下見 - {{label}}",
       "undo": "時を戻す",
       "redo": "やはり進める",
       "zoomIn": "拡大して拝見",
@@ -249,22 +267,109 @@
       "switchToTypingMode": "試練に挑む",
       "exitTypingMode": "試練を終える",
       "restart": "初めから",
+      "nextTest": "次なる試練へ",
+      "complete": "成就",
+      "collapseSettings": "設定を畳む",
+      "expandSettings": "設定を広げる",
+      "keymapToggle": "配列表",
+      "statsToggle": "計測",
+      "controlsToggle": "所作",
+      "hideKeymap": "配列表を隠す",
+      "showKeymap": "配列表を示す",
+      "hideStats": "計測を隠す",
+      "showStats": "計測を示す",
+      "hideControls": "所作を隠す",
+      "showControls": "所作を示す",
+      "saveUnnamedToggle": "名もなきまま保存",
+      "enableSaveUnnamed": "名がなくとも結果を自動で保存いたします",
+      "disableSaveUnnamed": "保存には名を必須といたします",
+      "section": {
+        "settings": "設定",
+        "data": "データ",
+        "view": "見栄え"
+      },
+      "compare": {
+        "button": "比べる",
+        "title": "比較",
+        "previous": "前回",
+        "best": "最善",
+        "average": "平均",
+        "pinned": "結果",
+        "off": "無効",
+        "noResults": "留め置ける結果はまだございません",
+        "colName": "名",
+        "colKeyboard": "機材",
+        "colTime": "時間"
+      },
       "wpm": "打鍵速 (WPM)",
+      "kpm": "打鍵速 (KPM)",
       "accuracy": "正確さ",
       "time": "時間",
       "words": "単語",
+      "lines": "行",
+      "chars": "文字数",
+      "fontSize": "書体",
       "correct": "正解",
       "incorrect": "過ち",
-      "finished": "万事完了",
       "loading": "支度中...",
       "wordCount": "{{current}} / {{total}}",
       "mode": {
         "words": "単語数",
         "time": "時間制限",
-        "quote": "名句"
+        "quote": "名句",
+        "fileImport": "文言",
+        "lines": "行数"
       },
       "punctuation": "句読点",
       "numbers": "数字",
+      "romaji": {
+        "toggle": "ローマ字入力",
+        "imeHint": "ローマ字入力の折には、OSのIMEをお切りください"
+      },
+      "romajiSettings": {
+        "title": "ローマ字入力の詳細設定",
+        "caseLabel": "表示する書体",
+        "case": {
+          "upper": "ROMAJI",
+          "capital": "Romaji",
+          "lower": "romaji"
+        },
+        "guideWordsLabel": "表示語数",
+        "guideLabel": "表示する綴りの型",
+        "guideHint": "表示のみにございます。他の入力パターンでも正解となります",
+        "inputLabel": "受理する入力の型",
+        "inputHint": "外した型は認められません。ベース（ヘボン式/訓令式）は最低ひとつ受理されます",
+        "style": {
+          "hepburn": "ヘボン式 (shi/chi)",
+          "kunrei": "訓令式 (si/ti)",
+          "c": "C表記 (ca)",
+          "q": "Q表記 (qu)",
+          "digraph": "二重字 (jya)",
+          "xSmall": "小文字x (xa)",
+          "lSmall": "小文字l (la)",
+          "w": "W表記 (wi)",
+          "v": "V表記 (va)",
+          "f": "F表記 (fa)",
+          "ye": "YE表記 (ye)",
+          "xn": "撥音x (xn)",
+          "nApos": "N区切り (n')"
+        },
+        "styleTip": {
+          "hepburn": "し:shi じ:ji ち:chi つ:tsu ふ:fu しゃ:sha しゅ:shu しょ:sho じゃ:ja じゅ:ju じょ:jo ちゃ:cha ちゅ:chu ちょ:cho\nっし:sshi っち:cchi っち:tchi っつ:ttsu っふ:ffu っしゃ:ssha っちゃ:tcha っじゃ:jja",
+          "kunrei": "し:si じ:zi ち:ti つ:tu ふ:hu しゃ:sya しゅ:syu しょ:syo じゃ:zya じゅ:zyu じょ:zyo ちゃ:tya ちゅ:tyu ちょ:tyo\nっし:ssi っち:tti っつ:ttu っふ:hhu っしゃ:ssya っちゃ:ttya っじゃ:zzya",
+          "c": "か:ca く:cu こ:co し:ci せ:ce ちゃ:cya ちゅ:cyu ちょ:cyo ちぃ:cyi ちぇ:cye",
+          "q": "く:qu くぁ:qa くぃ:qi くぇ:qe くぉ:qo",
+          "digraph": "じゃ:jya じゅ:jyu じょ:jyo じぃ:jyi じぇ:jye",
+          "xSmall": "ぁ:xa ぃ:xi ぅ:xu ぇ:xe ぉ:xo ゃ:xya ゅ:xyu ょ:xyo ゎ:xwa ゕ:xka ゖ:xke ぃ:xyi ぇ:xye っ:xtu っ:xtsu",
+          "lSmall": "ぁ:la ぃ:li ぅ:lu ぇ:le ぉ:lo ゃ:lya ゅ:lyu ょ:lyo ゎ:lwa ゕ:lka ゖ:lke ぃ:lyi ぇ:lye っ:ltu っ:ltsu",
+          "w": "うぃ:wi うぃ:whi うぇ:we うぇ:whe うぉ:who うぁ:wha う:wu う:whu",
+          "v": "ゔ:vu ゔぁ:va ゔぃ:vi ゔぇ:ve ゔぉ:vo ゔゃ:vya ゔゅ:vyu ゔょ:vyo ゔぃ:vyi ゔぇ:vye",
+          "f": "ふぁ:fa ふぃ:fi ふぇ:fe ふぉ:fo ふゅ:fyu ふゃ:fya ふょ:fyo ふぁ:hwa ふぃ:hwi ふぇ:hwe ふぉ:hwo ふゅ:hwyu",
+          "ye": "いぇ:ye",
+          "xn": "ん:xn",
+          "nApos": "ん:n'"
+        }
+      },
       "quoteLength": {
         "short": "短め",
         "medium": "中くらい",
@@ -272,12 +377,15 @@
         "all": "すべて"
       },
       "quoteSource": "-- {{source}} 殿",
+      "nameResult": "この結果に名を授ける",
+      "nameModal": {
+        "title": "結果に名を授ける"
+      },
       "viewOnly": "打鍵の観賞",
       "exitViewOnly": "観賞を終える",
       "alwaysOnTop": "最前面に",
       "recordStart": "記録開始",
       "recordStop": "記録停止",
-      "viewAnalytics": "吟味の結果",
       "tab": {
         "window": "小窓",
         "rec": "録画"
@@ -286,13 +394,20 @@
         "label": "見守りアプリ"
       },
       "heatmap": {
-        "legend": "熱分布: この一刻"
+        "legend": "熱分布: 直近{{minutes}}分"
       },
       "closeHint": "触れて献立を開く",
       "recordingIndicator": "記録しております",
       "resetSize": "元の大きさに",
       "fitSize": "丁度よく",
       "baseLayer": "Base Layer",
+      "modeLabel": "資料元",
+      "pattern": "様式",
+      "units": "単位",
+      "unitsWords": "単位(語)",
+      "unitsSec": "単位(秒)",
+      "unitsLines": "単位(行)",
+      "optionLabel": "選択",
       "baseLayerShort": "Base",
       "heatmapWindow": "熱分布の期間（分）",
       "heatmapWindowShort": "HeatMap",
@@ -317,14 +432,50 @@
       "paused": "注意が他へ向かわれたようです",
       "layerNote": "階層の移ろいは一部の術のみ対応しております。他は反映されぬやもしれませぬ、ご容赦を。",
       "language": {
-        "title": "お言葉",
+        "title": "資料元",
         "searchPlaceholder": "言葉を探します...",
         "downloaded": "お手元にございます",
         "available": "入手可能",
         "noResults": "そのような言葉は見当たりません",
         "words": "{{count}} 語",
+        "lines": "{{count}} 行",
         "loadingLanguage": "言葉を紐解いております...",
-        "downloadFailed": "お取り寄せに失敗いたしました"
+        "downloadFailed": "お取り寄せに失敗いたしました",
+        "tabMonkeytype": "MonkeyType",
+        "tabTatoeba": "Tatoeba",
+        "tabFileImport": "書類の取込",
+        "tabAozora": "青空文庫",
+        "import": "UTF-8 の文言を取り込む",
+        "importEmpty": "取り込んだ文言はまだございません",
+        "importFailed": "取り込みに失敗いたしました",
+        "importErrorNotUtf8": "UTF-8 の書類のみに対応しております",
+        "importErrorTooLarge": "書類が大きすぎます（上限 5 MB）",
+        "importErrorEmpty": "打鍵できる文言がございません",
+        "importOverwritePrompt": "「{{name}}」はすでにございます。上書きなさいますか？",
+        "confirmOverwrite": "上書き",
+        "fileImportText": "取り込みし文言",
+        "datasetUpdateAvailable": "語彙帳に更新がございます。",
+        "datasetUpdate": "更新",
+        "datasetUpdating": "更新中でございます…",
+        "catalogSearchPlaceholder": "題や著者にて探します...",
+        "catalogImportAction": "取り込む",
+        "estimatedChars": "およそ {{count}} 文字",
+        "catalogImportErrorDuplicate": "同じ題の文言はすでにございます",
+        "catalogImportErrorGeneric": "お取り寄せに失敗いたしました（{{code}}）",
+        "catalogLoadFailed": "書目の読み込みに失敗いたしました。つながりをお確かめのうえ、今一度お試しください。",
+        "kanaRowLabel": "行",
+        "kanaRowGroupAriaLabel": "著者名の読みの行にて絞り込む",
+        "kanaColumnGroupAriaLabel": "著者名の読みの段にて絞り込む",
+        "romajiBadge": "ローマ字",
+        "romajiFilter": "ローマ字入力に対応せし項目のみを示す"
+      },
+      "memory": {
+        "pause": "小休止",
+        "resumeButton": "再開",
+        "resumeTitle": "お預かりした試練を再開なさいますか？",
+        "resumeBody": "{{total}} 語のうち {{current}} 語目にて小休止しておりました。続きより再開なさいますか、それとも初めからやり直されますか？",
+        "resume": "続きより再開",
+        "restart": "初めから"
       },
       "history": {
         "title": "過去の足跡",
@@ -334,11 +485,30 @@
         "totalTests": "試練の数",
         "avgAccuracy": "平均正確さ",
         "date": "日時",
+        "name": "名",
+        "unnamed": "名もなし",
         "mode": "形式",
+        "tabMonkeytype": "MonkeyType",
+        "tabFileImport": "書類の取込",
+        "tabText": "文言",
         "noResults": "記録はございません",
         "pb": "自己最高",
         "allModes": "すべて",
-        "exportCsv": "書付を出す (CSV)"
+        "filterMode": "形式で絞り込む",
+        "filterText": "文言で絞り込む",
+        "exportCsv": "書付を出す (CSV)",
+        "delete": "抹消",
+        "accuracyTrendTitle": "正確性の推移",
+        "conditionFilterLabel": "条件による絞り込み",
+        "conditionPunctuation": "+句読点",
+        "conditionNumbers": "+数字",
+        "conditionRomaji": "+ローマ字入力",
+        "conditionTatoeba": "Tatoeba",
+        "mistakeRankingTitle": "苦手とする文字",
+        "mistakeRankingEmpty": "過ちの記録はまだございません"
+      },
+      "results": {
+        "mistakesLabel": "過ちの文字"
       }
     }
   },
@@ -400,8 +570,12 @@
       "keyOverrideKeys": "上書きの鍵",
       "altRepeatKeyKeys": "繰り返しの鍵",
       "capsWord": "大文字語",
+      "tappingTerm": "間合いの妙（動的）",
+      "autocorrect": "自動添削",
+      "leader": "導きの鍵",
       "boot": "門出",
       "osm": "一度限りの修飾",
+      "oneShotControl": "一度限りの制御",
       "modMask": "修飾の覆い",
       "modTap": "長押しの妙",
       "modSpecial": "格別",
@@ -455,7 +629,6 @@
     "autoAdvance": "自動巡回",
     "locked": "封印中",
     "unlocked": "開放済み",
-    "keyTester": "試打室",
     "sync": {
       "pending": "足並みの待ち",
       "syncing": "足並みを揃えております...",
@@ -575,7 +748,6 @@
     "defaultLayout": "名札",
     "defaultAutoAdvance": "自動巡回",
     "defaultLayerPanelOpen": "階層一覧の展開",
-    "defaultBasicViewType": "Basic の見栄え",
     "defaultSplitKeyMode": "Shift を別々に",
     "defaultQuickSelect": "即座の選択",
     "basicViewTypeList": "一覧",
@@ -595,7 +767,15 @@
       "licenseValue": "GPL-3.0-or-later"
     },
     "zoomLevel": "拡大縮小",
-    "zoomLevelWarning": "表示が乱れることがございます。ご自身の責においてお変えくださいませ。"
+    "zoomLevelWarning": "表示が乱れることがございます。ご自身の責においてお変えくださいませ。",
+    "autoLaunch": "自動起動",
+    "autoLaunchDescription": "サインインの際に Pipette を自動で起動いたします",
+    "trayResident": "システムトレイに常駐",
+    "trayResidentDescription": "ウィンドウを閉じてもトレイに常駐し、動作を続けます",
+    "restoreLastSession": "前回の状態を復元して起動",
+    "restoreLastSessionDescription": "起動の際、最後に接続していたキーボードと画面を復元いたします",
+    "startInTray": "トレイに常駐して起動",
+    "startInTrayDescription": "ウィンドウを開かず、システムトレイに常駐した状態で起動いたします"
   },
   "analyze": {
     "noKeyboards": "まだ打鍵の記録がございません",
@@ -939,10 +1119,18 @@
         "slow": "ペア間隔",
         "fingerIki": "指間隔"
       },
+      "cappedNotice": "頻度上位 {{limit}} 件の組より算出しております — 稀な組は含まれぬこともございます",
+      "gramToggle": {
+        "ariaLabel": "N-gram の粒度",
+        "bigram": "2-gram",
+        "trigram": "3-gram"
+      },
       "column": {
         "pair": "ペア",
         "count": "回数",
         "avgIki": "平均間隔",
+        "avgIkiTrigramTooltip": "三つの打鍵の間にある二つの間隔の平均にございます。三つ全体の所要時間ではございません",
+        "sd": "SD",
         "p95": "p95 間隔"
       },
       "fingerIki": {
@@ -968,6 +1156,17 @@
       "bondToggle": "階層 {{i}} を別グループと結合",
       "noLayout": "地図の写しにレイアウトデータがございません",
       "noSnapshot": "地図の写しが記録されておりません。記録を開始すれば取得されます。",
+      "modeToggle": {
+        "ariaLabel": "熱分布の彩色の型",
+        "count": "回数",
+        "speed": "速さ"
+      },
+      "speed": {
+        "colAvgIki": "到達 Avg IKI",
+        "empty": "この期間の到達速度の記録はまだございません",
+        "minSampleNote": "到達回数が {{n}} 回に満たぬ鍵には彩色いたしません",
+        "cappedNotice": "頻度上位 {{limit}} 件の組より算出しております — 稀な組は含まれぬこともございます"
+      },
       "ranking": {
         "frequentUsedN": "上位",
         "frequentUsed": "よく使うキー",
@@ -1059,7 +1258,7 @@
       "noData": "この期間に打鍵データがございません。",
       "loading": "地図の比較を計算しております…",
       "fetchError": "比較に失敗いたしました。",
-      "skipWarning": "一部の出来事がこの地図に対応できませんでした。参考値としてご覧ください。",
+      "skipWarning": "{{percent}}% の出来事がこの地図に対応できませんでした。参考値としてご覧ください。",
       "fingerDiffTitle": "{{target}} との指負担差分",
       "heatmapDiffTitle": "{{target}} との位置別負担差分",
       "heatmapDiffLegend": {
@@ -1157,6 +1356,17 @@
         "none": "全アプリ合算",
         "multi": "{{first}} 他{{rest}}件"
       },
+      "typingTest": "TypingTest",
+      "typingTestOption": {
+        "none": "全TypingTest合算",
+        "multi": "{{first}} 他{{rest}}件"
+      },
+      "run": "結果",
+      "runOption": {
+        "none": "全ラン合算",
+        "multi": "{{first}} 他{{rest}}件"
+      },
+      "dimensionLabel": "App / TypingTest にて絞り込み",
       "unit": "表示",
       "unitOption": {
         "sec": "秒",
@@ -1238,7 +1448,12 @@
         "day3": "3日",
         "week1": "1週間",
         "month1": "1ヶ月"
-      }
+      },
+      "sourceLabel": "ソース",
+      "editConditions": "検索条件を編集",
+      "chipAriaLabel": "検索条件を編集",
+      "sourceDisabledByApp": "By App は全ソースを合算いたしますゆえ、この項目は使えません。",
+      "distributionDisabledNote": "分布ビューは常にこのデバイスのデータを用いますゆえ、この項目は使えません。"
     }
   },
   "dataModal": {
@@ -1294,7 +1509,7 @@
     "title": "献立",
     "tabData": "データ",
     "tabSave": "保存",
-    "tabTools": "設定",
+    "tabTools": "設定 / 入れる",
     "tabLayout": "レイアウト",
     "basicViewType": "Basic の見栄え",
     "splitKeyMode": "Shift を分離",
@@ -1358,6 +1573,30 @@
       "titleTooLong": "題名が長すぎます（二百文字以内にて）。",
       "authFailed": "確認に失敗いたしました。一度退出して入り直してくださいませ。",
       "payloadTooLarge": "内容が大きすぎます。期間を短くしてはいかがでしょうか。"
+    },
+    "uploadConfirm": {
+      "title": {
+        "create": "Hubに披露する",
+        "update": "Hub投稿を更新"
+      },
+      "visibilityPublic": "公開",
+      "publicDesc": "Hubの一覧と検索に掲載されます",
+      "visibilityPrivate": "非公開（限定リンク）",
+      "privateDesc": "秘密のリンクをご存じの方のみ閲覧可能。一覧・検索には掲載されません",
+      "expiryLabel": "リンクの有効期限",
+      "expiryDays_one": "{{count}}日",
+      "expiryDays_other": "{{count}}日",
+      "expiresAtPreview": "{{date}} に失効いたします",
+      "warnUrlExpiryChange": "更新すると投稿を作り直すため、共有リンクと有効期限が変わります",
+      "confirm": "決定",
+      "cancel": "取り消し"
+    },
+    "private": {
+      "badgePublic": "Hub（公開）",
+      "badgePrivate": "Hub（非公開）",
+      "expiresAt": "{{date}} に失効いたします",
+      "noExpiry": "無期限",
+      "removeConfirm": "Hubから抹消いたしますか？ 非公開リンクは即座に無効となります"
     }
   },
   "notification": {
@@ -1403,6 +1642,12 @@
     "actionDownload": "取り寄せ",
     "actionDelete": "抹消",
     "actionExport": ".json",
+    "typeKeymapWrite": "書き換え可能",
+    "typeViewOnly": "拝見のみ",
+    "typeKeymapWriteShort": "書換可",
+    "typeViewOnlyShort": "拝見",
+    "qwertyDefaultName": "QWERTY（定石）",
+    "qwertyDefaultShort": "定石",
     "hubRemoved": "(抹消済み)",
     "errorDuplicate": "同じお名前の銘が既にございます",
     "errorImportFailed": "取り込みに失敗いたしました",
@@ -1411,8 +1656,15 @@
     "errorGeneric": "操作に失敗いたしました",
     "missingTitle": "銘が見当たりません",
     "missingMessage": "銘「{{name}}」が見当たらないため、標準の銘で表示いたします。",
-    "missingHint": "「{{name}}」は設定からお取り寄せいただけます。",
-    "missingClose": "閉じる"
+    "missingHint": "「{{name}}」は {{settings}} > {{tools}} > {{keyLabels}}、またはキーピッカーの Edit ボタンよりお取り寄せいただけます。",
+    "missingClose": "閉じる",
+    "keymapApply": {
+      "title": "「{{name}}」をキーマップにも適用いたしますか？",
+      "saveRecommendation": "書き換えを行う前に、現在のキーマップを保存しておかれることをお勧めいたします。書き換えは全レイヤーのキーコードを置き換え、Undo・Redo の履歴も消去いたしますゆえ、お戻しになる道は保存されたファイルより復元する他ございません。",
+      "confirmApply": "反映いたしますか？",
+      "tabsLabel": "キーマップの表示",
+      "errorPartial": "一部の鍵は書き換えが叶いませんでした。ここで処理を止めておりますゆえ、必要とあらば以前保存された .vil ファイルやスナップショットより復元くださいませ。"
+    }
   },
   "i18n": {
     "edit": "推敲",
@@ -1441,11 +1693,7 @@
   },
   "themePacks": {
     "title": "意匠の包み",
-    "importButton": "取り込み",
     "import": "意匠の包みを取り込む",
-    "export": "送り出し",
-    "delete": "抹消",
-    "edit": "推敲",
     "manageRow": "意匠の包み",
     "parseError": "書物を読み解けませんでした",
     "selectTheme": "{{name}} を選択",

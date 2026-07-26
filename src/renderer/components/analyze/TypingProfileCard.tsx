@@ -43,6 +43,8 @@ interface Props {
    * bigram and minute-stats fetches so the per-app summary doesn't
    * blend across the whole 30-day window. */
   appScopes: string[]
+  typingTestScopes: string[]
+  runIdScopes: string[]
   daily: ReadonlyArray<TypingDailySummary>
   today: string
   /** Required for the keycode → finger map. When `null`, hand
@@ -62,6 +64,8 @@ export function TypingProfileCard({
   uid,
   deviceScope,
   appScopes,
+  typingTestScopes,
+  runIdScopes,
   daily,
   today,
   snapshot,
@@ -80,7 +84,7 @@ export function TypingProfileCard({
 
   useEffect(() => {
     let cancelled = false
-    fetchBigramAggregateForRange(uid, deviceScope, range.fromMs, range.toMs, 'top', { limit: BIGRAM_FETCH_LIMIT }, appScopes)
+    fetchBigramAggregateForRange(uid, deviceScope, range.fromMs, range.toMs, 'top', { limit: BIGRAM_FETCH_LIMIT }, appScopes, typingTestScopes, runIdScopes)
       .then((res) => {
         if (cancelled) return
         setBigrams(res.view === 'top' ? res.entries : [])
@@ -91,7 +95,7 @@ export function TypingProfileCard({
 
   useEffect(() => {
     let cancelled = false
-    listMinuteStatsForScope(uid, deviceScope, range.fromMs, range.toMs, appScopes)
+    listMinuteStatsForScope(uid, deviceScope, range.fromMs, range.toMs, appScopes, typingTestScopes, runIdScopes)
       .then((rows) => { if (!cancelled) setMinuteStats(rows) })
       .catch(() => { if (!cancelled) setMinuteStats([]) })
     return () => { cancelled = true }

@@ -1,5 +1,5 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.43",
   "name": "Japanese - 京言葉",
   "common": {
     "save": "保存しますえ",
@@ -27,6 +27,7 @@
     "exported": "書き出しましたえ",
     "imported": "入れましたえ",
     "load": "読み込みますえ",
+    "confirmLoad": "読み込んでもよろしおすか？",
     "labelPlaceholder": "ラベル",
     "noLabel": "（ラベルおへん）",
     "synced": "同期しましたえ",
@@ -35,7 +36,15 @@
     "installed": "入れてありますえ",
     "searchPlaceholder": "Pipette Hub を検索しますえ（2文字以上で）…",
     "done": "完了しましたえ",
-    "edit": "編集しますえ"
+    "edit": "編集しますえ",
+    "sortByName": "お名前どすえ",
+    "importing": "インポートしてますえ…",
+    "importedNamed": "{{name}} を入れましたえ",
+    "updatedNamed": "{{name}} を更新しましたえ",
+    "importBatchFailed_one": "{{count}} 件、インポートできまへんでしたわ",
+    "importBatchFailed_other": "{{count}} 件、インポートできまへんでしたわ",
+    "importSummary_one": "{{count}} 件インポートしましたえ (成功{{success}}、失敗{{failure}})",
+    "importSummary_other": "{{count}} 件インポートしましたえ (成功{{success}}、失敗{{failure}})"
   },
   "app": {
     "title": "Pipette",
@@ -66,6 +75,14 @@
   },
   "editor": {
     "autoAdvance": "自動移動",
+    "viewMatrix": {
+      "label": "ビューマトリクス",
+      "edit": "編集しますえ",
+      "done": "完了しましたえ",
+      "rowLabel": "行",
+      "colLabel": "列",
+      "blankOption": "—"
+    },
     "keymap": {
       "title": "キーマップ",
       "layer": "Layer {{number}}",
@@ -90,6 +107,7 @@
       "previousLayers": "前のレイヤーどすえ",
       "nextLayers": "次のレイヤーどすえ",
       "layerN": "Layer {{n}}",
+      "layerPreview": "プレビューどすえ - {{label}}",
       "undo": "元に戻しますえ",
       "redo": "やり直しますえ",
       "zoomIn": "大きゅうしますえ",
@@ -249,22 +267,109 @@
       "switchToTypingMode": "タイピングテストどすえ",
       "exitTypingMode": "テスト終わりどすえ",
       "restart": "もういっぺんどすえ",
+      "nextTest": "次のテストどすえ",
+      "complete": "できましたえ",
+      "collapseSettings": "設定を閉じますえ",
+      "expandSettings": "設定を開きますえ",
+      "keymapToggle": "キーマップ",
+      "statsToggle": "計測",
+      "controlsToggle": "操作",
+      "hideKeymap": "キーマップを隠しますえ",
+      "showKeymap": "キーマップを見せますえ",
+      "hideStats": "計測を隠しますえ",
+      "showStats": "計測を見せますえ",
+      "hideControls": "操作を隠しますえ",
+      "showControls": "操作を見せますえ",
+      "saveUnnamedToggle": "名前なしでも保存どすえ",
+      "enableSaveUnnamed": "名前がのうても結果を自動で保存しますえ",
+      "disableSaveUnnamed": "保存には名前が要りますえ",
+      "section": {
+        "settings": "設定",
+        "data": "データ",
+        "view": "表示"
+      },
+      "compare": {
+        "button": "比較",
+        "title": "比較どすえ",
+        "previous": "前回",
+        "best": "ベスト",
+        "average": "平均",
+        "pinned": "結果",
+        "off": "オフ",
+        "noResults": "ピンできる結果がおへんなぁ",
+        "colName": "名前",
+        "colKeyboard": "キーボード",
+        "colTime": "時間"
+      },
       "wpm": "WPM",
+      "kpm": "KPM",
       "accuracy": "正確さどすえ",
       "time": "時間",
       "words": "単語",
+      "lines": "行",
+      "chars": "文字数",
+      "fontSize": "Font",
       "correct": "正解どすえ",
       "incorrect": "ミスどすなぁ",
-      "finished": "お疲れさんどすえ",
       "loading": "読み込んでますえ…",
       "wordCount": "{{current}} / {{total}}",
       "mode": {
         "words": "単語",
         "time": "時間",
-        "quote": "引用"
+        "quote": "引用",
+        "fileImport": "テキスト",
+        "lines": "行"
       },
       "punctuation": "句読点",
       "numbers": "数字",
+      "romaji": {
+        "toggle": "ローマ字入力",
+        "imeHint": "ローマ字入力モードの時は、OSのIMEを切っておくれやす"
+      },
+      "romajiSettings": {
+        "title": "ローマ字入力の詳細設定どすえ",
+        "caseLabel": "表示する文字どす",
+        "case": {
+          "upper": "ROMAJI",
+          "capital": "Romaji",
+          "lower": "romaji"
+        },
+        "guideWordsLabel": "表示語数どす",
+        "guideLabel": "表示パターン",
+        "guideHint": "表示だけどすえ。他の入力パターンでも正解になりますえ",
+        "inputLabel": "入力パターン",
+        "inputHint": "オフにしたパターンは受け付けまへん。ベース（ヘボン式/訓令式）は最低ひとつ有効どす",
+        "style": {
+          "hepburn": "ヘボン式 (shi/chi)",
+          "kunrei": "訓令式 (si/ti)",
+          "c": "C表記 (ca)",
+          "q": "Q表記 (qu)",
+          "digraph": "二重字 (jya)",
+          "xSmall": "小文字x (xa)",
+          "lSmall": "小文字l (la)",
+          "w": "W表記 (wi)",
+          "v": "V表記 (va)",
+          "f": "F表記 (fa)",
+          "ye": "YE表記 (ye)",
+          "xn": "撥音x (xn)",
+          "nApos": "N区切り (n')"
+        },
+        "styleTip": {
+          "hepburn": "し:shi じ:ji ち:chi つ:tsu ふ:fu しゃ:sha しゅ:shu しょ:sho じゃ:ja じゅ:ju じょ:jo ちゃ:cha ちゅ:chu ちょ:cho\nっし:sshi っち:cchi っち:tchi っつ:ttsu っふ:ffu っしゃ:ssha っちゃ:tcha っじゃ:jja",
+          "kunrei": "し:si じ:zi ち:ti つ:tu ふ:hu しゃ:sya しゅ:syu しょ:syo じゃ:zya じゅ:zyu じょ:zyo ちゃ:tya ちゅ:tyu ちょ:tyo\nっし:ssi っち:tti っつ:ttu っふ:hhu っしゃ:ssya っちゃ:ttya っじゃ:zzya",
+          "c": "か:ca く:cu こ:co し:ci せ:ce ちゃ:cya ちゅ:cyu ちょ:cyo ちぃ:cyi ちぇ:cye",
+          "q": "く:qu くぁ:qa くぃ:qi くぇ:qe くぉ:qo",
+          "digraph": "じゃ:jya じゅ:jyu じょ:jyo じぃ:jyi じぇ:jye",
+          "xSmall": "ぁ:xa ぃ:xi ぅ:xu ぇ:xe ぉ:xo ゃ:xya ゅ:xyu ょ:xyo ゎ:xwa ゕ:xka ゖ:xke ぃ:xyi ぇ:xye っ:xtu っ:xtsu",
+          "lSmall": "ぁ:la ぃ:li ぅ:lu ぇ:le ぉ:lo ゃ:lya ゅ:lyu ょ:lyo ゎ:lwa ゕ:lka ゖ:lke ぃ:lyi ぇ:lye っ:ltu っ:ltsu",
+          "w": "うぃ:wi うぃ:whi うぇ:we うぇ:whe うぉ:who うぁ:wha う:wu う:whu",
+          "v": "ゔ:vu ゔぁ:va ゔぃ:vi ゔぇ:ve ゔぉ:vo ゔゃ:vya ゔゅ:vyu ゔょ:vyo ゔぃ:vyi ゔぇ:vye",
+          "f": "ふぁ:fa ふぃ:fi ふぇ:fe ふぉ:fo ふゅ:fyu ふゃ:fya ふょ:fyo ふぁ:hwa ふぃ:hwi ふぇ:hwe ふぉ:hwo ふゅ:hwyu",
+          "ye": "いぇ:ye",
+          "xn": "ん:xn",
+          "nApos": "ん:n'"
+        }
+      },
       "quoteLength": {
         "short": "短いのん",
         "medium": "普通のん",
@@ -272,12 +377,15 @@
         "all": "全部どすえ"
       },
       "quoteSource": "-- {{source}}",
+      "nameResult": "この結果に名前を付けますえ",
+      "nameModal": {
+        "title": "結果に名前を付けますえ"
+      },
       "viewOnly": "タイピングビュー",
       "exitViewOnly": "ビュー終わりどすえ",
       "alwaysOnTop": "最前面どすえ",
       "recordStart": "始めますえ",
       "recordStop": "止めますえ",
-      "viewAnalytics": "分析ビュー",
       "tab": {
         "window": "ウィンドウ",
         "rec": "REC"
@@ -286,13 +394,20 @@
         "label": "Monitor App"
       },
       "heatmap": {
-        "legend": "ヒートマップ: ここ1時間どすえ"
+        "legend": "ヒートマップ: ここ{{minutes}}分どすえ"
       },
       "closeHint": "クリックしたらメニューが開きますえ",
       "recordingIndicator": "記録中どすえ",
       "resetSize": "初期サイズ",
       "fitSize": "フィット",
       "baseLayer": "Base Layer",
+      "modeLabel": "データ元",
+      "pattern": "パターン",
+      "units": "単位",
+      "unitsWords": "単位(単語)",
+      "unitsSec": "単位(秒)",
+      "unitsLines": "単位(行)",
+      "optionLabel": "オプション",
       "baseLayerShort": "Base",
       "heatmapWindow": "ヒートマップの表示期間（分）",
       "heatmapWindowShort": "HeatMap",
@@ -317,14 +432,50 @@
       "paused": "ウィンドウからフォーカスが離れましたえ",
       "layerNote": "レイヤー切替は MO / LT / LM だけ追随しますえ。他のんは反映されへんこともありますえ。",
       "language": {
-        "title": "言語",
+        "title": "データ元",
         "searchPlaceholder": "言語を検索しますえ...",
         "downloaded": "入れてありますえ",
         "available": "使えますえ",
         "noResults": "合うのんがおへんなぁ",
         "words": "{{count}} 単語どすえ",
+        "lines": "{{count}} 行どすえ",
         "loadingLanguage": "言語を読み込んでますえ…",
-        "downloadFailed": "ダウンロードがあきまへんでしたえ"
+        "downloadFailed": "ダウンロードがあきまへんでしたえ",
+        "tabMonkeytype": "MonkeyType",
+        "tabTatoeba": "Tatoeba",
+        "tabFileImport": "ファイル取込",
+        "tabAozora": "青空文庫",
+        "import": "UTF-8 のテキストを取り込みますえ",
+        "importEmpty": "取り込んだテキストはまだおへんなぁ",
+        "importFailed": "取り込みがあきまへんでした",
+        "importErrorNotUtf8": "UTF-8 のテキストファイルしか対応してしまへんえ",
+        "importErrorTooLarge": "ファイルが大きすぎますえ（最大 5 MB）",
+        "importErrorEmpty": "打てるテキストがおへんなぁ",
+        "importOverwritePrompt": "「{{name}}」はもうありますえ。上書きしますか？",
+        "confirmOverwrite": "上書きしますえ",
+        "fileImportText": "取り込んだテキストどすえ",
+        "datasetUpdateAvailable": "単語リストの更新がありますえ。",
+        "datasetUpdate": "更新しますえ",
+        "datasetUpdating": "更新してますえ…",
+        "catalogSearchPlaceholder": "作品名か著者名で検索しますえ...",
+        "catalogImportAction": "取り込みますえ",
+        "estimatedChars": "約 {{count}} 文字どすえ",
+        "catalogImportErrorDuplicate": "同じ作品名のテキストがもうありますえ",
+        "catalogImportErrorGeneric": "ダウンロードがあきまへんでしたえ（{{code}}）",
+        "catalogLoadFailed": "カタログの読み込みがあきまへんでした。つながりを確かめてもういっぺんお試しやす。",
+        "kanaRowLabel": "行",
+        "kanaRowGroupAriaLabel": "著者名の読みの行で絞り込みますえ",
+        "kanaColumnGroupAriaLabel": "著者名の読みの段で絞り込みますえ",
+        "romajiBadge": "Romaji",
+        "romajiFilter": "ローマ字入力できるものだけ表示しますえ"
+      },
+      "memory": {
+        "pause": "一時停止どすえ",
+        "resumeButton": "再開どすえ",
+        "resumeTitle": "保存したテストを再開しはりますか？",
+        "resumeBody": "{{total}} 語中 {{current}} 語目で一時停止してますえ。続きから再開しますか？最初からやり直しますか？",
+        "resume": "続きから再開しますえ",
+        "restart": "最初からどすえ"
       },
       "history": {
         "title": "履歴どすえ",
@@ -334,11 +485,30 @@
         "totalTests": "テスト数",
         "avgAccuracy": "平均正確さ",
         "date": "日時",
+        "name": "名前",
+        "unnamed": "名なしどすえ",
         "mode": "モード",
+        "tabMonkeytype": "MonkeyType",
+        "tabFileImport": "ファイル取込",
+        "tabText": "テキスト",
         "noResults": "結果がおへんなぁ",
         "pb": "PB",
         "allModes": "全部",
-        "exportCsv": "CSV出しますえ"
+        "filterMode": "モードで絞り込みますえ",
+        "filterText": "テキストで絞り込みますえ",
+        "exportCsv": "CSV出しますえ",
+        "delete": "消しますえ",
+        "accuracyTrendTitle": "正確性の推移どすえ",
+        "conditionFilterLabel": "条件で絞り込みますえ",
+        "conditionPunctuation": "+句読点",
+        "conditionNumbers": "+数字",
+        "conditionRomaji": "+ローマ字入力",
+        "conditionTatoeba": "Tatoeba",
+        "mistakeRankingTitle": "苦手な文字どすえ",
+        "mistakeRankingEmpty": "ミスの記録はまだおへんなぁ"
+      },
+      "results": {
+        "mistakesLabel": "ミス文字どすえ"
       }
     }
   },
@@ -400,8 +570,12 @@
       "keyOverrideKeys": "Key",
       "altRepeatKeyKeys": "Key",
       "capsWord": "Caps Word",
+      "tappingTerm": "Dynamic Tapping Term",
+      "autocorrect": "Autocorrect",
+      "leader": "Leader",
       "boot": "Boot",
       "osm": "One-Shot Modifiers",
+      "oneShotControl": "One-Shot Control",
       "modMask": "Modifier Masks",
       "modTap": "Mod-Tap",
       "modSpecial": "Special",
@@ -455,7 +629,6 @@
     "autoAdvance": "自動移動",
     "locked": "ロック中どすえ",
     "unlocked": "アンロックどすえ",
-    "keyTester": "キーテスター",
     "sync": {
       "pending": "同期待ちどすえ",
       "syncing": "同期してますえ…",
@@ -575,7 +748,6 @@
     "defaultLayout": "キーラベル",
     "defaultAutoAdvance": "自動移動",
     "defaultLayerPanelOpen": "レイヤーリスト展開",
-    "defaultBasicViewType": "Basic タブ表示",
     "defaultSplitKeyMode": "キーピッカーでShiftキーを分離",
     "defaultQuickSelect": "キーの即時選択",
     "basicViewTypeList": "LIST",
@@ -595,7 +767,15 @@
       "licenseValue": "GPL-3.0-or-later"
     },
     "zoomLevel": "ズーム",
-    "zoomLevelWarning": "表示が崩れることがありますえ。自己責任でお願いしますえ。"
+    "zoomLevelWarning": "表示が崩れることがありますえ。自己責任でお願いしますえ。",
+    "autoLaunch": "自動起動どすえ",
+    "autoLaunchDescription": "サインインしはったら自動で Pipette を起動しますえ",
+    "trayResident": "トレイに常駐どすえ",
+    "trayResidentDescription": "ウィンドウを閉じてもトレイに常駐して動き続けますえ",
+    "restoreLastSession": "最後の状態で起動どすえ",
+    "restoreLastSessionDescription": "起動しはったら前に繋いではったキーボードと画面を戻しますえ",
+    "startInTray": "トレイ常駐で起動どすえ",
+    "startInTrayDescription": "ウィンドウを開かんとトレイに常駐したまま起動しますえ"
   },
   "analyze": {
     "noKeyboards": "まだ打鍵データがおへんなぁ",
@@ -939,10 +1119,18 @@
         "slow": "ペア間隔",
         "fingerIki": "指間隔"
       },
+      "cappedNotice": "頻度上位 {{limit}} 件のペアから出してますえ — 珍しいペアは入っとらんこともありますえ",
+      "gramToggle": {
+        "ariaLabel": "N-gram の粒度",
+        "bigram": "2-gram",
+        "trigram": "3-gram"
+      },
       "column": {
         "pair": "ペア",
         "count": "回数",
         "avgIki": "平均間隔",
+        "avgIkiTrigramTooltip": "3キー間にある2つの間隔の平均どす。3キー全体の時間とは違いますえ",
+        "sd": "SD",
         "p95": "p95 間隔"
       },
       "fingerIki": {
@@ -968,6 +1156,17 @@
       "bondToggle": "レイヤー {{i}} を結合しますえ",
       "noLayout": "このスナップショットにレイアウトデータがおへんなぁ",
       "noSnapshot": "この期間のスナップショットがおへんなぁ。Record を始めたら取れますえ。",
+      "modeToggle": {
+        "ariaLabel": "ヒートマップの着彩モード",
+        "count": "回数",
+        "speed": "速度"
+      },
+      "speed": {
+        "colAvgIki": "到達 Avg IKI",
+        "empty": "この期間の到達速度データはまだおへん",
+        "minSampleNote": "到達回数が {{n}} 回に満たへんキーは着彩しまへん",
+        "cappedNotice": "頻度上位 {{limit}} 件のペアから出してますえ — 珍しいペアは入っとらんこともありますえ"
+      },
       "ranking": {
         "frequentUsedN": "上位",
         "frequentUsed": "よう使うキー",
@@ -1157,6 +1356,17 @@
         "none": "全アプリ合わせて",
         "multi": "{{first}} 他{{rest}}件"
       },
+      "typingTest": "TypingTest",
+      "typingTestOption": {
+        "none": "全TypingTest合わせて",
+        "multi": "{{first}} 他{{rest}}件"
+      },
+      "run": "結果",
+      "runOption": {
+        "none": "全ラン合わせて",
+        "multi": "{{first}} 他{{rest}}件"
+      },
+      "dimensionLabel": "App / TypingTest で絞り込みますえ",
       "unit": "表示",
       "unitOption": {
         "sec": "秒",
@@ -1238,7 +1448,12 @@
         "day3": "3日",
         "week1": "1週間",
         "month1": "1ヶ月"
-      }
+      },
+      "sourceLabel": "ソース",
+      "editConditions": "検索条件を編集しますえ",
+      "chipAriaLabel": "検索条件を編集しますえ",
+      "sourceDisabledByApp": "By App は全ソースを合算しますよって、この項目は使えまへんえ。",
+      "distributionDisabledNote": "分布ビューはいつもこのデバイスのデータを使いますよって、この項目は使えまへんえ。"
     }
   },
   "dataModal": {
@@ -1294,7 +1509,7 @@
     "title": "メニュー",
     "tabData": "データ",
     "tabSave": "保存",
-    "tabTools": "設定",
+    "tabTools": "設定 / インポート",
     "tabLayout": "レイアウト",
     "basicViewType": "Basic タブ表示",
     "splitKeyMode": "キーピッカーでShiftキーを分離",
@@ -1358,6 +1573,30 @@
       "titleTooLong": "タイトルが長すぎますえ（200文字以内で）。",
       "authFailed": "Hubの認証があきまへんでしたえ。いっぺんサインアウトしてからサインインし直しておくれやす。",
       "payloadTooLarge": "大きすぎてアップロードできまへんえ。チャートを減らすか期間を短こうしておくれやす。"
+    },
+    "uploadConfirm": {
+      "title": {
+        "create": "Hubにアップロードしますえ",
+        "update": "Hub投稿を更新しますえ"
+      },
+      "visibilityPublic": "公開",
+      "publicDesc": "Hubの一覧と検索に出ますえ",
+      "visibilityPrivate": "非公開（限定リンク）",
+      "privateDesc": "秘密のリンクを知ってはる方だけ見られますえ。一覧・検索には出まへん",
+      "expiryLabel": "リンクの有効期限",
+      "expiryDays_one": "{{count}}日",
+      "expiryDays_other": "{{count}}日",
+      "expiresAtPreview": "{{date}} に切れますえ",
+      "warnUrlExpiryChange": "更新すると投稿が作り直しになって、共有リンクと期限が変わりますえ",
+      "confirm": "決定",
+      "cancel": "やめときますえ"
+    },
+    "private": {
+      "badgePublic": "Hub（公開）",
+      "badgePrivate": "Hub（非公開）",
+      "expiresAt": "{{date}} に切れますえ",
+      "noExpiry": "無期限",
+      "removeConfirm": "Hubから消してもよろしおすか？ 非公開リンクはすぐに使えのうなりますえ"
     }
   },
   "notification": {
@@ -1388,14 +1627,14 @@
     "importCurrent": "インポート"
   },
   "keyLabels": {
-    "title": "Key Labels",
-    "manageRow": "Key Labels 管理",
+    "title": "キーラベル",
+    "manageRow": "キーラベル管理",
     "edit": "編集しますえ",
     "hubEmpty": "ハブに合うラベルがおへんなぁ",
     "search": "検索しますえ",
     "searching": "検索してますえ…",
     "import": "インポート",
-    "empty": "Key Label がまだおへんなぁ。検索か Import で追加しておくれやす。",
+    "empty": "キーラベルがまだおへんなぁ。検索か Import で追加しておくれやす。",
     "actionUpload": "アップロード",
     "actionUpdate": "更新",
     "actionSync": "同期",
@@ -1403,16 +1642,29 @@
     "actionDownload": "ダウンロード",
     "actionDelete": "消しますえ",
     "actionExport": ".json",
+    "typeKeymapWrite": "書き換えできますえ",
+    "typeViewOnly": "見るだけどす",
+    "typeKeymapWriteShort": "書換どす",
+    "typeViewOnlyShort": "拝見どす",
+    "qwertyDefaultName": "QWERTY（デフォルトどす）",
+    "qwertyDefaultShort": "デフォルトどす",
     "hubRemoved": "（消されましたえ）",
     "errorDuplicate": "同じ名前のラベルがもうありますえ",
-    "errorImportFailed": "Key Label のインポートがあきまへんでしたえ",
+    "errorImportFailed": "キーラベルのインポートがあきまへんでしたえ",
     "errorInvalidName": "ラベル名がおかしゅうございますえ",
     "errorSearchFailed": "Pipette Hub の検索があきまへんでしたえ",
     "errorGeneric": "あきまへんでしたえ",
-    "missingTitle": "Key Label が見つかりまへんなぁ",
-    "missingMessage": "Key Label「{{name}}」が入ってまへんさかい、QWERTY ラベルで表示しますえ。",
+    "missingTitle": "キーラベルが見つかりまへんなぁ",
+    "missingMessage": "キーラベル「{{name}}」が入ってまへんさかい、QWERTY ラベルで表示しますえ。",
     "missingHint": "「{{name}}」は {{settings}} > {{tools}} > {{keyLabels}}、またはキーピッカー右上の Edit ボタンから入れられますえ。",
-    "missingClose": "閉じますえ"
+    "missingClose": "閉じますえ",
+    "keymapApply": {
+      "title": "「{{name}}」をキーマップにも適用しますか？",
+      "saveRecommendation": "書き換えるまえに、いまのキーマップを保存しておかはるのがよろしおすえ。書き換えは全レイヤーのキーコードを変えてしまいますし、Undo と Redo の履歴も消えてしまいますよって、戻したいときは保存しといたファイルから復元するしかおへんえ。",
+      "confirmApply": "適用してもよろしおすか？",
+      "tabsLabel": "見た目の切り替えどす",
+      "errorPartial": "一部のキーが書き換えられまへんでしたえ。ここで止めときますよって、要りようなら前に保存した .vil ファイルかスナップショットから復元しておくれやす。"
+    }
   },
   "i18n": {
     "edit": "編集しますえ",

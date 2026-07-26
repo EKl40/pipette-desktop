@@ -8,10 +8,13 @@ import type { Keycode } from '../../../shared/keycodes/keycodes'
 import type { BulkKeyEntry } from '../../hooks/useKeyboard'
 import { useUnlockGate } from '../../hooks/useUnlockGate'
 import type { TapDanceEntry } from '../../../shared/types/protocol'
+import type { ViewMatrixCell } from '../../../shared/types/pipette-settings'
+import type { MacroAction } from '../../../preload/macro'
 import { hasModifierKey } from './KeyboardPane'
 import type { PopoverState } from './keymap-editor-types'
 import type { UseKeymapMultiSelectReturn } from './useKeymapMultiSelect'
 import type { UseKeymapHistoryReturn, SingleHistoryEntry, HistoryEntry } from './useKeymapHistory'
+import { sortKeysByViewMatrix } from './view-matrix'
 
 /** Match a history entry against the current popover position, returning the keycode if matched. */
 function matchPopoverEntry(
@@ -35,6 +38,10 @@ export interface UseKeymapSelectionOptions {
   selectableKeys: KleKey[]
   // Key operations
   autoAdvance: boolean
+  /** Auto Move order override — see `PipetteSettings.viewMatrix`. Sorts
+   *  `advancableKeys` by each key's effective (override ?? physical)
+   *  position instead of raw definition order. */
+  viewMatrix?: Record<string, ViewMatrixCell>
   onSetKey: (layer: number, row: number, col: number, keycode: number) => Promise<void>
   onSetKeysBulk: (entries: BulkKeyEntry[]) => Promise<void>
   onSetEncoder: (layer: number, idx: number, dir: number, keycode: number) => Promise<void>
@@ -45,13 +52,23 @@ export interface UseKeymapSelectionOptions {
   multiSelect: UseKeymapMultiSelectReturn
   // History
   history: UseKeymapHistoryReturn
+  /** Fires the "flash" visual (see `useKeyFlash`) for the positions an
+   *  undo/redo just touched. Contract: called only after ALL of that
+   *  entry's device writes have succeeded AND the history stack has been
+   *  committed (`history.undo()` / `history.redo()`) — never on a failed
+   *  apply, and never before the commit. An exception thrown by this
+   *  callback must not retroactively mark the undo/redo as failed, so it
+   *  is invoked after `handleUndo`/`handleRedo`'s own try/finally has
+   *  already run to completion. Receives the normalized entry list
+   *  (`entry.kind === 'batch' ? entry.entries : [entry]`). */
+  onHistoryApplied?: (entries: SingleHistoryEntry[]) => void
   // TD/Macro
   tapDanceEntries?: TapDanceEntry[]
   onSetTapDanceEntry?: (index: number, entry: TapDanceEntry) => Promise<void>
   macroCount?: number
   macroBufferSize?: number
   macroBuffer?: number[]
-  onSaveMacros?: (buffer: number[], parsedMacros?: unknown) => Promise<void>
+  onSaveMacros?: (buffer: number[], parsedMacros?: MacroAction[][]) => Promise<void>
 }
 
 export function useKeymapSelectionHandlers({
@@ -61,6 +78,7 @@ export function useKeymapSelectionHandlers({
   currentLayer,
   selectableKeys,
   autoAdvance,
+  viewMatrix,
   onSetKey,
   onSetKeysBulk,
   onSetEncoder,
@@ -68,6 +86,7 @@ export function useKeymapSelectionHandlers({
   onUnlock,
   multiSelect,
   history,
+  onHistoryApplied,
   tapDanceEntries,
   onSetTapDanceEntry,
   macroCount,
@@ -79,8 +98,8 @@ export function useKeymapSelectionHandlers({
   const {
     multiSelectedKeys, setMultiSelectedKeys,
     selectionAnchor, setSelectionAnchor,
-    _selectionSourcePane, setSelectionSourcePane,
-    _selectionMode, setSelectionMode,
+    selectionSourcePane: _selectionSourcePane, setSelectionSourcePane,
+    selectionMode: _selectionMode, setSelectionMode,
     pickerSelected,
     clearMultiSelection,
     clearPickerSelection,
@@ -168,8 +187,9 @@ export function useKeymapSelectionHandlers({
   // --- Auto-advance ---
   const advancableKeys = useMemo(() => {
     if (!layout) return []
-    return layout.keys.filter((k) => !k.decal && k.encoderIdx < 0)
-  }, [layout])
+    const filtered = layout.keys.filter((k) => !k.decal && k.encoderIdx < 0)
+    return sortKeysByViewMatrix(filtered, viewMatrix)
+  }, [layout, viewMatrix])
 
   const advanceToNextKey = useCallback(() => {
     if (!autoAdvance || !selectedKey || advancableKeys.length === 0) return
@@ -282,7 +302,12 @@ export function useKeymapSelectionHandlers({
   }, [handleDeselect])
 
   // --- Keycode handlers ---
-  const handleKeycodeSelect = useCallback(async (kc: Keycode) => {
+  // Only `.qmkId` is read below, so accept the picker's ad-hoc fallback
+  // shape too (findKeycode(qmkId) ?? { qmkId, label, keycode } in
+  // useLayoutPicker.tsx) — that fallback deliberately isn't a real
+  // `Keycode` instance since constructing one would register it in the
+  // class's global qmkId lookup maps for what may be a one-off/custom code.
+  const handleKeycodeSelect = useCallback(async (kc: Pick<Keycode, 'qmkId'>) => {
     clearPickerSelection(); clearPending()
     const code = deserialize(kc.qmkId)
     if (selectedKey) {
@@ -381,29 +406,41 @@ export function useKeymapSelectionHandlers({
   // In-flight guard to prevent concurrent undo/redo
   const undoRedoInFlightRef = useRef(false)
 
-  const handleUndo = useCallback(async () => {
+  // Undo and redo differ only in direction (which stack to peek/commit,
+  // and which side of the entry `applyHistoryEntry` restores) — shared here
+  // instead of duplicating the guard/apply/commit/notify sequence twice.
+  const runHistoryStep = useCallback(async (isUndo: boolean) => {
     if (undoRedoInFlightRef.current) return
-    const entry = history.peekUndo
+    const entry = isUndo ? history.peekUndo : history.peekRedo
     if (!entry) return
     undoRedoInFlightRef.current = true
     try {
-      await applyHistoryEntry(entry, true)
-      history.undo() // commit only after successful apply
+      await applyHistoryEntry(entry, isUndo)
+      // Commit only after successful apply.
+      if (isUndo) history.undo()
+      else history.redo()
     } finally { undoRedoInFlightRef.current = false }
     setPopoverState(null)
-  }, [history, applyHistoryEntry])
+    // Fire outside the try/finally above: a throw from `applyHistoryEntry`
+    // or the commit call propagates out of the `try` (after `finally`
+    // resets the in-flight guard) and skips everything below, so reaching
+    // this line already guarantees the apply + commit succeeded — no flag
+    // needed to gate it. Placement after the commit is what guarantees
+    // `onHistoryApplied` can no longer un-commit the undo/redo or leave the
+    // in-flight guard stuck. The flash it triggers is purely cosmetic, so a
+    // throw from the callback itself is swallowed here rather than
+    // rejecting `runHistoryStep`'s promise — the undo/redo already
+    // succeeded and must not be reported as failed just because the flash
+    // visual couldn't be shown.
+    try {
+      onHistoryApplied?.(entry.kind === 'batch' ? entry.entries : [entry])
+    } catch {
+      // Intentionally ignored — see comment above.
+    }
+  }, [history, applyHistoryEntry, onHistoryApplied])
 
-  const handleRedo = useCallback(async () => {
-    if (undoRedoInFlightRef.current) return
-    const entry = history.peekRedo
-    if (!entry) return
-    undoRedoInFlightRef.current = true
-    try {
-      await applyHistoryEntry(entry, false)
-      history.redo() // commit only after successful apply
-    } finally { undoRedoInFlightRef.current = false }
-    setPopoverState(null)
-  }, [history, applyHistoryEntry])
+  const handleUndo = useCallback(() => runHistoryStep(true), [runHistoryStep])
+  const handleRedo = useCallback(() => runHistoryStep(false), [runHistoryStep])
 
   const handlePopoverUndo = useCallback(() => {
     if (popoverUndoKeycode == null) return

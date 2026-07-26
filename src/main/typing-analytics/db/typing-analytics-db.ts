@@ -12,8 +12,24 @@ import {
   BIGRAM_HIST_BUCKETS,
   type JsonlBigramMinuteEntry,
   type JsonlBigramMinutePayload,
+  type JsonlTrigramMinuteEntry,
+  type JsonlTrigramMinutePayload,
 } from '../jsonl/jsonl-row'
-import { TYPING_APP_UNKNOWN_NAME } from '../../../shared/types/typing-analytics'
+import { emptyTombstoneResult, TYPING_APP_UNKNOWN_NAME } from '../../../shared/types/typing-analytics'
+import type {
+  TypingKeyboardSummary,
+  TypingDailySummary,
+  TypingIntervalDailySummary,
+  TypingActivityCell,
+  TypingLayerUsageRow,
+  TypingMatrixCellRow,
+  TypingMatrixCellDailyRow,
+  TypingMinuteStatsRow,
+  TypingSessionRow,
+  TypingBksMinuteRow,
+  PeakRecords,
+  TypingTombstoneResult,
+} from '../../../shared/types/typing-analytics'
 
 export interface TypingScopeRow {
   id: string
@@ -38,6 +54,13 @@ export interface CharMinuteRow {
    * shape to keep older callers / fixtures terse; the DB layer
    * normalizes missing to null on insert. */
   appName?: string | null
+  /** Typing test label captured per-event (custom = text name, normal =
+   * `mode (language)`). Missing/null = ordinary REC input or a mixed
+   * minute. Normalized to null on insert. */
+  typingTest?: string | null
+  /** Individual test run id ('' = non-test input). Part of the primary
+   * key, so missing is normalized to '' on insert. */
+  runId?: string
 }
 
 export interface MatrixMinuteRow {
@@ -57,6 +80,10 @@ export interface MatrixMinuteRow {
   holdCount?: number
   /** See {@link CharMinuteRow.appName}. */
   appName?: string | null
+  /** See {@link CharMinuteRow.typingTest}. */
+  typingTest?: string | null
+  /** See {@link CharMinuteRow.runId}. */
+  runId?: string
 }
 
 export interface MinuteStatsRow {
@@ -72,6 +99,10 @@ export interface MinuteStatsRow {
   intervalMaxMs: number | null
   /** See {@link CharMinuteRow.appName}. */
   appName?: string | null
+  /** See {@link CharMinuteRow.typingTest}. */
+  typingTest?: string | null
+  /** See {@link CharMinuteRow.runId}. */
+  runId?: string
 }
 
 export interface SessionRow {
@@ -85,20 +116,31 @@ export interface SessionRow {
  * row shape so the merge / parse layers share a single source of
  * truth. `bigramId` follows the `${prevKeycode}_${currKeycode}` format;
  * `h` is the decoded 8-bucket histogram that the merge layer encodes
- * to a compact BLOB for storage. */
+ * to a compact BLOB for storage. `s` / `sq` are the optional raw-IKI
+ * sum / sum-of-squares pair (see JsonlBigramMinuteEntry). */
 export type BigramMinuteEntry = JsonlBigramMinuteEntry
 export type BigramMinuteRow = JsonlBigramMinutePayload
 
-/** Row shape returned by range queries against typing_bigram_minute.
+/** Same shape as {@link BigramMinuteEntry} / {@link BigramMinuteRow} for
+ * trigrams — see JsonlTrigramMinuteEntry / JsonlTrigramMinutePayload. */
+export type TrigramMinuteEntry = JsonlTrigramMinuteEntry
+export type TrigramMinuteRow = JsonlTrigramMinutePayload
+
+/** Row shape returned by range queries against typing_bigram_minute or
+ * typing_trigram_minute — both tables project their id column as
+ * `ngramId` so a single shape covers 2-gram and 3-gram callers alike.
  * `hist` is decoded from the on-disk BLOB so callers don't depend on
- * better-sqlite3's binary representation. One row per (scope, minute,
- * bigram) — the aggregation layer (range / view IPC) sums these into
- * pair-totals. */
-export interface BigramMinuteCellRow {
-  bigramId: string
+ * better-sqlite3's binary representation. `sumIki` / `sumSqIki` are
+ * null when the row predates the sum columns (see schema.ts). One row
+ * per (scope, minute, ngram) — the aggregation layer (range / view
+ * IPC) sums these into pair-totals. */
+export interface NgramMinuteCellRow {
+  ngramId: string
   minuteTs: number
   count: number
   hist: number[]
+  sumIki: number | null
+  sumSqIki: number | null
 }
 
 /** Row shapes carried across sync bundles. Live columns plus the
@@ -120,6 +162,10 @@ export interface SessionExportRow extends SessionRow {
   isDeleted: boolean
 }
 export interface BigramMinuteExportRow extends BigramMinuteRow {
+  updatedAt: number
+  isDeleted: boolean
+}
+export interface TrigramMinuteExportRow extends TrigramMinuteRow {
   updatedAt: number
   isDeleted: boolean
 }
@@ -216,6 +262,168 @@ function appFilterClause(column: string): string {
   return `AND (json_array_length(@appNamesJson) = 0 OR ${column} IN (SELECT value FROM json_each(@appNamesJson)))`
 }
 
+/** Same shape as {@link appFilterClause} for the typing_test dimension.
+ * `@typingTestsJson` is a JSON array; empty = no filter. */
+function typingTestFilterClause(column: string): string {
+  return `AND (json_array_length(@typingTestsJson) = 0 OR ${column} IN (SELECT value FROM json_each(@typingTestsJson)))`
+}
+
+/** Same shape as {@link appFilterClause} for the run_id dimension (slice a
+ * test material down to individual runs). `@runIdsJson` is a JSON array;
+ * empty = no filter. */
+function runIdFilterClause(column: string): string {
+  return `AND (json_array_length(@runIdsJson) = 0 OR ${column} IN (SELECT value FROM json_each(@runIdsJson)))`
+}
+
+// Tombstone range deletes only flip live rows (is_deleted = 0) so existing
+// tombstones keep their original updated_at for GC purposes. Shared by
+// every per-table tombstone statement (char/matrix/minute_stats/session
+// plus the bigram/trigram pair prepared by prepareNgramStatements below) —
+// the WHERE clause itself carries no table-specific column, only the FK.
+const TOMBSTONE_RANGE_WHERE = `
+  scope_id IN (SELECT id FROM typing_scopes WHERE keyboard_uid = @uid)
+    AND is_deleted = 0
+`
+
+// Hash-scoped variant — Sync-delete of another device's day removes only
+// that device's rows while keeping same-day contributions from other
+// hashes intact.
+const TOMBSTONE_HASH_RANGE_WHERE = `
+  scope_id IN (
+    SELECT id FROM typing_scopes
+     WHERE keyboard_uid = @uid AND machine_hash = @machineHash
+  )
+    AND is_deleted = 0
+`
+
+/** Prepared statements for one n-gram table (typing_bigram_minute or
+ * typing_trigram_minute). Both tables are structurally identical aside
+ * from their id column name, so every statement here is generated from
+ * the same template with `table` / `idColumn` interpolated — see
+ * {@link prepareNgramStatements}. */
+interface NgramStatements {
+  merge: Statement
+  selectInRangeForUid: Statement
+  selectInRangeForUidAndHash: Statement
+  tombstoneForHashInRange: Statement
+  tombstoneInRange: Statement
+  tombstoneAll: Statement
+  deleteBefore: Statement
+}
+
+/** Build the seven prepared statements one n-gram table needs. `table`
+ * and `idColumn` are always hard-coded literals from the call sites
+ * below (never user input), so interpolating them directly into the SQL
+ * text is safe — every value-level parameter still goes through
+ * better-sqlite3's `@name` binding. */
+function prepareNgramStatements(
+  db: DatabaseType,
+  table: 'typing_bigram_minute' | 'typing_trigram_minute',
+  idColumn: 'bigram_id' | 'trigram_id',
+): NgramStatements {
+  return {
+    // Authoritative LWW upsert for sync merge — replaces the target row
+    // wholesale, respects the incoming is_deleted flag, and only fires
+    // when excluded.updated_at is strictly newer than the existing row.
+    merge: db.prepare(`
+      INSERT INTO ${table} (
+        scope_id, minute_ts, ${idColumn}, count, hist, sum_iki, sumsq_iki, app_name, typing_test, run_id, updated_at, is_deleted
+      )
+      VALUES (
+        @scopeId, @minuteTs, @ngramId, @count, @hist, @sumIki, @sumSqIki, @appName, @typingTest, @runId, @updatedAt, @isDeleted
+      )
+      ON CONFLICT(scope_id, minute_ts, run_id, ${idColumn}) DO UPDATE SET
+        count = excluded.count,
+        hist = excluded.hist,
+        sum_iki = excluded.sum_iki,
+        sumsq_iki = excluded.sumsq_iki,
+        app_name = excluded.app_name,
+        typing_test = excluded.typing_test,
+        updated_at = excluded.updated_at,
+        is_deleted = excluded.is_deleted
+      WHERE excluded.updated_at > ${table}.updated_at
+    `),
+
+    // Per-(scope, minute, ngram) rows in range for the Analyze n-gram
+    // view. The aggregation layer sums each pair's count + hist across
+    // rows; SQL keeps the per-minute / per-ngram granularity so the
+    // caller can also emit time-series data (e.g. peak detection)
+    // without re-querying. ORDER BY ngramId groups rows for the same
+    // pair together so the aggregator can accumulate without an
+    // intermediate Map sort.
+    selectInRangeForUid: db.prepare(`
+      SELECT t.${idColumn} AS ngramId,
+             t.minute_ts AS minuteTs,
+             t.count AS count,
+             t.hist AS hist,
+             t.sum_iki AS sumIki,
+             t.sumsq_iki AS sumSqIki
+        FROM ${table} t
+        JOIN typing_scopes s ON s.id = t.scope_id
+       WHERE s.keyboard_uid = @uid
+         AND s.is_deleted = 0
+         AND t.is_deleted = 0
+         AND t.minute_ts >= @sinceMs
+         AND t.minute_ts < @untilMs
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
+       ORDER BY t.${idColumn} ASC, t.minute_ts ASC
+    `),
+
+    // Same as selectInRangeForUid but restricted to a single machine_hash
+    // for the Analyze "This device" scope.
+    selectInRangeForUidAndHash: db.prepare(`
+      SELECT t.${idColumn} AS ngramId,
+             t.minute_ts AS minuteTs,
+             t.count AS count,
+             t.hist AS hist,
+             t.sum_iki AS sumIki,
+             t.sumsq_iki AS sumSqIki
+        FROM ${table} t
+        JOIN typing_scopes s ON s.id = t.scope_id
+       WHERE s.keyboard_uid = @uid
+         AND s.machine_hash = @machineHash
+         AND s.is_deleted = 0
+         AND t.is_deleted = 0
+         AND t.minute_ts >= @sinceMs
+         AND t.minute_ts < @untilMs
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
+       ORDER BY t.${idColumn} ASC, t.minute_ts ASC
+    `),
+
+    tombstoneForHashInRange: db.prepare(`
+      UPDATE ${table}
+         SET is_deleted = 1, updated_at = @updatedAt
+       WHERE ${TOMBSTONE_HASH_RANGE_WHERE}
+         AND minute_ts >= @startMs AND minute_ts < @endMs
+    `),
+
+    tombstoneInRange: db.prepare(`
+      UPDATE ${table}
+         SET is_deleted = 1, updated_at = @updatedAt
+       WHERE ${TOMBSTONE_RANGE_WHERE}
+         AND minute_ts >= @startMs AND minute_ts < @endMs
+    `),
+
+    tombstoneAll: db.prepare(`
+      UPDATE ${table}
+         SET is_deleted = 1, updated_at = @updatedAt
+       WHERE ${TOMBSTONE_RANGE_WHERE}
+    `),
+
+    deleteBefore: db.prepare(`
+      DELETE FROM ${table}
+       WHERE scope_id IN (SELECT id FROM typing_scopes WHERE machine_hash = @machineHash)
+         AND minute_ts < @cutoffMs
+    `),
+  }
+}
+
+// isDeleted is stored as a SQLite integer (0/1); Omit the row type's own
+// boolean isDeleted before intersecting with the raw numeric column so
+// the two conflicting property types don't collapse the whole
+// intersection to `never`.
+type WithDeletedFlag<T> = Omit<T, 'isDeleted'> & { isDeleted: number }
+
 export class TypingAnalyticsDB {
   private readonly db: DatabaseType
   private readonly upsertScopeStmt: Statement
@@ -228,7 +436,10 @@ export class TypingAnalyticsDB {
   private readonly mergeMatrixMinuteStmt: Statement
   private readonly mergeMinuteStatsStmt: Statement
   private readonly mergeSessionStmt: Statement
-  private readonly mergeBigramMinuteStmt: Statement
+  // Bigram/trigram merge, range-select, tombstone and delete-before
+  // statements live behind this map (keyed by gram size) instead of 14
+  // separate fields — see prepareNgramStatements above.
+  private readonly ngramStmts: { readonly 2: NgramStatements; readonly 3: NgramStatements }
   private readonly selectScopesForUidStmt: Statement
   private readonly selectCharMinutesForUidStmt: Statement
   private readonly selectMatrixMinutesForUidStmt: Statement
@@ -253,8 +464,6 @@ export class TypingAnalyticsDB {
   private readonly selectMatrixCellsByDayForUidAndHashStmt: Statement
   private readonly selectMinuteStatsInRangeForUidStmt: Statement
   private readonly selectMinuteStatsInRangeForUidAndHashStmt: Statement
-  private readonly selectBigramMinutesInRangeForUidStmt: Statement
-  private readonly selectBigramMinutesInRangeForUidAndHashStmt: Statement
   private readonly selectSessionsInRangeForUidStmt: Statement
   private readonly selectSessionsInRangeForUidAndHashStmt: Statement
   private readonly selectBksMinuteInRangeForUidStmt: Statement
@@ -297,8 +506,15 @@ export class TypingAnalyticsDB {
   // optional via the @machineHash IS NULL trick so a single statement
   // serves both "all devices" and "this device" scopes.
   private readonly selectAppsForUidInRangeStmt: Statement
+  private readonly selectTypingTestsForUidInRangeStmt: Statement
+  private readonly selectTypingTestRunsForUidInRangeStmt: Statement
   private readonly selectAppUsageForUidInRangeStmt: Statement
   private readonly selectWpmByAppForUidInRangeStmt: Statement
+
+  /** Set when a migration dropped tables (a primary-key change can't be
+   * done in-place), so the caller must rebuild the cache from the JSONL
+   * masters before serving queries. Read once after construction. */
+  cacheNeedsRebuild = false
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true })
@@ -359,12 +575,16 @@ export class TypingAnalyticsDB {
     // as mixed. This matches the aggregator's "size>1 set => null"
     // payload contract on the read side.
     this.upsertCharMinuteStmt = this.db.prepare(`
-      INSERT INTO typing_char_minute (scope_id, minute_ts, char, count, app_name, updated_at, is_deleted)
-      VALUES (@scopeId, @minuteTs, @char, @count, @appName, @updatedAt, 0)
-      ON CONFLICT(scope_id, minute_ts, char) DO UPDATE SET
+      INSERT INTO typing_char_minute (scope_id, minute_ts, char, count, app_name, typing_test, run_id, updated_at, is_deleted)
+      VALUES (@scopeId, @minuteTs, @char, @count, @appName, @typingTest, @runId, @updatedAt, 0)
+      ON CONFLICT(scope_id, minute_ts, run_id, char) DO UPDATE SET
         count = typing_char_minute.count + excluded.count,
         app_name = CASE
           WHEN typing_char_minute.app_name IS excluded.app_name THEN typing_char_minute.app_name
+          ELSE NULL
+        END,
+        typing_test = CASE
+          WHEN typing_char_minute.typing_test IS excluded.typing_test THEN typing_char_minute.typing_test
           ELSE NULL
         END,
         updated_at = excluded.updated_at,
@@ -375,22 +595,26 @@ export class TypingAnalyticsDB {
       INSERT INTO typing_matrix_minute (
         scope_id, minute_ts, row, col, layer, keycode, count,
         tap_count, hold_count,
-        app_name,
+        app_name, typing_test, run_id,
         updated_at, is_deleted
       )
       VALUES (
         @scopeId, @minuteTs, @row, @col, @layer, @keycode, @count,
         @tapCount, @holdCount,
-        @appName,
+        @appName, @typingTest, @runId,
         @updatedAt, 0
       )
-      ON CONFLICT(scope_id, minute_ts, row, col, layer) DO UPDATE SET
+      ON CONFLICT(scope_id, minute_ts, run_id, row, col, layer) DO UPDATE SET
         count = typing_matrix_minute.count + excluded.count,
         tap_count = typing_matrix_minute.tap_count + excluded.tap_count,
         hold_count = typing_matrix_minute.hold_count + excluded.hold_count,
         keycode = excluded.keycode,
         app_name = CASE
           WHEN typing_matrix_minute.app_name IS excluded.app_name THEN typing_matrix_minute.app_name
+          ELSE NULL
+        END,
+        typing_test = CASE
+          WHEN typing_matrix_minute.typing_test IS excluded.typing_test THEN typing_matrix_minute.typing_test
           ELSE NULL
         END,
         updated_at = excluded.updated_at,
@@ -402,17 +626,17 @@ export class TypingAnalyticsDB {
         scope_id, minute_ts, keystrokes, active_ms,
         interval_avg_ms, interval_min_ms,
         interval_p25_ms, interval_p50_ms, interval_p75_ms, interval_max_ms,
-        app_name,
+        app_name, typing_test, run_id,
         updated_at, is_deleted
       )
       VALUES (
         @scopeId, @minuteTs, @keystrokes, @activeMs,
         @intervalAvgMs, @intervalMinMs,
         @intervalP25Ms, @intervalP50Ms, @intervalP75Ms, @intervalMaxMs,
-        @appName,
+        @appName, @typingTest, @runId,
         @updatedAt, 0
       )
-      ON CONFLICT(scope_id, minute_ts) DO UPDATE SET
+      ON CONFLICT(scope_id, minute_ts, run_id) DO UPDATE SET
         keystrokes = typing_minute_stats.keystrokes + excluded.keystrokes,
         active_ms = typing_minute_stats.active_ms + excluded.active_ms,
         interval_avg_ms = excluded.interval_avg_ms,
@@ -423,6 +647,10 @@ export class TypingAnalyticsDB {
         interval_max_ms = MAX(typing_minute_stats.interval_max_ms, excluded.interval_max_ms),
         app_name = CASE
           WHEN typing_minute_stats.app_name IS excluded.app_name THEN typing_minute_stats.app_name
+          ELSE NULL
+        END,
+        typing_test = CASE
+          WHEN typing_minute_stats.typing_test IS excluded.typing_test THEN typing_minute_stats.typing_test
           ELSE NULL
         END,
         updated_at = excluded.updated_at,
@@ -457,6 +685,11 @@ export class TypingAnalyticsDB {
        WHERE scope_id IN (SELECT id FROM typing_scopes WHERE machine_hash = @machineHash)
          AND minute_ts < @cutoffMs
     `)
+
+    this.ngramStmts = {
+      2: prepareNgramStatements(this.db, 'typing_bigram_minute', 'bigram_id'),
+      3: prepareNgramStatements(this.db, 'typing_trigram_minute', 'trigram_id'),
+    }
 
     this.deleteSessionsBeforeStmt = this.db.prepare(`
       DELETE FROM typing_sessions
@@ -498,14 +731,15 @@ export class TypingAnalyticsDB {
     // parameter is always defined.
     this.mergeCharMinuteStmt = this.db.prepare(`
       INSERT INTO typing_char_minute (
-        scope_id, minute_ts, char, count, app_name, updated_at, is_deleted
+        scope_id, minute_ts, char, count, app_name, typing_test, run_id, updated_at, is_deleted
       )
       VALUES (
-        @scopeId, @minuteTs, @char, @count, @appName, @updatedAt, @isDeleted
+        @scopeId, @minuteTs, @char, @count, @appName, @typingTest, @runId, @updatedAt, @isDeleted
       )
-      ON CONFLICT(scope_id, minute_ts, char) DO UPDATE SET
+      ON CONFLICT(scope_id, minute_ts, run_id, char) DO UPDATE SET
         count = excluded.count,
         app_name = excluded.app_name,
+        typing_test = excluded.typing_test,
         updated_at = excluded.updated_at,
         is_deleted = excluded.is_deleted
       WHERE excluded.updated_at > typing_char_minute.updated_at
@@ -515,21 +749,22 @@ export class TypingAnalyticsDB {
       INSERT INTO typing_matrix_minute (
         scope_id, minute_ts, row, col, layer, keycode, count,
         tap_count, hold_count,
-        app_name,
+        app_name, typing_test, run_id,
         updated_at, is_deleted
       )
       VALUES (
         @scopeId, @minuteTs, @row, @col, @layer, @keycode, @count,
         @tapCount, @holdCount,
-        @appName,
+        @appName, @typingTest, @runId,
         @updatedAt, @isDeleted
       )
-      ON CONFLICT(scope_id, minute_ts, row, col, layer) DO UPDATE SET
+      ON CONFLICT(scope_id, minute_ts, run_id, row, col, layer) DO UPDATE SET
         keycode = excluded.keycode,
         count = excluded.count,
         tap_count = excluded.tap_count,
         hold_count = excluded.hold_count,
         app_name = excluded.app_name,
+        typing_test = excluded.typing_test,
         updated_at = excluded.updated_at,
         is_deleted = excluded.is_deleted
       WHERE excluded.updated_at > typing_matrix_minute.updated_at
@@ -540,17 +775,17 @@ export class TypingAnalyticsDB {
         scope_id, minute_ts, keystrokes, active_ms,
         interval_avg_ms, interval_min_ms,
         interval_p25_ms, interval_p50_ms, interval_p75_ms, interval_max_ms,
-        app_name,
+        app_name, typing_test, run_id,
         updated_at, is_deleted
       )
       VALUES (
         @scopeId, @minuteTs, @keystrokes, @activeMs,
         @intervalAvgMs, @intervalMinMs,
         @intervalP25Ms, @intervalP50Ms, @intervalP75Ms, @intervalMaxMs,
-        @appName,
+        @appName, @typingTest, @runId,
         @updatedAt, @isDeleted
       )
-      ON CONFLICT(scope_id, minute_ts) DO UPDATE SET
+      ON CONFLICT(scope_id, minute_ts, run_id) DO UPDATE SET
         keystrokes = excluded.keystrokes,
         active_ms = excluded.active_ms,
         interval_avg_ms = excluded.interval_avg_ms,
@@ -560,6 +795,7 @@ export class TypingAnalyticsDB {
         interval_p75_ms = excluded.interval_p75_ms,
         interval_max_ms = excluded.interval_max_ms,
         app_name = excluded.app_name,
+        typing_test = excluded.typing_test,
         updated_at = excluded.updated_at,
         is_deleted = excluded.is_deleted
       WHERE excluded.updated_at > typing_minute_stats.updated_at
@@ -581,21 +817,9 @@ export class TypingAnalyticsDB {
       WHERE excluded.updated_at > typing_sessions.updated_at
     `)
 
-    this.mergeBigramMinuteStmt = this.db.prepare(`
-      INSERT INTO typing_bigram_minute (
-        scope_id, minute_ts, bigram_id, count, hist, app_name, updated_at, is_deleted
-      )
-      VALUES (
-        @scopeId, @minuteTs, @bigramId, @count, @hist, @appName, @updatedAt, @isDeleted
-      )
-      ON CONFLICT(scope_id, minute_ts, bigram_id) DO UPDATE SET
-        count = excluded.count,
-        hist = excluded.hist,
-        app_name = excluded.app_name,
-        updated_at = excluded.updated_at,
-        is_deleted = excluded.is_deleted
-      WHERE excluded.updated_at > typing_bigram_minute.updated_at
-    `)
+    // this.ngramStmts (built earlier in this constructor) owns the
+    // bigram/trigram merge, range-select, tombstone and delete-before
+    // statements — see prepareNgramStatements above.
 
     // Sync export selects. Live rows within the live window or tombstones
     // within the longer tombstone window. typing_scopes is selected without
@@ -728,7 +952,7 @@ export class TypingAnalyticsDB {
          AND m.layer = @layer
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY m.row, m.col
     `)
 
@@ -746,7 +970,7 @@ export class TypingAnalyticsDB {
          AND m.layer = @layer
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY m.row, m.col
     `)
 
@@ -786,7 +1010,7 @@ export class TypingAnalyticsDB {
        WHERE s.keyboard_uid = @uid
          AND s.is_deleted = 0
          AND t.is_deleted = 0
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY date
        ORDER BY date DESC
     `)
@@ -804,7 +1028,7 @@ export class TypingAnalyticsDB {
          AND s.machine_hash = @machineHash
          AND s.is_deleted = 0
          AND t.is_deleted = 0
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY date
        ORDER BY date DESC
     `)
@@ -863,7 +1087,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY dow, hour
     `)
 
@@ -879,7 +1103,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY dow, hour
     `)
 
@@ -898,7 +1122,7 @@ export class TypingAnalyticsDB {
          AND m.is_deleted = 0
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY m.layer
        ORDER BY m.layer ASC
     `)
@@ -914,7 +1138,7 @@ export class TypingAnalyticsDB {
          AND m.is_deleted = 0
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY m.layer
        ORDER BY m.layer ASC
     `)
@@ -940,7 +1164,7 @@ export class TypingAnalyticsDB {
          AND m.is_deleted = 0
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY m.layer, m.row, m.col
     `)
 
@@ -959,7 +1183,7 @@ export class TypingAnalyticsDB {
          AND m.is_deleted = 0
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY m.layer, m.row, m.col
     `)
 
@@ -986,7 +1210,7 @@ export class TypingAnalyticsDB {
          AND m.is_deleted = 0
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY date, m.layer, m.row, m.col
        ORDER BY date ASC
     `)
@@ -1007,7 +1231,7 @@ export class TypingAnalyticsDB {
          AND m.is_deleted = 0
          AND m.minute_ts >= @sinceMs
          AND m.minute_ts < @untilMs
-         ${appFilterClause('m.app_name')}
+         ${appFilterClause('m.app_name')} ${typingTestFilterClause('m.typing_test')} ${runIdFilterClause('m.run_id')}
        GROUP BY date, m.layer, m.row, m.col
        ORDER BY date ASC
     `)
@@ -1039,7 +1263,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY t.minute_ts
        ORDER BY t.minute_ts ASC
     `)
@@ -1061,7 +1285,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY t.minute_ts
        ORDER BY t.minute_ts ASC
     `)
@@ -1087,6 +1311,48 @@ export class TypingAnalyticsDB {
          AND t.app_name IS NOT NULL
        GROUP BY t.app_name
        ORDER BY keystrokes DESC
+    `)
+
+    // Distinct typing_test labels in range — the TypingTest filter's option
+    // source (mirrors selectAppsForUidInRange). NULL (REC / mixed) excluded.
+    this.selectTypingTestsForUidInRangeStmt = this.db.prepare(`
+      SELECT t.typing_test AS name,
+             SUM(t.keystrokes) AS keystrokes,
+             SUM(t.active_ms) AS activeMs
+        FROM typing_minute_stats t
+        JOIN typing_scopes s ON s.id = t.scope_id
+       WHERE s.keyboard_uid = @uid
+         AND (@machineHash IS NULL OR s.machine_hash = @machineHash)
+         AND s.is_deleted = 0
+         AND t.is_deleted = 0
+         AND t.minute_ts >= @sinceMs
+         AND t.minute_ts < @untilMs
+         AND t.typing_test IS NOT NULL
+       GROUP BY t.typing_test
+       ORDER BY keystrokes DESC
+    `)
+
+    // Distinct typing-test run ids in range — the per-run ("Results") filter's
+    // option source. run_id '' is the non-test (REC) bucket, so it's excluded.
+    // @typingTestsJson narrows runs to the selected material(s); empty = all.
+    // firstMs (MIN minute_ts) is the run's start, used to label runs that have
+    // no saved typingTestResults entry.
+    this.selectTypingTestRunsForUidInRangeStmt = this.db.prepare(`
+      SELECT t.run_id AS runId,
+             SUM(t.keystrokes) AS keystrokes,
+             MIN(t.minute_ts) AS firstMs
+        FROM typing_minute_stats t
+        JOIN typing_scopes s ON s.id = t.scope_id
+       WHERE s.keyboard_uid = @uid
+         AND (@machineHash IS NULL OR s.machine_hash = @machineHash)
+         AND s.is_deleted = 0
+         AND t.is_deleted = 0
+         AND t.minute_ts >= @sinceMs
+         AND t.minute_ts < @untilMs
+         AND t.run_id != ''
+         ${typingTestFilterClause('t.typing_test')}
+       GROUP BY t.run_id
+       ORDER BY firstMs DESC
     `)
 
     // App-Usage Distribution aggregates per app, plus a synthetic
@@ -1133,44 +1399,8 @@ export class TypingAnalyticsDB {
        ORDER BY keystrokes DESC
     `)
 
-    // Bigram per-pair rows in range. The aggregation layer sums each
-    // pair's count + hist across rows; SQL keeps the per-minute / per-
-    // bigram granularity so the caller can also emit time-series data
-    // (e.g. peak detection) without re-querying. ORDER BY bigramId
-    // groups rows for the same pair together so the aggregator can
-    // accumulate without an intermediate Map sort.
-    this.selectBigramMinutesInRangeForUidStmt = this.db.prepare(`
-      SELECT t.bigram_id AS bigramId,
-             t.minute_ts AS minuteTs,
-             t.count AS count,
-             t.hist AS hist
-        FROM typing_bigram_minute t
-        JOIN typing_scopes s ON s.id = t.scope_id
-       WHERE s.keyboard_uid = @uid
-         AND s.is_deleted = 0
-         AND t.is_deleted = 0
-         AND t.minute_ts >= @sinceMs
-         AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
-       ORDER BY t.bigram_id ASC, t.minute_ts ASC
-    `)
-
-    this.selectBigramMinutesInRangeForUidAndHashStmt = this.db.prepare(`
-      SELECT t.bigram_id AS bigramId,
-             t.minute_ts AS minuteTs,
-             t.count AS count,
-             t.hist AS hist
-        FROM typing_bigram_minute t
-        JOIN typing_scopes s ON s.id = t.scope_id
-       WHERE s.keyboard_uid = @uid
-         AND s.machine_hash = @machineHash
-         AND s.is_deleted = 0
-         AND t.is_deleted = 0
-         AND t.minute_ts >= @sinceMs
-         AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
-       ORDER BY t.bigram_id ASC, t.minute_ts ASC
-    `)
+    // Bigram/trigram per-pair range-select statements live in
+    // this.ngramStmts[gram] — see prepareNgramStatements above.
 
     // Sessions whose start falls inside [@sinceMs, @untilMs). We filter
     // on `start_ms` so "last 24 hours" captures every session the user
@@ -1238,7 +1468,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY t.minute_ts
        HAVING backspaceCount > 0
        ORDER BY t.minute_ts ASC
@@ -1261,7 +1491,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY t.minute_ts
        HAVING backspaceCount > 0
        ORDER BY t.minute_ts ASC
@@ -1286,7 +1516,7 @@ export class TypingAnalyticsDB {
              AND t.is_deleted = 0
              AND t.minute_ts >= @sinceMs
              AND t.minute_ts < @untilMs
-             ${appFilterClause('t.app_name')}
+             ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
            GROUP BY t.minute_ts
         ) AS total
        WHERE total.active_ms > 0
@@ -1309,7 +1539,7 @@ export class TypingAnalyticsDB {
              AND t.is_deleted = 0
              AND t.minute_ts >= @sinceMs
              AND t.minute_ts < @untilMs
-             ${appFilterClause('t.app_name')}
+             ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
            GROUP BY t.minute_ts
         ) AS total
        WHERE total.active_ms > 0
@@ -1333,7 +1563,7 @@ export class TypingAnalyticsDB {
              AND t.is_deleted = 0
              AND t.minute_ts >= @sinceMs
              AND t.minute_ts < @untilMs
-             ${appFilterClause('t.app_name')}
+             ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
            GROUP BY t.minute_ts
         ) AS total
        WHERE total.active_ms > 0
@@ -1357,7 +1587,7 @@ export class TypingAnalyticsDB {
              AND t.is_deleted = 0
              AND t.minute_ts >= @sinceMs
              AND t.minute_ts < @untilMs
-             ${appFilterClause('t.app_name')}
+             ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
            GROUP BY t.minute_ts
         ) AS total
        WHERE total.active_ms > 0
@@ -1375,7 +1605,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY t.minute_ts
        HAVING value > 0
        ORDER BY value DESC
@@ -1392,7 +1622,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY t.minute_ts
        HAVING value > 0
        ORDER BY value DESC
@@ -1409,7 +1639,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY day
        HAVING value > 0
        ORDER BY value DESC
@@ -1427,7 +1657,7 @@ export class TypingAnalyticsDB {
          AND t.is_deleted = 0
          AND t.minute_ts >= @sinceMs
          AND t.minute_ts < @untilMs
-         ${appFilterClause('t.app_name')}
+         ${appFilterClause('t.app_name')} ${typingTestFilterClause('t.typing_test')} ${runIdFilterClause('t.run_id')}
        GROUP BY day
        HAVING value > 0
        ORDER BY value DESC
@@ -1556,26 +1786,24 @@ export class TypingAnalyticsDB {
 
     // Tombstone range deletes. Only flips live rows (is_deleted = 0) so
     // existing tombstones keep their original updated_at for GC purposes.
-    const tombstoneRangeWhere = `
-      scope_id IN (SELECT id FROM typing_scopes WHERE keyboard_uid = @uid)
-        AND is_deleted = 0
-    `
+    // Bigram/trigram range/all-tombstone statements live in
+    // this.ngramStmts[gram] — see prepareNgramStatements above.
     this.tombstoneCharMinutesInRangeStmt = this.db.prepare(`
       UPDATE typing_char_minute
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
          AND minute_ts >= @startMs AND minute_ts < @endMs
     `)
     this.tombstoneMatrixMinutesInRangeStmt = this.db.prepare(`
       UPDATE typing_matrix_minute
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
          AND minute_ts >= @startMs AND minute_ts < @endMs
     `)
     this.tombstoneMinuteStatsInRangeStmt = this.db.prepare(`
       UPDATE typing_minute_stats
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
          AND minute_ts >= @startMs AND minute_ts < @endMs
     `)
     // Sessions use overlap semantics instead of start_ms-containment so a
@@ -1585,64 +1813,57 @@ export class TypingAnalyticsDB {
     this.tombstoneSessionsInRangeStmt = this.db.prepare(`
       UPDATE typing_sessions
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
          AND end_ms > @startMs AND start_ms < @endMs
     `)
 
     // Hash-scoped range variants — Sync-delete of another device's day
     // removes only that device's rows while keeping same-day contributions
     // from other hashes intact.
-    const tombstoneHashRangeWhere = `
-      scope_id IN (
-        SELECT id FROM typing_scopes
-         WHERE keyboard_uid = @uid AND machine_hash = @machineHash
-      )
-        AND is_deleted = 0
-    `
     this.tombstoneCharMinutesForHashInRangeStmt = this.db.prepare(`
       UPDATE typing_char_minute
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneHashRangeWhere}
+       WHERE ${TOMBSTONE_HASH_RANGE_WHERE}
          AND minute_ts >= @startMs AND minute_ts < @endMs
     `)
     this.tombstoneMatrixMinutesForHashInRangeStmt = this.db.prepare(`
       UPDATE typing_matrix_minute
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneHashRangeWhere}
+       WHERE ${TOMBSTONE_HASH_RANGE_WHERE}
          AND minute_ts >= @startMs AND minute_ts < @endMs
     `)
     this.tombstoneMinuteStatsForHashInRangeStmt = this.db.prepare(`
       UPDATE typing_minute_stats
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneHashRangeWhere}
+       WHERE ${TOMBSTONE_HASH_RANGE_WHERE}
          AND minute_ts >= @startMs AND minute_ts < @endMs
     `)
     this.tombstoneSessionsForHashInRangeStmt = this.db.prepare(`
       UPDATE typing_sessions
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneHashRangeWhere}
+       WHERE ${TOMBSTONE_HASH_RANGE_WHERE}
          AND end_ms > @startMs AND start_ms < @endMs
     `)
 
     this.tombstoneAllCharMinutesStmt = this.db.prepare(`
       UPDATE typing_char_minute
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
     `)
     this.tombstoneAllMatrixMinutesStmt = this.db.prepare(`
       UPDATE typing_matrix_minute
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
     `)
     this.tombstoneAllMinuteStatsStmt = this.db.prepare(`
       UPDATE typing_minute_stats
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
     `)
     this.tombstoneAllSessionsStmt = this.db.prepare(`
       UPDATE typing_sessions
          SET is_deleted = 1, updated_at = @updatedAt
-       WHERE ${tombstoneRangeWhere}
+       WHERE ${TOMBSTONE_RANGE_WHERE}
     `)
   }
 
@@ -1673,6 +1894,12 @@ export class TypingAnalyticsDB {
     // fixtures that hand-build mixed rows still work; live ingestion
     // sets stats.appName once and lets the rows inherit.
     const minuteAppName = stats.appName ?? null
+    // typing_test flows the same way as app_name (uniform per minute, with
+    // a per-row override accepted for hand-built fixtures).
+    const minuteTypingTest = stats.typingTest ?? null
+    // run_id is part of the bucket key, so the whole minute shares one run
+    // ('' for non-test input). Per-row override accepted for fixtures.
+    const minuteRunId = stats.runId ?? ''
     const upsertTx = this.db.transaction(() => {
       this.upsertMinuteStatsStmt.run({
         scopeId: stats.scopeId,
@@ -1686,6 +1913,8 @@ export class TypingAnalyticsDB {
         intervalP75Ms: stats.intervalP75Ms,
         intervalMaxMs: stats.intervalMaxMs,
         appName: minuteAppName,
+        typingTest: minuteTypingTest,
+        runId: minuteRunId,
         updatedAt,
       })
       for (const c of charCounts) {
@@ -1695,6 +1924,8 @@ export class TypingAnalyticsDB {
           char: c.char,
           count: c.count,
           appName: c.appName ?? minuteAppName,
+          typingTest: c.typingTest ?? minuteTypingTest,
+          runId: c.runId ?? minuteRunId,
           updatedAt,
         })
       }
@@ -1710,6 +1941,8 @@ export class TypingAnalyticsDB {
           tapCount: m.tapCount ?? 0,
           holdCount: m.holdCount ?? 0,
           appName: m.appName ?? minuteAppName,
+          typingTest: m.typingTest ?? minuteTypingTest,
+          runId: m.runId ?? minuteRunId,
           updatedAt,
         })
       }
@@ -1733,6 +1966,8 @@ export class TypingAnalyticsDB {
       this.deleteCharMinuteBeforeStmt.run({ machineHash, cutoffMs })
       this.deleteMatrixMinuteBeforeStmt.run({ machineHash, cutoffMs })
       this.deleteMinuteStatsBeforeStmt.run({ machineHash, cutoffMs })
+      this.ngramStmts[2].deleteBefore.run({ machineHash, cutoffMs })
+      this.ngramStmts[3].deleteBefore.run({ machineHash, cutoffMs })
       this.deleteSessionsBeforeStmt.run({ machineHash, cutoffMs })
     })
     tx()
@@ -1808,14 +2043,14 @@ export class TypingAnalyticsDB {
     sinceMs: number,
     untilMs: number,
     machineHash?: string,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): Map<string, { total: number; tap: number; hold: number }> {
     const stmt = machineHash !== undefined
       ? this.selectMatrixHeatmapInRangeForHashStmt
       : this.selectMatrixHeatmapInRangeStmt
     const params = machineHash !== undefined
-      ? { uid, machineHash, layer, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }
-      : { uid, layer, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }
+      ? { uid, machineHash, layer, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }
+      : { uid, layer, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }
     const rows = stmt.all(params) as Array<{
       row: number
       col: number
@@ -1843,9 +2078,9 @@ export class TypingAnalyticsDB {
    * and ordered newest first. Live rows only. */
   listDailySummariesForUid(
     uid: string,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingDailySummary[] {
-    return this.selectDailySummariesForUidStmt.all({ uid, appNamesJson: JSON.stringify(appScopes) }) as TypingDailySummary[]
+    return this.selectDailySummariesForUidStmt.all({ uid, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingDailySummary[]
   }
 
   /** Daily summaries for a keyboard uid restricted to a single
@@ -1856,9 +2091,9 @@ export class TypingAnalyticsDB {
   listDailySummariesForUidAndHash(
     uid: string,
     machineHash: string,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingDailySummary[] {
-    return this.selectDailySummariesForUidAndHashStmt.all({ uid, machineHash, appNamesJson: JSON.stringify(appScopes) }) as TypingDailySummary[]
+    return this.selectDailySummariesForUidAndHashStmt.all({ uid, machineHash, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingDailySummary[]
   }
 
   /** Daily interval summaries (min/p25/p50/p75/max) for a keyboard uid,
@@ -1886,9 +2121,9 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingActivityCell[] {
-    return this.selectActivityGridForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingActivityCell[]
+    return this.selectActivityGridForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingActivityCell[]
   }
 
   /** Same as {@link listActivityGridForUid} but restricted to a single
@@ -1899,9 +2134,9 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingActivityCell[] {
-    return this.selectActivityGridForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingActivityCell[]
+    return this.selectActivityGridForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingActivityCell[]
   }
 
   /** Per-layer keystroke totals for the Analyze > Layer tab. Layers
@@ -1912,9 +2147,9 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingLayerUsageRow[] {
-    return this.selectLayerUsageForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingLayerUsageRow[]
+    return this.selectLayerUsageForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingLayerUsageRow[]
   }
 
   /** Same as {@link listLayerUsageForUid} but restricted to one
@@ -1924,9 +2159,9 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingLayerUsageRow[] {
-    return this.selectLayerUsageForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingLayerUsageRow[]
+    return this.selectLayerUsageForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingLayerUsageRow[]
   }
 
   /** Per-(layer, row, col) press totals for the Analyze > Layer
@@ -1937,9 +2172,9 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingMatrixCellRow[] {
-    return this.selectMatrixCellsForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingMatrixCellRow[]
+    return this.selectMatrixCellsForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingMatrixCellRow[]
   }
 
   /** Same as {@link listMatrixCellsForUid} but restricted to one
@@ -1949,9 +2184,9 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingMatrixCellRow[] {
-    return this.selectMatrixCellsForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingMatrixCellRow[]
+    return this.selectMatrixCellsForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingMatrixCellRow[]
   }
 
   /** Per-(localDay, layer, row, col) press totals for the Analyze
@@ -1963,9 +2198,9 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingMatrixCellDailyRow[] {
-    const rows = this.selectMatrixCellsByDayForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as MatrixCellsByDayDbRow[]
+    const rows = this.selectMatrixCellsByDayForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as MatrixCellsByDayDbRow[]
     return rows.map(matrixCellsByDayDbRowToDailyRow)
   }
 
@@ -1976,9 +2211,9 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingMatrixCellDailyRow[] {
-    const rows = this.selectMatrixCellsByDayForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as MatrixCellsByDayDbRow[]
+    const rows = this.selectMatrixCellsByDayForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as MatrixCellsByDayDbRow[]
     return rows.map(matrixCellsByDayDbRowToDailyRow)
   }
 
@@ -1992,13 +2227,13 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingMinuteStatsRow[] {
     return this.selectMinuteStatsInRangeForUidStmt.all({
       uid,
       sinceMs,
       untilMs,
-      appNamesJson: JSON.stringify(appScopes),
+      appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes),
     }) as TypingMinuteStatsRow[]
   }
 
@@ -2009,14 +2244,14 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingMinuteStatsRow[] {
     return this.selectMinuteStatsInRangeForUidAndHashStmt.all({
       uid,
       machineHash,
       sinceMs,
       untilMs,
-      appNamesJson: JSON.stringify(appScopes),
+      appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes),
     }) as TypingMinuteStatsRow[]
   }
 
@@ -2035,6 +2270,42 @@ export class TypingAnalyticsDB {
       keystrokes: number
       activeMs: number
     }[]
+  }
+
+  /** Distinct typing_test labels with activity in range — the TypingTest
+   * filter's option source. */
+  listTypingTestsForUidInRange(
+    uid: string,
+    machineHash: string | null,
+    sinceMs: number,
+    untilMs: number,
+  ): { name: string; keystrokes: number; activeMs: number }[] {
+    return this.selectTypingTestsForUidInRangeStmt.all({ uid, machineHash, sinceMs, untilMs }) as {
+      name: string
+      keystrokes: number
+      activeMs: number
+    }[]
+  }
+
+  /** Distinct typing-test run ids with activity in range — the per-run
+   * ("Results") filter's option source. Runs are the source of truth for
+   * what exists; `typingTestScopes` narrows them to the selected
+   * material(s) (empty = all). `firstMs` is the run's start minute, used to
+   * label runs that have no saved typingTestResults entry. */
+  listTypingTestRunsForUidInRange(
+    uid: string,
+    machineHash: string | null,
+    sinceMs: number,
+    untilMs: number,
+    typingTestScopes: readonly string[] = [],
+  ): { runId: string; keystrokes: number; firstMs: number }[] {
+    return this.selectTypingTestRunsForUidInRangeStmt.all({
+      uid,
+      machineHash,
+      sinceMs,
+      untilMs,
+      typingTestsJson: JSON.stringify(typingTestScopes),
+    }) as { runId: string; keystrokes: number; firstMs: number }[]
   }
 
   /** Per-app keystroke / activeMs aggregates including a synthetic
@@ -2071,49 +2342,97 @@ export class TypingAnalyticsDB {
     }[]
   }
 
-  /** Per-(scope, minute, bigram) rows in `[sinceMs, untilMs)` for the
-   * Analyze Bigrams view. Hist is decoded from the BLOB so the
-   * aggregation layer stays independent of the on-disk encoding. Rows
-   * are ordered by `bigramId, minuteTs` so a streaming aggregator can
-   * accumulate per-pair totals without sorting. */
+  /** Per-(scope, minute, ngram) rows in `[sinceMs, untilMs)` for the
+   * Analyze Bigrams / n-gram view. `gram` selects `typing_bigram_minute`
+   * (2) or `typing_trigram_minute` (3) via {@link ngramStmts}. Hist is
+   * decoded from the BLOB so the aggregation layer stays independent of
+   * the on-disk encoding. Rows are ordered by `ngramId, minuteTs` so a
+   * streaming aggregator can accumulate per-pair totals without sorting. */
+  listNgramMinutesInRangeForUid(
+    gram: 2 | 3,
+    uid: string,
+    sinceMs: number,
+    untilMs: number,
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
+  ): NgramMinuteCellRow[] {
+    return this.toNgramMinuteCellRows(
+      this.ngramStmts[gram].selectInRangeForUid.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }),
+    )
+  }
+
+  /** Same as {@link listNgramMinutesInRangeForUid} but restricted to a
+   * single machine_hash for the Analyze "This device" scope. */
+  listNgramMinutesInRangeForUidAndHash(
+    gram: 2 | 3,
+    uid: string,
+    machineHash: string,
+    sinceMs: number,
+    untilMs: number,
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
+  ): NgramMinuteCellRow[] {
+    return this.toNgramMinuteCellRows(
+      this.ngramStmts[gram].selectInRangeForUidAndHash.all({
+        uid,
+        machineHash,
+        sinceMs,
+        untilMs,
+        appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes),
+      }),
+    )
+  }
+
+  private toNgramMinuteCellRows(raws: unknown): NgramMinuteCellRow[] {
+    return (raws as { ngramId: string; minuteTs: number; count: number; hist: Uint8Array; sumIki: number | null; sumSqIki: number | null }[]).map((r) => ({
+      ngramId: r.ngramId,
+      minuteTs: r.minuteTs,
+      count: r.count,
+      hist: decodeHistBuffer(r.hist),
+      sumIki: r.sumIki,
+      sumSqIki: r.sumSqIki,
+    }))
+  }
+
+  /** @deprecated thin gram=2 wrapper kept for existing call sites
+   * (hub-analytics.ts, tests) — prefer {@link listNgramMinutesInRangeForUid}. */
   listBigramMinutesInRangeForUid(
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
-  ): BigramMinuteCellRow[] {
-    return this.toBigramMinuteCellRows(
-      this.selectBigramMinutesInRangeForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }),
-    )
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
+  ): NgramMinuteCellRow[] {
+    return this.listNgramMinutesInRangeForUid(2, uid, sinceMs, untilMs, appScopes, typingTestScopes, runIdScopes)
   }
 
-  /** Same as {@link listBigramMinutesInRangeForUid} but restricted to
-   * a single machine_hash for the Analyze "This device" scope. */
+  /** @deprecated thin gram=2 wrapper — see {@link listBigramMinutesInRangeForUid}. */
   listBigramMinutesInRangeForUidAndHash(
     uid: string,
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
-  ): BigramMinuteCellRow[] {
-    return this.toBigramMinuteCellRows(
-      this.selectBigramMinutesInRangeForUidAndHashStmt.all({
-        uid,
-        machineHash,
-        sinceMs,
-        untilMs,
-        appNamesJson: JSON.stringify(appScopes),
-      }),
-    )
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
+  ): NgramMinuteCellRow[] {
+    return this.listNgramMinutesInRangeForUidAndHash(2, uid, machineHash, sinceMs, untilMs, appScopes, typingTestScopes, runIdScopes)
   }
 
-  private toBigramMinuteCellRows(raws: unknown): BigramMinuteCellRow[] {
-    return (raws as { bigramId: string; minuteTs: number; count: number; hist: Uint8Array }[]).map((r) => ({
-      bigramId: r.bigramId,
-      minuteTs: r.minuteTs,
-      count: r.count,
-      hist: decodeHistBuffer(r.hist),
-    }))
+  /** @deprecated thin gram=3 wrapper — see {@link listBigramMinutesInRangeForUid}. */
+  listTrigramMinutesInRangeForUid(
+    uid: string,
+    sinceMs: number,
+    untilMs: number,
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
+  ): NgramMinuteCellRow[] {
+    return this.listNgramMinutesInRangeForUid(3, uid, sinceMs, untilMs, appScopes, typingTestScopes, runIdScopes)
+  }
+
+  /** @deprecated thin gram=3 wrapper — see {@link listBigramMinutesInRangeForUid}. */
+  listTrigramMinutesInRangeForUidAndHash(
+    uid: string,
+    machineHash: string,
+    sinceMs: number,
+    untilMs: number,
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
+  ): NgramMinuteCellRow[] {
+    return this.listNgramMinutesInRangeForUidAndHash(3, uid, machineHash, sinceMs, untilMs, appScopes, typingTestScopes, runIdScopes)
   }
 
   /** Live sessions that intersect `[sinceMs, untilMs)` for a keyboard
@@ -2140,9 +2459,9 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingBksMinuteRow[] {
-    return this.selectBksMinuteInRangeForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingBksMinuteRow[]
+    return this.selectBksMinuteInRangeForUidStmt.all({ uid, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingBksMinuteRow[]
   }
 
   /** Same as {@link listBksMinuteInRangeForUid} but restricted to a
@@ -2152,9 +2471,9 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): TypingBksMinuteRow[] {
-    return this.selectBksMinuteInRangeForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes) }) as TypingBksMinuteRow[]
+    return this.selectBksMinuteInRangeForUidAndHashStmt.all({ uid, machineHash, sinceMs, untilMs, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }) as TypingBksMinuteRow[]
   }
 
   /** Peak records for the Analyze summary cards across every scope of
@@ -2164,7 +2483,7 @@ export class TypingAnalyticsDB {
     uid: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): PeakRecords {
     // typing_sessions has no app_name column — sessions span multiple
     // minutes and the app focus can change during one. We deliberately
@@ -2174,7 +2493,7 @@ export class TypingAnalyticsDB {
     // do honour the filter so the WPM / keystroke-per-minute peaks
     // match the rest of the per-app aggregates.
     const sessParams = { uid, sinceMs, untilMs }
-    const params = { ...sessParams, appNamesJson: JSON.stringify(appScopes) }
+    const params = { ...sessParams, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }
     const wpm = this.selectPeakWpmInRangeForUidStmt.get(params) as { value: number; atMs: number } | undefined
     const low = this.selectLowestWpmInRangeForUidStmt.get(params) as { value: number; atMs: number } | undefined
     const kpm = this.selectPeakKpmInRangeForUidStmt.get(params) as { value: number; atMs: number } | undefined
@@ -2196,10 +2515,10 @@ export class TypingAnalyticsDB {
     machineHash: string,
     sinceMs: number,
     untilMs: number,
-    appScopes: readonly string[] = [],
+    appScopes: readonly string[] = [], typingTestScopes: readonly string[] = [], runIdScopes: readonly string[] = [],
   ): PeakRecords {
     const sessParams = { uid, machineHash, sinceMs, untilMs }
-    const params = { ...sessParams, appNamesJson: JSON.stringify(appScopes) }
+    const params = { ...sessParams, appNamesJson: JSON.stringify(appScopes), typingTestsJson: JSON.stringify(typingTestScopes), runIdsJson: JSON.stringify(runIdScopes) }
     const wpm = this.selectPeakWpmInRangeForUidAndHashStmt.get(params) as { value: number; atMs: number } | undefined
     const low = this.selectLowestWpmInRangeForUidAndHashStmt.get(params) as { value: number; atMs: number } | undefined
     const kpm = this.selectPeakKpmInRangeForUidAndHashStmt.get(params) as { value: number; atMs: number } | undefined
@@ -2243,11 +2562,13 @@ export class TypingAnalyticsDB {
     endMs: number,
     updatedAt: number,
   ): TypingTombstoneResult {
-    const result: TypingTombstoneResult = { charMinutes: 0, matrixMinutes: 0, minuteStats: 0, sessions: 0 }
+    const result = emptyTombstoneResult()
     const tx = this.db.transaction(() => {
       result.charMinutes = this.tombstoneCharMinutesForHashInRangeStmt.run({ uid, machineHash, startMs, endMs, updatedAt }).changes
       result.matrixMinutes = this.tombstoneMatrixMinutesForHashInRangeStmt.run({ uid, machineHash, startMs, endMs, updatedAt }).changes
       result.minuteStats = this.tombstoneMinuteStatsForHashInRangeStmt.run({ uid, machineHash, startMs, endMs, updatedAt }).changes
+      result.bigramMinutes = this.ngramStmts[2].tombstoneForHashInRange.run({ uid, machineHash, startMs, endMs, updatedAt }).changes
+      result.trigramMinutes = this.ngramStmts[3].tombstoneForHashInRange.run({ uid, machineHash, startMs, endMs, updatedAt }).changes
       result.sessions = this.tombstoneSessionsForHashInRangeStmt.run({ uid, machineHash, startMs, endMs, updatedAt }).changes
     })
     tx()
@@ -2260,11 +2581,13 @@ export class TypingAnalyticsDB {
     endMs: number,
     updatedAt: number,
   ): TypingTombstoneResult {
-    const result: TypingTombstoneResult = { charMinutes: 0, matrixMinutes: 0, minuteStats: 0, sessions: 0 }
+    const result = emptyTombstoneResult()
     const tx = this.db.transaction(() => {
       result.charMinutes = this.tombstoneCharMinutesInRangeStmt.run({ uid, startMs, endMs, updatedAt }).changes
       result.matrixMinutes = this.tombstoneMatrixMinutesInRangeStmt.run({ uid, startMs, endMs, updatedAt }).changes
       result.minuteStats = this.tombstoneMinuteStatsInRangeStmt.run({ uid, startMs, endMs, updatedAt }).changes
+      result.bigramMinutes = this.ngramStmts[2].tombstoneInRange.run({ uid, startMs, endMs, updatedAt }).changes
+      result.trigramMinutes = this.ngramStmts[3].tombstoneInRange.run({ uid, startMs, endMs, updatedAt }).changes
       result.sessions = this.tombstoneSessionsInRangeStmt.run({ uid, startMs, endMs, updatedAt }).changes
     })
     tx()
@@ -2275,11 +2598,13 @@ export class TypingAnalyticsDB {
    * themselves are left intact so the next recording session reuses
    * them without a fresh fingerprint build. */
   tombstoneAllRowsForUid(uid: string, updatedAt: number): TypingTombstoneResult {
-    const result: TypingTombstoneResult = { charMinutes: 0, matrixMinutes: 0, minuteStats: 0, sessions: 0 }
+    const result = emptyTombstoneResult()
     const tx = this.db.transaction(() => {
       result.charMinutes = this.tombstoneAllCharMinutesStmt.run({ uid, updatedAt }).changes
       result.matrixMinutes = this.tombstoneAllMatrixMinutesStmt.run({ uid, updatedAt }).changes
       result.minuteStats = this.tombstoneAllMinuteStatsStmt.run({ uid, updatedAt }).changes
+      result.bigramMinutes = this.ngramStmts[2].tombstoneAll.run({ uid, updatedAt }).changes
+      result.trigramMinutes = this.ngramStmts[3].tombstoneAll.run({ uid, updatedAt }).changes
       result.sessions = this.tombstoneAllSessionsStmt.run({ uid, updatedAt }).changes
     })
     tx()
@@ -2290,7 +2615,7 @@ export class TypingAnalyticsDB {
 
   exportScopesForUid(uid: string, tombstoneSinceMs: number): TypingScopeRow[] {
     const rows = this.selectScopesForUidStmt.all({ uid, tombstoneSinceMs }) as Array<
-      TypingScopeRow & { isDeleted: number }
+      WithDeletedFlag<TypingScopeRow>
     >
     return rows.map((r) => ({ ...r, isDeleted: r.isDeleted === 1 }))
   }
@@ -2301,7 +2626,7 @@ export class TypingAnalyticsDB {
     tombstoneSinceMs: number,
   ): CharMinuteExportRow[] {
     const rows = this.selectCharMinutesForUidStmt.all({ uid, liveSinceMinuteMs, tombstoneSinceMs }) as Array<
-      CharMinuteExportRow & { isDeleted: number }
+      WithDeletedFlag<CharMinuteExportRow>
     >
     return rows.map((r) => ({ ...r, isDeleted: r.isDeleted === 1 }))
   }
@@ -2312,7 +2637,7 @@ export class TypingAnalyticsDB {
     tombstoneSinceMs: number,
   ): MatrixMinuteExportRow[] {
     const rows = this.selectMatrixMinutesForUidStmt.all({ uid, liveSinceMinuteMs, tombstoneSinceMs }) as Array<
-      MatrixMinuteExportRow & { isDeleted: number }
+      WithDeletedFlag<MatrixMinuteExportRow>
     >
     return rows.map((r) => ({ ...r, isDeleted: r.isDeleted === 1 }))
   }
@@ -2323,7 +2648,7 @@ export class TypingAnalyticsDB {
     tombstoneSinceMs: number,
   ): MinuteStatsExportRow[] {
     const rows = this.selectMinuteStatsForUidStmt.all({ uid, liveSinceMinuteMs, tombstoneSinceMs }) as Array<
-      MinuteStatsExportRow & { isDeleted: number }
+      WithDeletedFlag<MinuteStatsExportRow>
     >
     return rows.map((r) => ({ ...r, isDeleted: r.isDeleted === 1 }))
   }
@@ -2334,7 +2659,7 @@ export class TypingAnalyticsDB {
     tombstoneSinceMs: number,
   ): SessionExportRow[] {
     const rows = this.selectSessionsForUidStmt.all({ uid, liveSinceStartMs, tombstoneSinceMs }) as Array<
-      SessionExportRow & { isDeleted: number }
+      WithDeletedFlag<SessionExportRow>
     >
     return rows.map((r) => ({ ...r, isDeleted: r.isDeleted === 1 }))
   }
@@ -2364,6 +2689,8 @@ export class TypingAnalyticsDB {
       char: row.char,
       count: row.count,
       appName: row.appName ?? null,
+      typingTest: row.typingTest ?? null,
+      runId: row.runId ?? '',
       updatedAt: row.updatedAt,
       isDeleted: row.isDeleted ? 1 : 0,
     })
@@ -2381,6 +2708,8 @@ export class TypingAnalyticsDB {
       tapCount: row.tapCount ?? 0,
       holdCount: row.holdCount ?? 0,
       appName: row.appName ?? null,
+      typingTest: row.typingTest ?? null,
+      runId: row.runId ?? '',
       updatedAt: row.updatedAt,
       isDeleted: row.isDeleted ? 1 : 0,
     })
@@ -2399,6 +2728,8 @@ export class TypingAnalyticsDB {
       intervalP75Ms: row.intervalP75Ms,
       intervalMaxMs: row.intervalMaxMs,
       appName: row.appName ?? null,
+      typingTest: row.typingTest ?? null,
+      runId: row.runId ?? '',
       updatedAt: row.updatedAt,
       isDeleted: row.isDeleted ? 1 : 0,
     })
@@ -2417,19 +2748,53 @@ export class TypingAnalyticsDB {
 
   /** Apply a single JSONL bigram-minute row by expanding each pair into
    * its own SQLite upsert. The caller is expected to wrap the batch in
-   * a transaction (see {@link applyRowsToCache}). */
+   * a transaction (see {@link applyRowsToCache}). LWW-replace, same as
+   * every other merge* method — the incoming row already holds the full
+   * per-minute total for its pair, not a delta to accumulate. `s`/`sq`
+   * fall back to null when the source row predates the sum columns. */
   mergeBigramMinute(row: BigramMinuteExportRow): void {
     const isDeleted = row.isDeleted ? 1 : 0
     const appName = row.appName ?? null
+    const typingTest = row.typingTest ?? null
+    const runId = row.runId ?? ''
     for (const bigramId of Object.keys(row.bigrams)) {
       const entry = row.bigrams[bigramId]
-      this.mergeBigramMinuteStmt.run({
+      this.ngramStmts[2].merge.run({
         scopeId: row.scopeId,
         minuteTs: row.minuteTs,
-        bigramId,
+        ngramId: bigramId,
         count: entry.c,
         hist: encodeHistBuffer(entry.h),
+        sumIki: entry.s ?? null,
+        sumSqIki: entry.sq ?? null,
         appName,
+        typingTest,
+        runId,
+        updatedAt: row.updatedAt,
+        isDeleted,
+      })
+    }
+  }
+
+  /** Same as {@link mergeBigramMinute} for trigram-minute rows. */
+  mergeTrigramMinute(row: TrigramMinuteExportRow): void {
+    const isDeleted = row.isDeleted ? 1 : 0
+    const appName = row.appName ?? null
+    const typingTest = row.typingTest ?? null
+    const runId = row.runId ?? ''
+    for (const trigramId of Object.keys(row.trigrams)) {
+      const entry = row.trigrams[trigramId]
+      this.ngramStmts[3].merge.run({
+        scopeId: row.scopeId,
+        minuteTs: row.minuteTs,
+        ngramId: trigramId,
+        count: entry.c,
+        hist: encodeHistBuffer(entry.h),
+        sumIki: entry.s ?? null,
+        sumSqIki: entry.sq ?? null,
+        appName,
+        typingTest,
+        runId,
         updatedAt: row.updatedAt,
         isDeleted,
       })
@@ -2470,6 +2835,50 @@ export class TypingAnalyticsDB {
         ALTER TABLE typing_matrix_minute ADD COLUMN app_name TEXT;
         ALTER TABLE typing_minute_stats ADD COLUMN app_name TEXT;
         ALTER TABLE typing_bigram_minute ADD COLUMN app_name TEXT;
+      `)
+    }
+    // v4 -> v5: Add typing_test to the four minute rollups so
+    // TypingTest-filtered analytics can restrict to one test's keystrokes.
+    // NULL means ordinary REC input or a mixed minute. Indices are created
+    // in CREATE_SCHEMA_SQL's second-phase exec (see app_name note above).
+    if (fromVersion < 5) {
+      this.db.exec(`
+        ALTER TABLE typing_char_minute ADD COLUMN typing_test TEXT;
+        ALTER TABLE typing_matrix_minute ADD COLUMN typing_test TEXT;
+        ALTER TABLE typing_minute_stats ADD COLUMN typing_test TEXT;
+        ALTER TABLE typing_bigram_minute ADD COLUMN typing_test TEXT;
+      `)
+    }
+    // v5 -> v6: Add run_id to the four minute rollups, as part of each
+    // table's PRIMARY KEY, so two test runs that share a wall-clock minute
+    // stay separate rows (exact per-run filtering). A PK change can't be
+    // done with ALTER, so drop the rollup tables and let CREATE_SCHEMA_SQL
+    // recreate them with the new schema; the cache is then rebuilt from the
+    // JSONL masters (cacheNeedsRebuild). typing_scopes / typing_sessions are
+    // untouched so the FK parents and session history survive.
+    if (fromVersion < 6) {
+      this.db.exec(`
+        DROP TABLE IF EXISTS typing_char_minute;
+        DROP TABLE IF EXISTS typing_matrix_minute;
+        DROP TABLE IF EXISTS typing_minute_stats;
+        DROP TABLE IF EXISTS typing_bigram_minute;
+      `)
+      this.cacheNeedsRebuild = true
+    }
+    // v6 -> v7: Add sum_iki / sumsq_iki to typing_bigram_minute (nullable —
+    // see Plan-trigram-and-iki-variance.md) and introduce typing_trigram_minute.
+    // The new table is handled by CREATE_SCHEMA_SQL's unconditional
+    // `CREATE TABLE IF NOT EXISTS`, same as any fresh install, so nothing to
+    // do here for it. The ALTER below only applies when typing_bigram_minute
+    // still has the pre-v7 shape: a DB migrating up from before v6 already
+    // dropped that table in the branch above and CREATE_SCHEMA_SQL recreates
+    // it with these columns built in, so re-altering here would hit "no such
+    // table". No cache rebuild: existing rows just gain nullable columns —
+    // there is nothing to replay from the JSONL masters.
+    if (fromVersion === 6) {
+      this.db.exec(`
+        ALTER TABLE typing_bigram_minute ADD COLUMN sum_iki REAL;
+        ALTER TABLE typing_bigram_minute ADD COLUMN sumsq_iki REAL;
       `)
     }
   }

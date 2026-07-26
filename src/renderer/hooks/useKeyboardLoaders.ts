@@ -41,6 +41,7 @@ export function useKeyboardLoaders(
     newState.cols = definition.matrix.cols
     newState.layoutOptions = 0
     newState.unlockStatus = { unlocked: true, inProgress: false, keys: [] }
+    newState.unlockStatusKnown = true
 
     // Parse KLE layout
     const { layout, encoderCount } = parseDefinitionLayout(definition)
@@ -94,6 +95,7 @@ export function useKeyboardLoaders(
     newState.cols = definition.matrix.cols
     newState.layoutOptions = vil.layoutOptions
     newState.unlockStatus = { unlocked: true, inProgress: false, keys: [] }
+    newState.unlockStatusKnown = true
 
     // Parse KLE layout
     const { layout, encoderCount } = parseDefinitionLayout(definition)
@@ -120,7 +122,7 @@ export function useKeyboardLoaders(
     }
 
     // Derive layer count from keymap data
-    newState.layers = deriveLayerCount(vil.keymap, newState.rows, newState.cols)
+    newState.layers = deriveLayerCount(vil.keymap)
     newState.layerNames = Array.from({ length: newState.layers }, (_, i) =>
       vil.layerNames && i < vil.layerNames.length ? vil.layerNames[i] : '',
     )

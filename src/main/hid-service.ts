@@ -30,6 +30,16 @@ import { logHidPacket } from './logger'
 import type { DeviceInfo, DeviceType, KeyboardDefinition, ProbeResult } from '../shared/types/protocol'
 import { decompressLzma, decompressXz, hasXzMagic } from './lzma'
 import * as bridgeService from './bridge-service'
+import {
+  isVirtualDeviceEnabled,
+  isVirtualDeviceExclusive,
+  getVirtualDeviceInfo,
+  matchesVirtualDevice,
+  openVirtualDevice,
+  closeVirtualDevice,
+  isVirtualDeviceOpen,
+  handleVirtualReport,
+} from './virtual-device'
 
 let openDevice: HID.HIDAsync | null = null
 let openDevicePath: string | null = null
@@ -95,6 +105,12 @@ function normalizeResponse(buf: Buffer, expectedLen: number): number[] {
  * Filters by usage page 0xFF60 and usage 0x61.
  */
 export async function listDevices(): Promise<DeviceInfo[]> {
+  // 'only' mode: hide real hardware so device lists (and doc screenshots)
+  // are reproducible regardless of what is plugged into the workstation.
+  if (isVirtualDeviceExclusive()) {
+    return [getVirtualDeviceInfo()]
+  }
+
   const devices = await HID.devicesAsync()
   const result: DeviceInfo[] = []
 
@@ -133,6 +149,9 @@ export async function listDevices(): Promise<DeviceInfo[]> {
           type: 'vial',
         })
       }
+      if (isVirtualDeviceEnabled()) {
+        result.push(getVirtualDeviceInfo())
+      }
       return result
     }
     // Try to initialize the bridge and find connected keyboards
@@ -164,6 +183,10 @@ export async function listDevices(): Promise<DeviceInfo[]> {
     await bridgeService.closeBridge()
   }
 
+  if (isVirtualDeviceEnabled()) {
+    result.push(getVirtualDeviceInfo())
+  }
+
   return result
 }
 
@@ -188,9 +211,7 @@ export async function openHidDevice(
   productId: number,
   serialNumber?: string,
 ): Promise<boolean> {
-  if (openDevice || usingBridge) {
-    await closeHidDevice()
-  }
+  await closeHidDevice()
 
   // Bridge device — serial starts with 'bridge:'
   if (serialNumber?.startsWith('bridge:')) {
@@ -203,6 +224,11 @@ export async function openHidDevice(
       return true
     }
     return false
+  }
+
+  if (isVirtualDeviceEnabled() && matchesVirtualDevice(vendorId, productId)) {
+    await openVirtualDevice()
+    return true
   }
 
   // Standard direct device open
@@ -244,7 +270,6 @@ export async function closeHidDevice(): Promise<void> {
     usingBridge = false
     openDevice = null
     openDevicePath = null
-    return
   }
   if (openDevice) {
     try {
@@ -255,6 +280,12 @@ export async function closeHidDevice(): Promise<void> {
   }
   openDevice = null
   openDevicePath = null
+
+  // Always clear the virtual-open flag, not just when the feature flag is
+  // currently set: sendReceive()/send()/isDeviceOpen() route on
+  // isVirtualDeviceOpen() alone, so a stale open flag would keep hijacking
+  // HID calls if the env var changes between open and close.
+  closeVirtualDevice()
 }
 
 /**
@@ -301,6 +332,14 @@ export function sendReceive(data: number[]): Promise<number[]> {
 
   return prev.then(async () => {
     try {
+      if (isVirtualDeviceOpen()) {
+        const padded = padToMsgLen(data)
+        logHidPacket('TX', new Uint8Array(padded))
+        const result = handleVirtualReport(padded)
+        logHidPacket('RX', new Uint8Array(result))
+        return result
+      }
+
       if (!openDevice) {
         throw new Error('No HID device is open')
       }
@@ -359,6 +398,13 @@ export function send(data: number[]): Promise<void> {
 
   return prev.then(async () => {
     try {
+      if (isVirtualDeviceOpen()) {
+        const padded = padToMsgLen(data)
+        logHidPacket('TX', new Uint8Array(padded))
+        handleVirtualReport(padded)
+        return
+      }
+
       if (!openDevice) {
         throw new Error('No HID device is open')
       }
@@ -397,6 +443,7 @@ export async function isDeviceOpen(): Promise<boolean> {
     await closeHidDevice()
     return false
   }
+  if (isVirtualDeviceOpen()) return true
   if (!openDevice || !openDevicePath) return false
   const devices = await HID.devicesAsync()
   const present = devices.some((d) => d.path === openDevicePath)

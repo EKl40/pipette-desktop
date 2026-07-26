@@ -27,7 +27,11 @@ import { useEntryOperations } from './hooks/useEntryOperations'
 import { useHubState } from './hooks/useHubState'
 import { useSnapshotMigration } from './hooks/useSnapshotMigration'
 import { useDeviceLifecycle } from './hooks/useDeviceLifecycle'
+import { useSessionRestore } from './hooks/useSessionRestore'
+import { useBootHiddenWindow } from './hooks/useBootHiddenWindow'
 import { useMissingKeyLabelNotice } from './hooks/useMissingKeyLabelNotice'
+import { useRecKeystrokeCounter } from './hooks/useRecKeystrokeCounter'
+import { useTrayStatus } from './hooks/useTrayStatus'
 import { MissingKeyLabelDialog } from './components/key-labels/MissingKeyLabelDialog'
 import { JaRemovedBanner } from './components/i18n-packs/JaRemovedBanner'
 import { formatDeviceId } from './app-types'
@@ -43,9 +47,13 @@ import { KeyOverridePanelModal } from './components/editors/KeyOverridePanelModa
 import { RGBConfigurator } from './components/editors/RGBConfigurator'
 import { UnlockDialog } from './components/editors/UnlockDialog'
 import { KeymapEditor, type KeymapEditorHandle } from './components/editors/KeymapEditor'
+import type { AnalyticsOrigin, KeymapApplyResult } from './components/editors/keymap-editor-types'
+import { useKeymapApplyPrompt } from './hooks/useKeymapApplyPrompt'
+import type { KeymapRewriteTable } from '../shared/keymap/keymap-apply'
 import { AnalyzePage } from './components/analyze/AnalyzePage'
 import { buildKeymapSnapshot } from './components/analyze/keymap-snapshot-builder'
 import { LayoutStoreContent } from './components/editors/LayoutStoreModal'
+import { IMPORT_BTN } from './components/editors/layout-store-types'
 import { ROW_CLASS } from './components/editors/modal-controls'
 import { ModalCloseButton } from './components/editors/ModalCloseButton'
 import { decodeLayoutOptions } from '../shared/kle/layout-options'
@@ -234,6 +242,46 @@ export function App() {
     matrixMode: editorUI.matrixState.matrixMode,
     typingTestMode: editorUI.typingTestMode,
     typingTestViewOnly: devicePrefs.typingTestViewOnly,
+    // Same-value guards: every appConfig.set rewrites the whole config
+    // file and re-renders all useAppConfig consumers, so skip the write
+    // when reconnecting the same keyboard / disconnecting with nothing
+    // remembered.
+    saveLastDevice: (dev) => {
+      const cur = appConfig.config.lastDevice
+      if (cur &&
+          cur.vendorId === dev.vendorId &&
+          cur.productId === dev.productId &&
+          cur.serialNumber === (dev.serialNumber || undefined)) return
+      appConfig.set('lastDevice', {
+        vendorId: dev.vendorId,
+        productId: dev.productId,
+        ...(dev.serialNumber ? { serialNumber: dev.serialNumber } : {}),
+      })
+    },
+    clearLastDevice: () => {
+      if (appConfig.config.lastDevice == null) return
+      appConfig.set('lastDevice', null)
+    },
+  })
+
+  useSessionRestore({
+    configLoaded: !appConfig.loading,
+    restoreEnabled: appConfig.config.restoreLastSession === true,
+    devices: device.devices,
+    connectedDevice: device.connectedDevice,
+    lastDevice: appConfig.config.lastDevice ?? null,
+    connect: lifecycle.handleConnect,
+  })
+
+  // Show the window only for the Unlock dialog while a hidden launch
+  // (startInTray) is restoring the last session; hide it again once the
+  // dialog resolves. Opening the dialog itself is owned solely by the
+  // view-restore effects below (typingView restore, typingTest/matrix-test
+  // entry) — they are view-mode aware, so a boot-hidden restore into a
+  // view that does not require unlocking (e.g. the plain keymap editor)
+  // never forces a prompt. No-ops entirely once the boot-hidden phase ends.
+  useBootHiddenWindow({
+    unlockDialogVisible: editorUI.showUnlockDialog,
   })
 
   const missingKeyLabel = useMissingKeyLabelNotice(keyboard.uid || null)
@@ -323,6 +371,9 @@ export function App() {
   // from the REC tab of the typing view exits the compact window
   // and hands the main content area over to TypingAnalyticsPage.
   const [analyticsPageOpen, setAnalyticsPageOpen] = useState(false)
+  // Where the user opened Analyze from, so Back returns there: the compact
+  // Typing View or the full-screen Typing Test.
+  const analyticsOriginRef = useRef<AnalyticsOrigin>('typingView')
 
   // Exit view-only mode: hide content → wait for paint → resize → show editor
   const exitViewOnlyMode = useCallback(() => {
@@ -353,9 +404,15 @@ export function App() {
   // from the previous toggle-ON. `saveKeymapSnapshotIfChanged` on
   // main dedupes by content, so re-firing on unrelated keyboard
   // state churn is cheap (no file write when the keymap is equal).
+  //
+  // An editor typing test counts too: it records matrix keystrokes
+  // tagged by test/run, so without a snapshot the Analyze Heatmap /
+  // Ergonomics / Layer-activations views have no layout to draw them on
+  // ("No keymap snapshot recorded for this range").
   const recordingSnapshotRef = useRef<{ active: boolean; uid: string }>({ active: false, uid: '' })
   useEffect(() => {
-    const active = devicePrefs.typingRecordEnabled && devicePrefs.typingTestViewOnly
+    const active = (devicePrefs.typingRecordEnabled && devicePrefs.typingTestViewOnly)
+      || editorUI.typingTestMode
     const uid = keyboard.uid
     const prev = recordingSnapshotRef.current
     recordingSnapshotRef.current = { active, uid }
@@ -364,9 +421,62 @@ export function App() {
     const snap = buildKeymapSnapshot(keyboard)
     if (!snap) return
     void window.vialAPI.typingAnalyticsSaveKeymapSnapshot(snap).catch(() => { /* main logs */ })
-  }, [devicePrefs.typingRecordEnabled, devicePrefs.typingTestViewOnly, keyboard])
+  }, [devicePrefs.typingRecordEnabled, devicePrefs.typingTestViewOnly, editorUI.typingTestMode, keyboard])
 
-  const handleViewAnalytics = useCallback(() => {
+  // System tray: connected-keyboard name + live REC keystroke count.
+  // recordingActive mirrors useInputModes' authoritative definition
+  // exactly (narrower than recordingSnapshotRef's `active` above, which
+  // also counts an editor typing-test practice run) — the tray's REC
+  // line should only light up for the ambient Typing View record toggle.
+  const recordingActive = devicePrefs.typingRecordEnabled && devicePrefs.typingTestViewOnly
+  const recKeystroke = useRecKeystrokeCounter(recordingActive)
+  // Dummy and pipette-file "connections" have no live device behind them
+  // (see useDeviceConnection's connectDummy/connectPipetteFile), so the
+  // tray should read as disconnected rather than show a pseudo name.
+  const trayKeyboardName = device.isDummy ? null : (device.connectedDevice?.productName ?? null)
+  useTrayStatus({ keyboardName: trayKeyboardName, recording: recordingActive, getCount: recKeystroke.getCount, getKpm: recKeystroke.getKpm })
+
+  // Whether an editor typing test is mid-run — surfaced from KeymapEditor so
+  // the StatusBar's "View Analytics" button can be disabled mid-run.
+  const [typingTestRunning, setTypingTestRunning] = useState(false)
+
+  const handleApplyKeymapRewrite = useCallback(async (table: KeymapRewriteTable): Promise<KeymapApplyResult> => {
+    return await (keymapEditorRef.current?.applyKeymapRewrite(table) ?? Promise.resolve({ appliedCount: 0 }))
+  }, [])
+
+  // Plan-qwerty-select-no-rewrite v7 — シミュレーションタブ方式: lifted out of
+  // QuickSettingsSelects (the footer's Keyboard Layout select) because the
+  // Apply button that now opens this modal lives on KeymapEditor's
+  // simulation tab instead — both need the same pending/apply state, so it
+  // is owned here and threaded down to each. `handleKeyboardLayoutChange`
+  // still goes to the select as a plain display switch; `requestApply` goes
+  // to KeymapEditor's Apply button. `isApplying` (aliased `keymapApplyBusy`
+  // below) is also what gates the footer's Analyze button while a rewrite
+  // is mid-flight (see its own comment at the `analyzeDisabled` prop) — its
+  // true window fully contains the actual `applyKeymapRewrite` call (it
+  // flips true just before `onApplyKeymapRewrite` is invoked and clears
+  // only once that call settles), so no separate in-flight flag is needed.
+  const {
+    handleKeyboardLayoutChange: handleKeyboardLayoutSelectChange,
+    requestApply: requestKeymapApply,
+    pendingApply: pendingKeymapApply,
+    handleApplyCancel: handleKeymapApplyCancel,
+    handleApplyConfirm: handleKeymapApplyConfirm,
+    applyError: keymapApplyError,
+    isApplying: keymapApplyBusy,
+  } = useKeymapApplyPrompt({
+    keymapEditable: keyboard.keymap.size > 0,
+    keyboardLayout: devicePrefs.layout,
+    onKeyboardLayoutChange: devicePrefs.setLayout,
+    onApplyKeymapRewrite: handleApplyKeymapRewrite,
+    keymapRestoreSeq: keyboard.keymapRestoreSeq,
+    activeRewriteTable: devicePrefs.activeRewriteTable,
+    activeLayoutName: devicePrefs.activeLayoutName,
+  })
+
+  const handleViewAnalytics = useCallback((origin: AnalyticsOrigin) => {
+    // Each entry point states its own origin so Back returns there.
+    analyticsOriginRef.current = origin
     setViewExitTransition(true)
     requestAnimationFrame(() => { requestAnimationFrame(() => {
       window.vialAPI.setWindowCompactMode(false).then(() => {
@@ -393,15 +503,26 @@ export function App() {
     }).catch(() => {})
   }, [typingTestViewOnlyWindowSize, setTypingTestViewOnly, editorUI.typingTestMode])
 
-  // Back from the analytics page should return the user to wherever
-  // they came from — which today is always the typing view (there's
-  // no other entry point yet). Close the page and re-enter the
-  // compact window + typing-test mode in one step so the user lands
+  // Back from the analytics page returns the user to wherever they came
+  // from (recorded in analyticsOriginRef): the full-screen Typing Test or
+  // the compact Typing View. Re-enter that view in one step so they land
   // exactly where they were before clicking View Analytics.
   const handleAnalyticsBack = useCallback(() => {
     setAnalyticsPageOpen(false)
-    enterTypingViewOnly()
-    devicePrefs.setViewMode('typingView')
+    if (analyticsOriginRef.current === 'typingTest') {
+      // KeymapEditor is unmounted while the analytics page is open, so its
+      // ref is null right now — defer the typing-test re-entry to an effect
+      // that fires after the editor remounts (see below).
+      devicePrefs.setViewMode('typingTest')
+      pendingTypingTestReentryRef.current = true
+    } else if (analyticsOriginRef.current === 'editor') {
+      // Opened straight from the editor's own footer — there is no compact
+      // window or typing test to re-enter, just return to the plain editor.
+      devicePrefs.setViewMode('editor')
+    } else {
+      enterTypingViewOnly()
+      devicePrefs.setViewMode('typingView')
+    }
   }, [enterTypingViewOnly, devicePrefs])
 
   // One-shot guard: prevents re-restoring the same uid after an initial restore
@@ -410,6 +531,10 @@ export function App() {
   // Pending refs for deferred user intents (set while unlock dialog is open)
   const pendingViewOnlyRef = useRef(false)
   const pendingTypingTestSaveRef = useRef(false)
+  // Re-enter the full typing test after returning from the analytics page —
+  // deferred because KeymapEditor (which owns the typing test) only remounts
+  // once analyticsPageOpen flips back to false.
+  const pendingTypingTestReentryRef = useRef(false)
   const prevZoomRef = useRef<number | null>(null)
 
   const { setViewMode } = devicePrefs
@@ -460,6 +585,17 @@ export function App() {
     }
   }, [editorUI.typingTestMode, setViewMode])
 
+  // Re-enter the full typing test after Back from analytics (typingTest
+  // origin). Runs once the editor has remounted (analyticsPageOpen false)
+  // so keymapEditorRef is live; the auto-restore effect is one-shot per uid
+  // and already fired, so this is the only path that re-enters here.
+  useEffect(() => {
+    if (analyticsPageOpen) return
+    if (!pendingTypingTestReentryRef.current) return
+    pendingTypingTestReentryRef.current = false
+    if (!editorUI.typingTestMode) keymapEditorRef.current?.toggleTypingTest()
+  }, [analyticsPageOpen, editorUI.typingTestMode])
+
   // Auto-restore last view mode once prefs are applied for the connected uid
   useEffect(() => {
     if (!device.connectedDevice || device.isDummy) return
@@ -478,10 +614,12 @@ export function App() {
     } else if (mode === 'typingView') {
       if (keyboard.unlockStatus.unlocked) {
         enterTypingViewOnly()
-      } else {
+      } else if (keyboard.unlockStatusKnown) {
         pendingViewOnlyRef.current = true
         editorUI.setShowUnlockDialog(true)
       }
+      // Unknown unlock status (getUnlockStatus failed) — skip the restore
+      // rather than prompting for an unlock that may not be needed.
     }
   }, [
     device.connectedDevice,
@@ -489,6 +627,7 @@ export function App() {
     keyboard.loading,
     keyboard.uid,
     keyboard.unlockStatus.unlocked,
+    keyboard.unlockStatusKnown,
     devicePrefs.appliedUid,
     devicePrefs.viewMode,
     enterTypingViewOnly,
@@ -510,6 +649,23 @@ export function App() {
     devicePrefs.keyEditorZoom,
     appConfig.config.zoomFactor,
   ])
+
+  // Restore cleanup (Plan-qwerty-select-no-rewrite §snapshot/.vil 復元時の
+  // クリーンアップ): snapshot/layout-store restore and .vil import both
+  // converge on `applyVilFile`, which bumps `keymapRestoreSeq` on success.
+  // Reacting here (rather than inside KeymapEditor) is what reaches the
+  // Keyboard Layout select's confirm modal in QuickSettingsSelects (see its
+  // own `keymapRestoreSeq` prop below), which lives outside KeymapEditor.
+  // The counter is monotonic for the session (disconnect carries it forward
+  // instead of zeroing it, see keyboard-types.ts), so any change here means
+  // a restore landed.
+  const prevKeymapRestoreSeqRef = useRef(keyboard.keymapRestoreSeq)
+  useEffect(() => {
+    const prev = prevKeymapRestoreSeqRef.current
+    prevKeymapRestoreSeqRef.current = keyboard.keymapRestoreSeq
+    if (keyboard.keymapRestoreSeq === prev) return
+    keymapEditorRef.current?.clearHistory()
+  }, [keyboard.keymapRestoreSeq])
 
   const handleLoadEntry = useCallback(async (entryId: string) => {
     const entry = layoutStore.entries.find((e) => e.id === entryId)
@@ -617,37 +773,36 @@ export function App() {
   // --- Connected view ---
   const api = window.vialAPI
 
-  const importBtnClass = 'rounded-lg border border-edge bg-surface/30 px-3 py-1.5 text-xs font-semibold text-content-muted hover:text-content hover:border-content-muted'
-
   const toolsExtra = (
     <>
-      {(fileHandlers.handleImportVil || (!device.isDummy && sideload.sideloadJson)) && (
-        <div className={ROW_CLASS} data-testid="overlay-import-row">
-          <span className="text-sm font-medium text-content">{t('layoutStore.import')}</span>
-          <div className="flex gap-2">
+      {/* handleImportVil / sideloadJson are always-defined functions, so the
+          old function-reference guards were constant-true — the row always
+          renders and only the sideload button is gated (on !isDummy). */}
+      <div className={ROW_CLASS} data-testid="overlay-import-row">
+        <span className="text-sm font-medium text-content">{t('layoutStore.import')}</span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={IMPORT_BTN}
+            onClick={fileHandlers.handleImportVil}
+            disabled={fileIO.saving || fileIO.loading}
+            data-testid="overlay-import-vil"
+          >
+            {t('fileIO.loadLayout')}
+          </button>
+          {!device.isDummy && (
             <button
               type="button"
-              className={importBtnClass}
-              onClick={fileHandlers.handleImportVil}
+              className={IMPORT_BTN}
+              onClick={sideload.sideloadJson}
               disabled={fileIO.saving || fileIO.loading}
-              data-testid="overlay-import-vil"
+              data-testid="overlay-sideload-json"
             >
-              {t('fileIO.loadLayout')}
+              {t('fileIO.sideloadJson')}
             </button>
-            {!device.isDummy && sideload.sideloadJson && (
-              <button
-                type="button"
-                className={importBtnClass}
-                onClick={sideload.sideloadJson}
-                disabled={fileIO.saving || fileIO.loading}
-                data-testid="overlay-sideload-json"
-              >
-                {t('fileIO.sideloadJson')}
-              </button>
-            )}
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </>
   )
 
@@ -775,6 +930,8 @@ export function App() {
             onSetLayoutOptions={keyboard.setLayoutOptions}
             remapLabel={devicePrefs.remapLabel}
             isRemapped={devicePrefs.isRemapped}
+            remapKind={devicePrefs.remapKind}
+            pickerRemapLabel={devicePrefs.pickerRemapLabel}
             onSetKey={keyboard.setKey}
             onSetKeysBulk={keyboard.setKeysBulk}
             onSetEncoder={keyboard.setEncoder}
@@ -809,6 +966,8 @@ export function App() {
             tappingTermMs={resolveTappingTermMs(keyboard.qmkSettingsValues)}
             autoAdvance={devicePrefs.autoAdvance}
             onAutoAdvanceChange={devicePrefs.setAutoAdvance}
+            viewMatrix={devicePrefs.viewMatrix}
+            onViewMatrixChange={devicePrefs.setViewMatrix}
             basicViewType={devicePrefs.basicViewType}
             onBasicViewTypeChange={devicePrefs.setBasicViewType}
             splitKeyMode={devicePrefs.splitKeyMode}
@@ -817,6 +976,14 @@ export function App() {
             onQuickSelectChange={devicePrefs.setQuickSelect}
             keyboardLayout={devicePrefs.layout}
             onKeyboardLayoutChange={devicePrefs.setLayout}
+            keymapPackName={devicePrefs.activeLayoutName}
+            onRequestKeymapApply={requestKeymapApply}
+            keymapApplyOpen={pendingKeymapApply !== null}
+            keymapApplyLabelName={pendingKeymapApply?.name}
+            keymapApplyBusy={keymapApplyBusy}
+            onKeymapApplyConfirm={handleKeymapApplyConfirm}
+            onKeymapApplyCancel={handleKeymapApplyCancel}
+            keymapApplyError={keymapApplyError}
             onLock={lifecycle.handleLock}
             onMatrixModeChange={editorUI.handleMatrixModeChange}
             onOpenLighting={editorUI.lightingSupported ? () => editorUI.setShowLightingModal(true) : undefined}
@@ -848,8 +1015,11 @@ export function App() {
             typingTestMode={editorUI.typingTestMode}
             onTypingTestModeChange={editorUI.handleTypingTestModeChange}
             onSaveTypingTestResult={devicePrefs.addTypingTestResult}
+            onRenameTypingTestResult={devicePrefs.renameTypingTestResult}
+            onDeleteTypingTestResult={devicePrefs.deleteTypingTestResult}
             typingTestHistory={devicePrefs.typingTestResults}
             typingTestConfig={devicePrefs.typingTestConfig}
+            typingTestMonkeytypeConfig={devicePrefs.typingTestMonkeytypeConfig}
             typingTestLanguage={devicePrefs.typingTestLanguage}
             onTypingTestConfigChange={devicePrefs.setTypingTestConfig}
             onTypingTestLanguageChange={devicePrefs.setTypingTestLanguage}
@@ -869,17 +1039,41 @@ export function App() {
             onTypingTestViewOnlyWindowSizeChange={devicePrefs.setTypingTestViewOnlyWindowSize}
             typingTestViewOnlyAlwaysOnTop={devicePrefs.typingTestViewOnlyAlwaysOnTop}
             onTypingTestViewOnlyAlwaysOnTopChange={devicePrefs.setTypingTestViewOnlyAlwaysOnTop}
+            typingTestMemory={devicePrefs.typingTestMemory}
+            onTypingTestMemoryChange={devicePrefs.setTypingTestMemory}
+            typingTestDisplayLines={devicePrefs.typingTestDisplayLines}
+            typingTestFontSize={devicePrefs.typingTestFontSize}
+            onTypingTestDisplayLinesChange={devicePrefs.setTypingTestDisplayLines}
+            onTypingTestFontSizeChange={devicePrefs.setTypingTestFontSize}
+            typingTestHideKeymap={devicePrefs.typingTestHideKeymap}
+            typingTestHideStatsRow={devicePrefs.typingTestHideStatsRow}
+            typingTestHideControls={devicePrefs.typingTestHideControls}
+            typingTestSaveUnnamed={devicePrefs.typingTestSaveUnnamed}
+            typingTestComparisonBaselines={devicePrefs.typingTestComparisonBaselines}
+            onTypingTestHideKeymapChange={devicePrefs.setTypingTestHideKeymap}
+            onTypingTestHideStatsRowChange={devicePrefs.setTypingTestHideStatsRow}
+            onTypingTestHideControlsChange={devicePrefs.setTypingTestHideControls}
+            onTypingTestSaveUnnamedChange={devicePrefs.setTypingTestSaveUnnamed}
+            onTypingTestComparisonBaselineChange={devicePrefs.setTypingTestComparisonBaseline}
+            typingTestSettingsPanelOpen={devicePrefs.typingTestSettingsPanelOpen}
+            onTypingTestSettingsPanelOpenChange={devicePrefs.setTypingTestSettingsPanelOpen}
             typingRecordEnabled={devicePrefs.typingRecordEnabled}
             onTypingRecordEnabledChange={handleTypingRecordEnabledChange}
+            onRecKeystroke={recKeystroke.increment}
             typingHeatmapWindowMin={appConfig.config.typingHeatmapWindowMin}
             onTypingHeatmapWindowMinChange={(m) => appConfig.set('typingHeatmapWindowMin', m as typeof appConfig.config.typingHeatmapWindowMin)}
             typingRecordingConsentAccepted={appConfig.config.typingRecordingConsentAccepted}
             onTypingRecordingConsentAccepted={() => appConfig.set('typingRecordingConsentAccepted', true)}
             typingMonitorAppEnabled={appConfig.config.typingMonitorAppEnabled}
             onTypingMonitorAppEnabledChange={(enabled) => appConfig.set('typingMonitorAppEnabled', enabled)}
+            typingTrayResident={appConfig.config.trayResident}
+            onTypingTrayResidentChange={(enabled) => appConfig.set('trayResident', enabled)}
+            typingStartInTray={appConfig.config.startInTray}
+            onTypingStartInTrayChange={(enabled) => appConfig.set('startInTray', enabled)}
             typingViewMenuTab={devicePrefs.typingViewMenuTab}
             onTypingViewMenuTabChange={devicePrefs.setTypingViewMenuTab}
             onViewAnalytics={handleViewAnalytics}
+            onTypingTestRunningChange={setTypingTestRunning}
             deviceName={deviceName}
             isDummy={effectiveIsDummy}
             onExportLayoutPdfAll={fileHandlers.handleExportLayoutPdfAll}
@@ -952,13 +1146,26 @@ export function App() {
             }
             keymapEditorRef.current?.toggleTypingTest()
           }}
+          onOpenAnalyze={() => handleViewAnalytics('editor')}
+          // Disabled while a Key Label "apply to keymap" rewrite is mid-
+          // flight: opening AnalyzePage unmounts KeymapEditor (and its
+          // `history`/undo stack) out from under the in-flight rewrite,
+          // which would otherwise land the batch history push in an
+          // unmounted component (making it un-undoable after Back) and
+          // fire the post-apply flash timer's setState after unmount.
+          // Typing View / Typing Test don't unmount the editor, so they're
+          // unaffected; Disconnect has the same mid-apply hazard but
+          // that's pre-existing and out of scope here.
+          analyzeDisabled={keymapApplyBusy}
+          onViewAnalytics={() => handleViewAnalytics('typingTest')}
+          viewAnalyticsDisabled={typingTestRunning}
           onDisconnect={editorUI.typingTestMode ? undefined : lifecycle.handleDisconnect}
           quickSettings={{
             onThemeChange: themeCtx.setTheme,
             hubDisplayName: hub.hubDisplayName,
             hubCanWrite: hub.hubCanUpload,
             keyboardLayout: devicePrefs.layout,
-            onKeyboardLayoutChange: devicePrefs.setLayout,
+            onKeyboardLayoutChange: handleKeyboardLayoutSelectChange,
           }}
         />
       )}

@@ -1,12 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
-import { extractMOLayer, extractLTLayer, extractLMLayer, isTapKeycode } from './keycode-char-map'
-import { generateWords, generateWordsSync, getLanguageData, selectQuote, quoteToWords } from './word-generator'
+import { isTapKeycode } from './keycode-char-map'
+import { getLanguageData } from './word-generator'
 import { DEFAULT_TAPPING_TERM_MS } from '../../shared/qmk-settings-tapping-term'
-import type { TypingTestConfig, Quote } from './types'
-import { DEFAULT_CONFIG, DEFAULT_LANGUAGE } from './types'
+import type { TypingTestConfig, RomajiGuide } from './types'
+import { DEFAULT_CONFIG, DEFAULT_LANGUAGE, applyRomajiCaseStyle, isTimeBoundedRun, runDurationSeconds } from './types'
+import type { TypingTestMemory } from '../../shared/types/pipette-settings'
 import type { TypingAnalyticsEventPayload, TypingMatrixAction } from '../../shared/types/typing-analytics'
+import { createWordsForConfig } from './word-supply'
+import {
+  type TypingTestState,
+  freshState,
+  createInitialState,
+  isSubmitKey,
+  handleChar,
+  handleBackspace,
+  handleSpace,
+  tryFinishLastWord,
+} from './run-state'
+import { isRomajiInputActive, buildRomajiMatcher, romajiDetail, processRomajiKeyEvent } from './romaji-input'
+import {
+  type PressStartRecord,
+  parseMatrixKey,
+  extractSwitchLayer,
+  resolveEffectiveCode,
+  resolveEffectiveCodeWithLayer,
+} from './matrix-layers'
+
+export type { WordResult, TypingTestState, TypingTestStatus } from './run-state'
 
 export interface UseTypingTestOptions {
   onAnalyticsEvent?: (event: TypingAnalyticsEventPayload) => void
@@ -17,56 +39,20 @@ export interface UseTypingTestOptions {
   tappingTermMs?: number
 }
 
-/** Press-edge record kept until the matching release edge is seen so
- * masked keys can classify the press as tap vs hold. Non-masked keys
- * are emitted immediately on press and never land in this map. */
-interface PressStartRecord {
-  tsMs: number
-  row: number
-  col: number
-  layer: number
-  keycode: number
-}
-
-export type TypingTestStatus = 'countdown' | 'waiting' | 'running' | 'finished'
-
 const COUNTDOWN_MS = 3000
-const TIME_MODE_BATCH_SIZE = 60
-const TIME_MODE_EXTEND_THRESHOLD = 10
+
 const IGNORED_KEYS = new Set(['Dead', 'Unidentified'])
 
-/** Check if a key is a word-submit key (half-width space or full-width space). */
-function isSubmitKey(key: string): boolean {
-  return key === ' ' || key === '\u3000'
-}
-
 const MAX_WPM_HISTORY = 300
-
-export interface WordResult {
-  word: string
-  typed: string
-  correct: boolean
-}
-
-export interface TypingTestState {
-  status: TypingTestStatus
-  words: string[]
-  currentWordIndex: number
-  currentInput: string
-  compositionText: string
-  wordResults: WordResult[]
-  startTime: number | null
-  endTime: number | null
-  correctChars: number
-  incorrectChars: number
-  currentQuote: Quote | null
-  wpmHistory: number[]
-}
 
 export interface UseTypingTestReturn {
   state: TypingTestState
   wpm: number
+  kpm: number
   accuracy: number
+  /** Current word's romaji progress (romajiInput mode only); null otherwise
+   *  or once all words are done. */
+  romajiGuide: RomajiGuide | null
   elapsedSeconds: number
   remainingSeconds: number | null
   config: TypingTestConfig
@@ -87,106 +73,9 @@ export interface UseTypingTestReturn {
   setLanguage: (language: string) => Promise<string>
   setBaseLayer: (layer: number) => void
   setWindowFocused: (focused: boolean) => void
-}
-
-/** Return the word count and generation options for word-based modes (words/time). */
-function wordGenParams(config: TypingTestConfig & { mode: 'words' | 'time' }): { count: number; opts: { punctuation: boolean; numbers: boolean } } {
-  return {
-    count: config.mode === 'words' ? config.wordCount : TIME_MODE_BATCH_SIZE,
-    opts: { punctuation: config.punctuation, numbers: config.numbers },
-  }
-}
-
-function createWordsForConfigSync(config: TypingTestConfig, language: string): { words: string[]; quote: Quote | null } {
-  if (config.mode === 'quote') {
-    const quote = selectQuote(config.quoteLength)
-    return { words: quoteToWords(quote), quote }
-  }
-  const { count, opts } = wordGenParams(config)
-  const { words } = generateWordsSync(count, opts, language)
-  return { words, quote: null }
-}
-
-async function createWordsForConfig(config: TypingTestConfig, language: string): Promise<{ words: string[]; quote: Quote | null }> {
-  if (config.mode === 'quote') {
-    const quote = selectQuote(config.quoteLength)
-    return { words: quoteToWords(quote), quote }
-  }
-  const { count, opts } = wordGenParams(config)
-  const { words } = await generateWords(count, opts, language)
-  return { words, quote: null }
-}
-
-function createInitialState(config: TypingTestConfig, language: string, status: TypingTestStatus = 'waiting'): TypingTestState {
-  const { words, quote } = createWordsForConfigSync(config, language)
-  return freshState(words, quote, status)
-}
-
-function freshState(words: string[], quote: Quote | null, status: TypingTestStatus = 'waiting'): TypingTestState {
-  return {
-    status,
-    words,
-    currentWordIndex: 0,
-    currentInput: '',
-    compositionText: '',
-    wordResults: [],
-    startTime: null,
-    endTime: null,
-    correctChars: 0,
-    incorrectChars: 0,
-    currentQuote: quote,
-    wpmHistory: [],
-  }
-}
-
-/** Parse a "row,col" matrix key string into numeric row and col. */
-function parseMatrixKey(key: string): [number, number] {
-  const [r, c] = key.split(',')
-  return [Number(r), Number(c)]
-}
-
-/** Extract the target layer from any layer switch keycode (MO, LT, or LM). */
-function extractSwitchLayer(code: number): number | null {
-  return extractMOLayer(code) ?? extractLTLayer(code) ?? extractLMLayer(code)
-}
-
-/** Resolve the effective keycode for a matrix position by checking active
- * layers in descending order, skipping KC_TRNS (0x01), then falling back
- * to the base layer. */
-function resolveEffectiveCode(
-  row: number,
-  col: number,
-  keymap: Map<string, number>,
-  sortedLayers: number[],
-  baseLayer: number,
-): number | undefined {
-  for (const layer of sortedLayers) {
-    const code = keymap.get(`${layer},${row},${col}`)
-    if (code != null && code !== 0x01) return code
-  }
-  return keymap.get(`${baseLayer},${row},${col}`)
-}
-
-/** Resolve the effective keycode AND the layer the keycode was picked
- * from. Used by the analytics path so each event is attributed to the
- * layer where the key is actually defined, not the (possibly different)
- * layer the pressed key itself is activating. For example, a lone LT1
- * press at base 0 resolves to LT1(kc) from layer 0 even though it
- * activates layer 1, so the heatmap shows the press on the base-layer
- * view the user is looking at. */
-function resolveEffectiveCodeWithLayer(
-  row: number,
-  col: number,
-  keymap: Map<string, number>,
-  sortedLayers: number[],
-  baseLayer: number,
-): { code: number; layer: number } | undefined {
-  for (const layer of sortedLayers) {
-    const code = keymap.get(`${layer},${row},${col}`)
-    if (code != null && code !== 0x01) return { code, layer }
-  }
-  const baseCode = keymap.get(`${baseLayer},${row},${col}`)
-  return baseCode != null ? { code: baseCode, layer: baseLayer } : undefined
+  captureMemory: () => TypingTestMemory | null
+  pause: () => void
+  restoreState: (memory: TypingTestMemory, resume: boolean) => Promise<boolean>
 }
 
 export function useTypingTest(
@@ -194,14 +83,20 @@ export function useTypingTest(
   initialLanguage?: string,
   options?: UseTypingTestOptions,
 ): UseTypingTestReturn {
+  // A persisted config/language pair (e.g. restored from device prefs) is
+  // taken at face value — `romajiInput` is not paired with the language
+  // here; `isRomajiInputActive` gates whether it's honored.
   const [config, setConfigState] = useState<TypingTestConfig>(() => initialConfig ?? DEFAULT_CONFIG)
   const [language, setLanguageState] = useState<string>(() => initialLanguage ?? DEFAULT_LANGUAGE)
   const [isLanguageLoading, setIsLanguageLoading] = useState(false)
   const [baseLayer, setBaseLayerState] = useState(0)
   const [effectiveLayer, setEffectiveLayer] = useState(0)
   const [windowFocused, setWindowFocusedState] = useState(true)
-  const [state, setState] = useState<TypingTestState>(() => createInitialState(initialConfig ?? DEFAULT_CONFIG, initialLanguage ?? DEFAULT_LANGUAGE))
+  const [state, setState] = useState<TypingTestState>(() =>
+    createInitialState(initialConfig ?? DEFAULT_CONFIG, initialLanguage ?? DEFAULT_LANGUAGE),
+  )
   const configRef = useRef(config)
+  const stateRef = useRef(state)
   const languageRef = useRef(language)
   const baseLayerRef = useRef(baseLayer)
   const windowFocusedRef = useRef(windowFocused)
@@ -215,6 +110,7 @@ export function useTypingTest(
   const seqRef = useRef(0)
   const langLoadSeqRef = useRef(0)
   configRef.current = config
+  stateRef.current = state
   languageRef.current = language
   baseLayerRef.current = baseLayer
   windowFocusedRef.current = windowFocused
@@ -223,9 +119,9 @@ export function useTypingTest(
 
   const restartAsync = useCallback(async () => {
     const seq = ++seqRef.current
-    const { words, quote } = await createWordsForConfig(configRef.current, languageRef.current)
+    const result = await createWordsForConfig(configRef.current, languageRef.current)
     if (seqRef.current !== seq) return
-    setState(freshState(words, quote))
+    setState(freshState(result))
   }, [])
 
   const restart = useCallback(() => {
@@ -234,9 +130,9 @@ export function useTypingTest(
 
   const restartWithCountdown = useCallback(async () => {
     const seq = ++seqRef.current
-    const { words, quote } = await createWordsForConfig(configRef.current, languageRef.current)
+    const result = await createWordsForConfig(configRef.current, languageRef.current)
     if (seqRef.current !== seq) return
-    setState(freshState(words, quote, 'countdown'))
+    setState(freshState(result, 'countdown'))
   }, [])
 
   // Transition from countdown to waiting after delay
@@ -249,12 +145,14 @@ export function useTypingTest(
   }, [state.status])
 
   const setConfig = useCallback(async (newConfig: TypingTestConfig) => {
+    // Taken at face value — see isRomajiInputActive for why romajiInput
+    // doesn't need to be paired with the active language here.
     setConfigState(newConfig)
     configRef.current = newConfig
     const seq = ++seqRef.current
-    const { words, quote } = await createWordsForConfig(newConfig, languageRef.current)
+    const result = await createWordsForConfig(newConfig, languageRef.current)
     if (seqRef.current !== seq) return
-    setState(freshState(words, quote))
+    setState(freshState(result))
   }, [])
 
   const setLanguage = useCallback(async (newLanguage: string): Promise<string> => {
@@ -266,9 +164,9 @@ export function useTypingTest(
     const langSeq = ++langLoadSeqRef.current
     try {
       await getLanguageData(newLanguage)
-      const { words, quote } = await createWordsForConfig(configRef.current, newLanguage)
+      const result = await createWordsForConfig(configRef.current, newLanguage)
       if (seqRef.current !== seq) return languageRef.current
-      setState(freshState(words, quote))
+      setState(freshState(result))
       return newLanguage
     } catch {
       if (seqRef.current !== seq) return languageRef.current
@@ -288,9 +186,86 @@ export function useTypingTest(
     baseLayerRef.current = layer
     setEffectiveLayer(layer)
     const seq = ++seqRef.current
-    const { words, quote } = await createWordsForConfig(configRef.current, languageRef.current)
+    const result = await createWordsForConfig(configRef.current, languageRef.current)
     if (seqRef.current !== seq) return
-    setState(freshState(words, quote))
+    setState(freshState(result))
+  }, [])
+
+  // --- Memory mode (imported fileImport text only): pause / capture / restore ---
+
+  /** Snapshot the in-progress test so it can be persisted and resumed.
+   *  Returns null unless an imported fileImport text is active. */
+  const captureMemory = useCallback((): TypingTestMemory | null => {
+    const s = stateRef.current
+    const cfg = configRef.current
+    if (cfg.mode !== 'fileImport') return null
+    return {
+      textId: cfg.textId,
+      runId: s.runId,
+      currentWordIndex: s.currentWordIndex,
+      currentInput: s.currentInput,
+      wordResults: s.wordResults.map((w) => ({ word: w.word, typed: w.typed, correct: w.correct })),
+      correctChars: s.correctChars,
+      incorrectChars: s.incorrectChars,
+      // startTime already folds in any earlier paused/resumed segments.
+      elapsedMs: s.startTime ? Date.now() - s.startTime : 0,
+      wpmHistory: s.wpmHistory,
+      savedAt: new Date().toISOString(),
+    }
+  }, [])
+
+  /** Stop accepting input and freeze the timer (endTime pins elapsed/WPM)
+   *  without discarding progress. */
+  const pause = useCallback(() => {
+    setState((s) => (s.status === 'running' ? { ...s, status: 'paused', endTime: Date.now() } : s))
+  }, [])
+
+  /** Load a persisted snapshot's text and restore its progress.
+   *  `resume=true` continues the timer (status 'running'); `resume=false`
+   *  shows it frozen ('paused') — used on re-entry so the user must confirm
+   *  before continuing. Returns false when the text can no longer be loaded
+   *  (e.g. deleted) so the caller can fall back to a fresh test. */
+  const restoreState = useCallback(async (memory: TypingTestMemory, resume: boolean): Promise<boolean> => {
+    const cfg: TypingTestConfig = { mode: 'fileImport', textId: memory.textId }
+    setConfigState(cfg)
+    configRef.current = cfg
+    const seq = ++seqRef.current
+    const { words, quote, lineBreaks, lineIndents, romajiCapable } = await createWordsForConfig(cfg, languageRef.current)
+    if (seqRef.current !== seq) return false
+    if (words.length === 0) return false
+    const idx = Math.min(Math.max(0, memory.currentWordIndex), words.length - 1)
+    const startTime = Date.now() - memory.elapsedMs
+    setState({
+      status: resume ? 'running' : 'paused',
+      // Keep the original run's id so a paused/resumed run stays one run in
+      // analytics. Older memories without a runId fall back to a fresh id.
+      runId: memory.runId ?? crypto.randomUUID(),
+      words,
+      currentWordIndex: idx,
+      currentInput: memory.currentInput,
+      compositionText: '',
+      wordResults: memory.wordResults.map((w) => ({ word: w.word, typed: w.typed, correct: w.correct })),
+      startTime,
+      // Paused: pin endTime so elapsed/WPM display stays frozen at the saved time.
+      endTime: resume ? null : Date.now(),
+      correctChars: memory.correctChars,
+      incorrectChars: memory.incorrectChars,
+      currentQuote: quote,
+      wpmHistory: memory.wpmHistory,
+      lineBreaks: new Set(lineBreaks),
+      lineIndents,
+      romajiKeystrokes: '',
+      romajiCapable,
+      // Pause/resume memory doesn't carry per-run mistake tracking (it was
+      // never part of TypingTestMemory) — any mistakes tallied before the
+      // pause are lost on resume, same as they would be on any other field
+      // absent from the persisted snapshot. Acceptable: Phase 1 mistake
+      // tracking is best-effort per run, not a durable record.
+      mistakes: {},
+      romajiSegmentErred: false,
+      missedPositions: [],
+    })
+    return true
   }, [])
 
   const processMatrixFrame = useCallback((pressed: Set<string>, keymap: Map<string, number>) => {
@@ -431,10 +406,26 @@ export function useTypingTest(
     setState((s) => {
       if (s.status !== 'waiting' && s.status !== 'running') return s
 
-      if (isSubmitKey(key)) {
+      // Romaji mode has its own key semantics for every key kind — see
+      // processRomajiKeyEvent's doc comment in romaji-input.ts. Dispatch
+      // once here instead of re-checking isRomajiInputActive per branch.
+      // `s.romajiCapable` (not a ref) so the capability read matches the
+      // text that actually produced `s.words`, even mid-async-load.
+      if (isRomajiInputActive(configRef.current, languageRef.current, s.romajiCapable)) {
+        return processRomajiKeyEvent(s, key, configRef.current, languageRef.current)
+      }
+
+      // Space and Enter both advance a word, but they are distinct: at a
+      // line-end word Enter is expected, elsewhere Space. The non-matching
+      // key is a no-op. Flat word-flow sources have no `lineBreaks`, so
+      // Space always advances and Enter is always ignored.
+      if (isSubmitKey(key) || key === 'Enter') {
         if (s.status === 'waiting') {
           return { ...s, status: 'running', startTime: Date.now() }
         }
+        const expectsEnter = s.lineBreaks.has(s.currentWordIndex)
+        const wrongSubmitKey = key === 'Enter' ? !expectsEnter : expectsEnter
+        if (wrongSubmitKey) return s
         return handleSpace(s, configRef.current, languageRef.current)
       }
 
@@ -451,8 +442,9 @@ export function useTypingTest(
           current = { ...current, status: 'running', startTime: Date.now() }
         }
         current = handleChar(current, key)
-        // Auto-finish when last char of last word is typed (words/quote modes only)
-        if (configRef.current.mode !== 'time') {
+        // Auto-finish when last char of last word is typed (words/quote modes,
+        // and tatoeba's Lines pattern — every mode but a time-bounded run).
+        if (!isTimeBoundedRun(configRef.current)) {
           return tryFinishLastWord(current) ?? current
         }
         return current
@@ -480,6 +472,10 @@ export function useTypingTest(
   const processCompositionEnd = useCallback((data: string) => {
     setState((s) => {
       if (s.status !== 'waiting' && s.status !== 'running') return s
+      // Romaji mode is direct-keystroke only; IME composition input (which
+      // implies IME is on, contrary to the mode's requirement) is ignored
+      // entirely rather than fed into currentInput.
+      if (isRomajiInputActive(configRef.current, languageRef.current, s.romajiCapable)) return s
       if (!data) {
         return { ...s, compositionText: '' }
       }
@@ -488,7 +484,7 @@ export function useTypingTest(
         current = { ...current, status: 'running', startTime: Date.now() }
       }
       current = { ...current, currentInput: current.currentInput + data, compositionText: '' }
-      if (configRef.current.mode !== 'time') {
+      if (!isTimeBoundedRun(configRef.current)) {
         return tryFinishLastWord(current) ?? current
       }
       return current
@@ -514,14 +510,17 @@ export function useTypingTest(
     return () => clearInterval(id)
   }, [state.status])
 
-  // Time mode countdown - finish when remaining reaches 0
+  // Time-bounded countdown (monkeytype time mode, or tatoeba's Time
+  // pattern) - finish when remaining reaches 0
   useEffect(() => {
     if (state.status !== 'running') return
-    if (config.mode !== 'time') return
+    if (!isTimeBoundedRun(config)) return
     if (!state.startTime) return
 
+    const duration = runDurationSeconds(config)
+    if (duration == null) return
     const elapsed = Math.floor((Date.now() - state.startTime) / 1000)
-    if (elapsed >= config.duration) {
+    if (elapsed >= duration) {
       setState((s) => {
         if (s.status !== 'running') return s
         return { ...s, status: 'finished', endTime: Date.now() }
@@ -537,6 +536,16 @@ export function useTypingTest(
     return Math.round((state.correctChars / 5) / minutes)
   }, [state.startTime, state.endTime, state.correctChars, tick])
 
+  // Keystrokes per minute (correct chars / minute). FileImport mode shows this
+  // instead of WPM, since imported code / CJK text has no meaningful "words".
+  const kpm = useMemo(() => {
+    if (!state.startTime) return 0
+    const end = state.endTime ?? Date.now()
+    const minutes = (end - state.startTime) / 60000
+    if (minutes <= 0) return 0
+    return Math.round(state.correctChars / minutes)
+  }, [state.startTime, state.endTime, state.correctChars, tick])
+
   const accuracy = useMemo(() => {
     const total = state.correctChars + state.incorrectChars
     if (total === 0) return 100
@@ -550,17 +559,49 @@ export function useTypingTest(
   }, [state.startTime, state.endTime, tick])
 
   const remainingSeconds = useMemo(() => {
-    if (config.mode !== 'time') return null
-    if (!state.startTime) return config.duration
+    const duration = runDurationSeconds(config)
+    if (duration == null) return null
+    if (!state.startTime) return duration
     if (state.endTime) return 0
     const elapsed = Math.floor((Date.now() - state.startTime) / 1000)
-    return Math.max(0, config.duration - elapsed)
+    return Math.max(0, duration - elapsed)
   }, [config, state.startTime, state.endTime, tick])
+
+  // Current word's romaji progress (romajiInput mode only), re-derived from
+  // the accepted keystroke history on every change rather than stored on
+  // state directly — see `buildRomajiMatcher`. `guideWordCount` is the total
+  // number of words shown in the guide row (current word included), so the
+  // look-ahead word count is one fewer; the slice's end <= start for counts
+  // 0 and 1 naturally yields an empty `lookahead`. `showRow` is false only
+  // at count 0 — kanaCompleted (for WordDisplay's coloring) is always
+  // computed regardless, since it must keep working even when the row
+  // itself is hidden.
+  const romajiGuide = useMemo(() => {
+    if (!isRomajiInputActive(config, language, state.romajiCapable)) return null
+    if (state.currentWordIndex >= state.words.length) return null
+    const word = state.words[state.currentWordIndex]
+    const detail = romajiDetail(config)
+    const matcher = buildRomajiMatcher(word, state.romajiKeystrokes, detail)
+    const guideWordCount = detail?.guideWordCount ?? 2
+    const lookahead = state.words
+      .slice(state.currentWordIndex + 1, state.currentWordIndex + guideWordCount)
+      .map((w) => buildRomajiMatcher(w, '', detail).remainingGuide())
+    const guide: RomajiGuide = {
+      typed: matcher.typedRomaji(),
+      remaining: matcher.remainingGuide(),
+      kanaCompleted: matcher.completedKanaCount(),
+      lookahead,
+      showRow: guideWordCount > 0,
+    }
+    return applyRomajiCaseStyle(guide, detail?.caseStyle)
+  }, [config, language, state.words, state.currentWordIndex, state.romajiKeystrokes, state.romajiCapable])
 
   return {
     state,
     wpm,
+    kpm,
     accuracy,
+    romajiGuide,
     elapsedSeconds,
     remainingSeconds,
     config,
@@ -581,98 +622,8 @@ export function useTypingTest(
     setLanguage,
     setBaseLayer,
     setWindowFocused,
+    captureMemory,
+    pause,
+    restoreState,
   }
-}
-
-function handleChar(state: TypingTestState, char: string): TypingTestState {
-  if (state.currentWordIndex >= state.words.length) return state
-  return {
-    ...state,
-    currentInput: state.currentInput + char,
-  }
-}
-
-/** If the last word is fully typed, finalize it and finish the test. */
-function tryFinishLastWord(state: TypingTestState): TypingTestState | null {
-  if (state.currentWordIndex !== state.words.length - 1) return null
-  const currentWord = state.words[state.currentWordIndex]
-  if (state.currentInput !== currentWord) return null
-
-  // Count chars without trailing space bonus (no space needed for last word)
-  let correct = 0
-  for (let i = 0; i < currentWord.length; i++) correct++
-
-  return {
-    ...state,
-    currentWordIndex: state.currentWordIndex + 1,
-    currentInput: '',
-    wordResults: [...state.wordResults, { word: currentWord, typed: currentWord, correct: true }],
-    correctChars: state.correctChars + correct,
-    incorrectChars: state.incorrectChars,
-    status: 'finished',
-    endTime: Date.now(),
-  }
-}
-
-function handleSpace(state: TypingTestState, config: TypingTestConfig, language: string): TypingTestState {
-  if (state.currentWordIndex >= state.words.length) return state
-
-  const currentWord = state.words[state.currentWordIndex]
-  const typed = state.currentInput
-  const isCorrect = typed === currentWord
-  const charCounts = computeWordCharCounts(currentWord, typed)
-
-  const nextIndex = state.currentWordIndex + 1
-
-  const base: TypingTestState = {
-    ...state,
-    currentWordIndex: nextIndex,
-    currentInput: '',
-    wordResults: [...state.wordResults, { word: currentWord, typed, correct: isCorrect }],
-    correctChars: state.correctChars + charCounts.correct,
-    incorrectChars: state.incorrectChars + charCounts.incorrect,
-  }
-
-  // Time mode: extend words if running low, never finish from words
-  if (config.mode === 'time') {
-    const wordsRemaining = state.words.length - nextIndex
-    if (wordsRemaining < TIME_MODE_EXTEND_THRESHOLD) {
-      const { words: moreWords } = generateWordsSync(TIME_MODE_BATCH_SIZE, {
-        punctuation: config.punctuation,
-        numbers: config.numbers,
-      }, language)
-      return { ...base, words: [...state.words, ...moreWords] }
-    }
-    return base
-  }
-
-  // Words and quote modes: finish when all words typed
-  if (nextIndex >= state.words.length) {
-    return { ...base, status: 'finished', endTime: Date.now() }
-  }
-  return base
-}
-
-function handleBackspace(state: TypingTestState): TypingTestState {
-  if (state.currentInput.length === 0) return state
-  return {
-    ...state,
-    currentInput: state.currentInput.slice(0, -1),
-  }
-}
-
-function computeWordCharCounts(word: string, typed: string): { correct: number; incorrect: number } {
-  const len = Math.max(typed.length, word.length)
-  let correct = 1 // count the space separator as a correct char
-  let incorrect = 0
-
-  for (let i = 0; i < len; i++) {
-    if (i < typed.length && i < word.length && typed[i] === word[i]) {
-      correct++
-    } else {
-      incorrect++
-    }
-  }
-
-  return { correct, incorrect }
 }

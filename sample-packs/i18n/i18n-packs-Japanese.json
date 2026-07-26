@@ -1,5 +1,5 @@
 {
-  "version": "0.1.4",
+  "version": "0.1.43",
   "name": "Japanese",
   "common": {
     "save": "保存",
@@ -9,7 +9,7 @@
     "confirmDelete": "削除しますか？",
     "close": "閉じる",
     "reset": "リセット",
-    "confirmReset": "リセットする？",
+    "confirmReset": "リセット？",
     "revert": "復元",
     "confirmRevert": "復元？",
     "clear": "クリア",
@@ -18,7 +18,7 @@
     "refreshing": "更新中...",
     "disconnect": "切断",
     "loading": "読み込み中...",
-    "apply": "適用",
+    "apply": "適用する",
     "notConfigured": "未設定",
     "settingsLabel": "設定:",
     "configuration": "Configuration",
@@ -27,6 +27,7 @@
     "exported": "エクスポート済み",
     "imported": "インポート済み",
     "load": "読み込み",
+    "confirmLoad": "読み込みますか？",
     "labelPlaceholder": "ラベル",
     "noLabel": "（ラベルなし）",
     "synced": "同期しました",
@@ -35,7 +36,15 @@
     "findOnHub": "Hub で探す",
     "findOnHubHint": "アップロードされたファイルを <hub>Pipette Hub</hub> で確認できます。",
     "installed": "インストール済み",
-    "searchPlaceholder": "Pipette Hub を検索 (2 文字以上で入力)…"
+    "searchPlaceholder": "Pipette Hub を検索 (2 文字以上で入力)…",
+    "sortByName": "名前",
+    "importing": "インポート中...",
+    "importedNamed": "{{name}} をインポートしました",
+    "updatedNamed": "{{name}} を更新しました",
+    "importBatchFailed_one": "{{count}} 件のファイルをインポートできませんでした：",
+    "importBatchFailed_other": "{{count}} 件のファイルをインポートできませんでした：",
+    "importSummary_one": "{{count}} 件インポートしました (成功 {{success}}, 失敗 {{failure}})",
+    "importSummary_other": "{{count}} 件インポートしました (成功 {{success}}, 失敗 {{failure}})"
   },
   "app": {
     "title": "Pipette",
@@ -66,6 +75,14 @@
   },
   "editor": {
     "autoAdvance": "自動移動",
+    "viewMatrix": {
+      "label": "ビューマトリクス",
+      "edit": "編集",
+      "done": "完了",
+      "rowLabel": "行",
+      "colLabel": "列",
+      "blankOption": "—"
+    },
     "keymap": {
       "title": "キーマップ",
       "layer": "Layer {{number}}",
@@ -90,6 +107,7 @@
       "previousLayers": "前のレイヤー",
       "nextLayers": "次のレイヤー",
       "layerN": "Layer {{n}}",
+      "layerPreview": "プレビュー - {{label}}",
       "undo": "元に戻す",
       "redo": "やり直し",
       "zoomIn": "拡大",
@@ -249,22 +267,109 @@
       "switchToTypingMode": "タイピングテスト",
       "exitTypingMode": "タイピングテスト終了",
       "restart": "やり直す",
+      "nextTest": "次のテスト",
+      "complete": "完了",
+      "collapseSettings": "設定を閉じる",
+      "expandSettings": "設定を開く",
+      "keymapToggle": "キーマップ",
+      "statsToggle": "計測",
+      "controlsToggle": "操作",
+      "hideKeymap": "キーマップを隠す",
+      "showKeymap": "キーマップを表示",
+      "hideStats": "計測を隠す",
+      "showStats": "計測を表示",
+      "hideControls": "操作を隠す",
+      "showControls": "操作を表示",
+      "saveUnnamedToggle": "名称未設定も保存",
+      "enableSaveUnnamed": "名前なしでも結果を保存",
+      "disableSaveUnnamed": "保存には名前を必須にする",
+      "section": {
+        "settings": "設定",
+        "data": "データ",
+        "view": "表示"
+      },
+      "compare": {
+        "button": "比較",
+        "title": "比較",
+        "previous": "前回",
+        "best": "ベスト",
+        "average": "平均",
+        "pinned": "結果",
+        "off": "オフ",
+        "noResults": "ピンできる結果がありません",
+        "colName": "名前",
+        "colKeyboard": "キーボード",
+        "colTime": "時間"
+      },
       "wpm": "WPM",
+      "kpm": "KPM",
       "accuracy": "正確性",
       "time": "時間",
       "words": "単語",
+      "lines": "行",
+      "chars": "文字数",
+      "fontSize": "Font",
       "correct": "正解",
       "incorrect": "ミス",
-      "finished": "完了",
       "loading": "読み込み中...",
       "wordCount": "{{current}} / {{total}}",
       "mode": {
         "words": "単語",
         "time": "時間",
-        "quote": "引用"
+        "quote": "引用",
+        "fileImport": "テキスト",
+        "lines": "行"
       },
       "punctuation": "句読点",
       "numbers": "数字",
+      "romaji": {
+        "toggle": "ローマ字入力",
+        "imeHint": "ローマ字入力モードでは OS の IME をオフにしてください"
+      },
+      "romajiSettings": {
+        "title": "ローマ字入力の詳細設定",
+        "caseLabel": "表示する文字列",
+        "case": {
+          "upper": "ROMAJI",
+          "capital": "Romaji",
+          "lower": "romaji"
+        },
+        "guideWordsLabel": "表示語数",
+        "guideLabel": "表示パターン",
+        "guideHint": "表示のみです。他の入力パターンでも正解になります",
+        "inputLabel": "入力パターン",
+        "inputHint": "オフにしたパターンは拒否されます。ベース（ヘボン式/訓令式）は最低1つ有効です",
+        "style": {
+          "hepburn": "ヘボン式 (shi/chi)",
+          "kunrei": "訓令式 (si/ti)",
+          "c": "C表記 (ca)",
+          "q": "Q表記 (qu)",
+          "digraph": "二重字 (jya)",
+          "xSmall": "小文字x (xa)",
+          "lSmall": "小文字l (la)",
+          "w": "W表記 (wi)",
+          "v": "V表記 (va)",
+          "f": "F表記 (fa)",
+          "ye": "YE表記 (ye)",
+          "xn": "撥音x (xn)",
+          "nApos": "N区切り (n')"
+        },
+        "styleTip": {
+          "hepburn": "し:shi じ:ji ち:chi つ:tsu ふ:fu しゃ:sha しゅ:shu しょ:sho じゃ:ja じゅ:ju じょ:jo ちゃ:cha ちゅ:chu ちょ:cho\nっし:sshi っち:cchi っち:tchi っつ:ttsu っふ:ffu っしゃ:ssha っちゃ:tcha っじゃ:jja",
+          "kunrei": "し:si じ:zi ち:ti つ:tu ふ:hu しゃ:sya しゅ:syu しょ:syo じゃ:zya じゅ:zyu じょ:zyo ちゃ:tya ちゅ:tyu ちょ:tyo\nっし:ssi っち:tti っつ:ttu っふ:hhu っしゃ:ssya っちゃ:ttya っじゃ:zzya",
+          "c": "か:ca く:cu こ:co し:ci せ:ce ちゃ:cya ちゅ:cyu ちょ:cyo ちぃ:cyi ちぇ:cye",
+          "q": "く:qu くぁ:qa くぃ:qi くぇ:qe くぉ:qo",
+          "digraph": "じゃ:jya じゅ:jyu じょ:jyo じぃ:jyi じぇ:jye",
+          "xSmall": "ぁ:xa ぃ:xi ぅ:xu ぇ:xe ぉ:xo ゃ:xya ゅ:xyu ょ:xyo ゎ:xwa ゕ:xka ゖ:xke ぃ:xyi ぇ:xye っ:xtu っ:xtsu",
+          "lSmall": "ぁ:la ぃ:li ぅ:lu ぇ:le ぉ:lo ゃ:lya ゅ:lyu ょ:lyo ゎ:lwa ゕ:lka ゖ:lke ぃ:lyi ぇ:lye っ:ltu っ:ltsu",
+          "w": "うぃ:wi うぃ:whi うぇ:we うぇ:whe うぉ:who うぁ:wha う:wu う:whu",
+          "v": "ゔ:vu ゔぁ:va ゔぃ:vi ゔぇ:ve ゔぉ:vo ゔゃ:vya ゔゅ:vyu ゔょ:vyo ゔぃ:vyi ゔぇ:vye",
+          "f": "ふぁ:fa ふぃ:fi ふぇ:fe ふぉ:fo ふゅ:fyu ふゃ:fya ふょ:fyo ふぁ:hwa ふぃ:hwi ふぇ:hwe ふぉ:hwo ふゅ:hwyu",
+          "ye": "いぇ:ye",
+          "xn": "ん:xn",
+          "nApos": "ん:n'"
+        }
+      },
       "quoteLength": {
         "short": "短い",
         "medium": "普通",
@@ -272,12 +377,15 @@
         "all": "全て"
       },
       "quoteSource": "-- {{source}}",
+      "nameResult": "この結果に名前を付ける",
+      "nameModal": {
+        "title": "結果に名前を付ける"
+      },
       "viewOnly": "タイピングビュー",
       "exitViewOnly": "タイピングビュー終了",
       "alwaysOnTop": "最前面",
       "recordStart": "開始",
       "recordStop": "停止",
-      "viewAnalytics": "分析ビュー",
       "tab": {
         "window": "ウィンドウ",
         "rec": "REC"
@@ -286,13 +394,20 @@
         "label": "Monitor App"
       },
       "heatmap": {
-        "legend": "ヒートマップ: 直近 1 時間"
+        "legend": "ヒートマップ: 直近 {{minutes}} 分"
       },
       "closeHint": "クリックでメニューを開く",
       "recordingIndicator": "記録中",
       "resetSize": "初期サイズ",
       "fitSize": "フィット",
-      "baseLayer": "Base Layer",
+      "baseLayer": "Layer",
+      "modeLabel": "データ元",
+      "pattern": "パターン",
+      "units": "単位",
+      "unitsWords": "単位(単語)",
+      "unitsSec": "単位(秒)",
+      "unitsLines": "単位(行)",
+      "optionLabel": "オプション",
       "baseLayerShort": "Base",
       "heatmapWindow": "ヒートマップの表示期間（分）",
       "heatmapWindowShort": "HeatMap",
@@ -317,14 +432,50 @@
       "paused": "ウィンドウがフォーカスを失いました",
       "layerNote": "レイヤー切替の追随は MO / LT / LM のみ対応しています。その他のレイヤーキーや特殊機能は反映されない場合があります。",
       "language": {
-        "title": "言語",
+        "title": "データ元",
         "searchPlaceholder": "言語を検索...",
         "downloaded": "ダウンロード済み",
         "available": "利用可能",
         "noResults": "一致する言語がありません",
         "words": "{{count}} 単語",
+        "lines": "{{count}} 行",
         "loadingLanguage": "言語を読み込み中...",
-        "downloadFailed": "ダウンロードに失敗しました"
+        "downloadFailed": "ダウンロードに失敗しました",
+        "tabMonkeytype": "MonkeyType",
+        "tabTatoeba": "Tatoeba",
+        "tabFileImport": "ファイル取込",
+        "tabAozora": "青空文庫",
+        "import": "UTF-8 テキストをインポート",
+        "importEmpty": "インポートされたテキストはありません",
+        "importFailed": "インポートに失敗しました",
+        "importErrorNotUtf8": "UTF-8 のテキストファイルのみ対応しています",
+        "importErrorTooLarge": "ファイルが大きすぎます（最大 5 MB）",
+        "importErrorEmpty": "打鍵できるテキストがありません",
+        "importOverwritePrompt": "「{{name}}」は既に存在します。上書きしますか？",
+        "confirmOverwrite": "上書き",
+        "fileImportText": "インポートテキスト",
+        "datasetUpdateAvailable": "単語リストの更新があります。",
+        "datasetUpdate": "更新",
+        "datasetUpdating": "更新中…",
+        "catalogSearchPlaceholder": "作品名・著者名で検索...",
+        "catalogImportAction": "取り込む",
+        "estimatedChars": "約 {{count}} 文字",
+        "catalogImportErrorDuplicate": "同じ作品名のテキストが既に存在します",
+        "catalogImportErrorGeneric": "ダウンロードに失敗しました（{{code}}）",
+        "catalogLoadFailed": "カタログの読み込みに失敗しました。接続を確認して再度お試しください。",
+        "kanaRowLabel": "行",
+        "kanaRowGroupAriaLabel": "著者名の読みの行で絞り込む",
+        "kanaColumnGroupAriaLabel": "著者名の読みの段で絞り込む",
+        "romajiBadge": "Romaji",
+        "romajiFilter": "ローマ字入力に対応した項目のみ表示"
+      },
+      "memory": {
+        "pause": "一時停止",
+        "resumeButton": "再開",
+        "resumeTitle": "保存したテストを再開しますか？",
+        "resumeBody": "{{total}} 語中 {{current}} 語目で一時停止しました。続きから再開しますか？最初からやり直しますか？",
+        "resume": "続きから再開",
+        "restart": "最初から"
       },
       "history": {
         "title": "履歴",
@@ -334,11 +485,30 @@
         "totalTests": "テスト数",
         "avgAccuracy": "平均正確性",
         "date": "日時",
+        "name": "名前",
+        "unnamed": "名称未設定",
         "mode": "モード",
+        "tabMonkeytype": "MonkeyType",
+        "tabFileImport": "ファイル取込",
+        "tabText": "テキスト",
         "noResults": "結果がありません",
         "pb": "PB",
         "allModes": "すべて",
-        "exportCsv": "CSV出力"
+        "filterMode": "モードで絞り込み",
+        "filterText": "テキストで絞り込み",
+        "exportCsv": "CSV出力",
+        "delete": "削除",
+        "accuracyTrendTitle": "正確性の推移",
+        "conditionFilterLabel": "条件で絞り込み",
+        "conditionPunctuation": "+句読点",
+        "conditionNumbers": "+数字",
+        "conditionRomaji": "+ローマ字入力",
+        "conditionTatoeba": "Tatoeba",
+        "mistakeRankingTitle": "苦手な文字",
+        "mistakeRankingEmpty": "ミスの記録はまだありません"
+      },
+      "results": {
+        "mistakesLabel": "ミス文字"
       }
     }
   },
@@ -400,8 +570,12 @@
       "keyOverrideKeys": "Key",
       "altRepeatKeyKeys": "Key",
       "capsWord": "Caps Word",
+      "tappingTerm": "Dynamic Tapping Term",
+      "autocorrect": "Autocorrect",
+      "leader": "Leader",
       "boot": "Boot",
       "osm": "One-Shot Modifiers",
+      "oneShotControl": "One-Shot Control",
       "modMask": "Modifier Masks",
       "modTap": "Mod-Tap",
       "modSpecial": "Special",
@@ -455,7 +629,6 @@
     "autoAdvance": "自動移動",
     "locked": "ロック中",
     "unlocked": "アンロック",
-    "keyTester": "キーテスター",
     "sync": {
       "pending": "同期待ち",
       "syncing": "同期中...",
@@ -585,7 +758,6 @@
     "defaultLayout": "キーラベル",
     "defaultAutoAdvance": "自動移動",
     "defaultLayerPanelOpen": "レイヤーリスト展開",
-    "defaultBasicViewType": "Basic タブ表示",
     "defaultSplitKeyMode": "キーピッカーでShiftキーを分離",
     "defaultQuickSelect": "キーの即時選択",
     "basicViewTypeList": "LIST",
@@ -605,7 +777,15 @@
       "licenseValue": "GPL-3.0-or-later"
     },
     "zoomLevel": "ズーム",
-    "zoomLevelWarning": "表示が崩れる場合があります。自己責任で変更してください。"
+    "zoomLevelWarning": "表示が崩れる場合があります。自己責任で変更してください。",
+    "autoLaunch": "自動起動",
+    "autoLaunchDescription": "サインイン時に Pipette を自動で起動します",
+    "trayResident": "タスクトレイ常駐",
+    "trayResidentDescription": "ウィンドウを閉じてもトレイに常駐して動作し続けます",
+    "restoreLastSession": "最後の状態で起動",
+    "restoreLastSessionDescription": "起動時に最後に接続していたキーボードと画面を復元します",
+    "startInTray": "トレイ常駐で起動",
+    "startInTrayDescription": "ウィンドウを開かずタスクトレイ常駐で起動します"
   },
   "analyze": {
     "noKeyboards": "まだ打鍵データがありません",
@@ -949,10 +1129,18 @@
         "slow": "ペア間隔",
         "fingerIki": "指間隔"
       },
+      "cappedNotice": "頻度上位 {{limit}} 件のペアから算出しています — 低頻度のペアは含まれない場合があります",
+      "gramToggle": {
+        "ariaLabel": "N-gram の粒度",
+        "bigram": "2-gram",
+        "trigram": "3-gram"
+      },
       "column": {
         "pair": "ペア",
         "count": "回数",
         "avgIki": "平均間隔",
+        "avgIkiTrigramTooltip": "3キー間にある2つの間隔の平均です。3キー全体の所要時間ではありません",
+        "sd": "SD",
         "p95": "p95 間隔"
       },
       "fingerIki": {
@@ -978,6 +1166,17 @@
       "bondToggle": "レイヤー {{i}} を別グループと結合",
       "noLayout": "このスナップショットにレイアウトデータがありません",
       "noSnapshot": "この期間のキーマップスナップショットが記録されていません。record を開始すると取得されます。",
+      "modeToggle": {
+        "ariaLabel": "ヒートマップの着彩モード",
+        "count": "回数",
+        "speed": "速度"
+      },
+      "speed": {
+        "colAvgIki": "到達 Avg IKI",
+        "empty": "この期間の到達速度データはまだありません",
+        "minSampleNote": "到達回数が {{n}} 回未満のキーは着彩されません",
+        "cappedNotice": "頻度上位 {{limit}} 件のペアから算出しています — 低頻度のペアは含まれない場合があります"
+      },
       "ranking": {
         "frequentUsedN": "上位",
         "frequentUsed": "よく使うキー",
@@ -1167,6 +1366,17 @@
         "none": "全アプリ合算",
         "multi": "{{first}} 他{{rest}}件"
       },
+      "typingTest": "TypingTest",
+      "typingTestOption": {
+        "none": "全テスト合算",
+        "multi": "{{first}} 他{{rest}}件"
+      },
+      "run": "結果",
+      "runOption": {
+        "none": "全ラン合算",
+        "multi": "{{first}} 他{{rest}}件"
+      },
+      "dimensionLabel": "App / TypingTest で絞り込み",
       "unit": "表示",
       "unitOption": {
         "sec": "秒",
@@ -1248,7 +1458,12 @@
         "day3": "3日",
         "week1": "1週間",
         "month1": "1ヶ月"
-      }
+      },
+      "sourceLabel": "ソース",
+      "editConditions": "検索条件を編集",
+      "chipAriaLabel": "検索条件を編集",
+      "sourceDisabledByApp": "By App は全ソースを合算するため、この項目は無効です。",
+      "distributionDisabledNote": "分布ビューは常にこのデバイスのデータを使うため、この項目は無効です。"
     }
   },
   "dataModal": {
@@ -1263,7 +1478,7 @@
     "noSaves": "セーブが見つかりません",
     "importExportDesc": "ローカルにある全てのデータをインポート/エクスポート（キーボード、お気に入り、設定）",
     "deleteAll": "全てのデータを削除",
-    "deleteAllConfirm": "同期データを含む全てのデータが削除されます",
+    "deleteAllConfirm": "このキーボードに紐づく全データ（キーマップ・タイピング履歴と分析・各種設定）を同期データも含めて削除します",
     "syncNoOrphans": "同期データは全てローカルにあります",
     "resetAppSettings": "アプリケーション設定をリセット",
     "typing": {
@@ -1304,7 +1519,7 @@
     "title": "メニュー",
     "tabData": "データ",
     "tabSave": "保存",
-    "tabTools": "設定",
+    "tabTools": "設定 / インポート",
     "tabLayout": "レイアウト",
     "basicViewType": "Basic タブ表示",
     "splitKeyMode": "キーピッカーでShiftキーを分離",
@@ -1346,6 +1561,30 @@
     "displayNameSaveFailed": "投稿者名の保存に失敗しました",
     "displayNameTaken": "この投稿者名は既に使用されています",
     "openInBrowser": "開く",
+    "uploadConfirm": {
+      "title": {
+        "create": "Hub にアップロード",
+        "update": "Hub 投稿を更新"
+      },
+      "visibilityPublic": "公開",
+      "publicDesc": "Hub の一覧・検索に表示されます。",
+      "visibilityPrivate": "非公開（限定リンク）",
+      "privateDesc": "秘密リンクを知る人だけが閲覧できます。一覧・検索には表示されません。",
+      "expiryLabel": "リンクの有効期限",
+      "expiryDays_one": "{{count}}日",
+      "expiryDays_other": "{{count}}日",
+      "expiresAtPreview": "{{date}} に期限切れ",
+      "warnUrlExpiryChange": "更新すると投稿が作り直され、共有リンクと有効期限が変わります。",
+      "confirm": "決定",
+      "cancel": "キャンセル"
+    },
+    "private": {
+      "badgePublic": "Hub（公開）",
+      "badgePrivate": "Hub（非公開）",
+      "expiresAt": "{{date}} に期限切れ",
+      "noExpiry": "無期限",
+      "removeConfirm": "Hub から削除しますか？ 非公開リンクは直ちに無効になります。"
+    },
     "needsDisplayName": "アップロードするには設定で表示名を設定してください",
     "displayNameRequired": "Hub へのアップロードに必要です",
     "authDisplayNameConflict": "Googleアカウント名が既存の投稿者名と重複しています。別の投稿者名を設定してください。",
@@ -1398,14 +1637,14 @@
     "importCurrent": "インポート"
   },
   "keyLabels": {
-    "title": "Key Labels",
-    "manageRow": "Key Labels 管理",
+    "title": "キーラベル",
+    "manageRow": "キーラベル管理",
     "edit": "編集",
     "hubEmpty": "ハブに該当するラベルが見つかりません",
     "search": "検索",
     "searching": "検索中…",
     "import": "インポート",
-    "empty": "Key Label がまだありません。検索または Import で追加してください。",
+    "empty": "キーラベルがまだありません。検索または Import で追加してください。",
     "actionUpload": "アップロード",
     "actionUpdate": "更新",
     "actionSync": "同期",
@@ -1413,16 +1652,29 @@
     "actionDownload": "ダウンロード",
     "actionDelete": "削除",
     "actionExport": ".json",
+    "typeKeymapWrite": "キーマップ書き換え可",
+    "typeViewOnly": "表示のみ",
+    "typeKeymapWriteShort": "書換可",
+    "typeViewOnlyShort": "表示のみ",
+    "qwertyDefaultName": "QWERTY（デフォルト）",
+    "qwertyDefaultShort": "デフォルト",
     "hubRemoved": "(削除済み)",
     "errorDuplicate": "同じ名前のラベルがすでに存在します",
-    "errorImportFailed": "Key Label のインポートに失敗しました",
+    "errorImportFailed": "キーラベルのインポートに失敗しました",
     "errorInvalidName": "ラベル名が不正です",
     "errorSearchFailed": "Pipette Hub の検索に失敗しました",
     "errorGeneric": "操作に失敗しました",
-    "missingTitle": "Key Label が見つかりません",
-    "missingMessage": "Key Label「{{name}}」がインストールされていないため、QWERTY ラベルで表示します。",
+    "missingTitle": "キーラベルが見つかりません",
+    "missingMessage": "キーラベル「{{name}}」がインストールされていないため、QWERTY ラベルで表示します。",
     "missingHint": "「{{name}}」は {{settings}} > {{tools}} > {{keyLabels}}、またはキーピッカー右上の Edit ボタンからダウンロードできます。",
-    "missingClose": "閉じる"
+    "missingClose": "閉じる",
+    "keymapApply": {
+      "title": "「{{name}}」をキーマップにも適用しますか？",
+      "saveRecommendation": "書き換える前に、現在のキーマップを保存しておくことをおすすめします。書き換えは全レイヤーのキーコードを置き換え、Undo/Redo の履歴も消去します。元に戻す方法は保存したファイルの復元のみです。",
+      "confirmApply": "適用しますか？",
+      "tabsLabel": "キーマップ表示",
+      "errorPartial": "一部のキーは書き換えられませんでした。ここで処理を止めています。必要であれば、以前保存した .vil ファイルやスナップショットから復元してください。"
+    }
   },
   "i18n": {
     "edit": "編集",

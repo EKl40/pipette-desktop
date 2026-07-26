@@ -47,6 +47,13 @@ export interface MinuteSnapshot {
    * persisting; the snapshot exposes raw IKIs so consumers can choose
    * their own bucketing if needed. */
   bigrams: Map<string, number[]>
+  /** Per-trigram interval-average values (ms) accumulated within this
+   * minute. Triple key format: `${k1}_${k2}_${k3}`. Each value is the
+   * average of the two inter-key intervals that make up the triple
+   * (`(iki1 + iki2) / 2`), giving trigrams the same "interval speed"
+   * semantics as bigrams so the existing histogram bucketing applies
+   * unchanged. */
+  trigrams: Map<string, number[]>
   /** Active application name observed during this minute, or null when:
    *  - Monitor App is disabled
    *  - the minute observed multiple distinct apps (mixed → null)
@@ -54,16 +61,31 @@ export interface MinuteSnapshot {
    * Computed from the entry's app-set on finalize so the consumer sees
    * a flat string|null and never has to reason about set semantics. */
   appName: string | null
+  /** Typing test label observed during this minute, or null when no test
+   *  input (ordinary REC) or the minute mixed multiple tests. Same
+   *  single-or-null semantics as {@link appName}, but sourced per-event
+   *  (each keystroke carries its own `typingTest`) rather than at flush. */
+  typingTest: string | null
+  /** Individual test run id for this bucket, or '' for non-test (REC)
+   *  input. Unlike appName / typingTest this is part of the bucket key
+   *  (see {@link MinuteBuffer.addEvent}), so a single minute with two
+   *  runs splits into two snapshots instead of collapsing to null — the
+   *  run dimension stays exact. */
+  runId: string
 }
 
 interface Entry {
   scopeId: string
   fingerprint: TypingAnalyticsFingerprint
   minuteTs: number
+  /** Run id for this bucket ('' = non-test input). Part of the bucket
+   *  key, so every event in this entry shares it. */
+  runId: string
   charCounts: Map<string, number>
   matrixCounts: Map<string, MatrixCellCounts>
   intervals: number[]
   bigrams: Map<string, number[]>
+  trigrams: Map<string, number[]>
   keystrokes: number
   firstEventMs: number
   lastEventMs: number
@@ -72,6 +94,10 @@ interface Entry {
    * just before each flush). Size>1 collapses to null on finalize so
    * downstream consumers only see "single app" or "mixed/unknown". */
   appSet: Set<string>
+  /** Distinct typing-test labels observed across this minute, populated
+   * per-event in {@link MinuteBuffer.addEvent}. Same size→value/null
+   * collapse as {@link appSet} on finalize. */
+  typingTestSet: Set<string>
 }
 
 function floorMinute(ts: number): number {
@@ -101,6 +127,10 @@ function finalize(entry: Entry): MinuteSnapshot {
     // Iterator is the only way to peek a Set without copying.
     appName = entry.appSet.values().next().value ?? null
   }
+  let typingTest: string | null = null
+  if (entry.typingTestSet.size === 1) {
+    typingTest = entry.typingTestSet.values().next().value ?? null
+  }
   return {
     scopeId: entry.scopeId,
     fingerprint: entry.fingerprint,
@@ -116,40 +146,67 @@ function finalize(entry: Entry): MinuteSnapshot {
     charCounts: entry.charCounts,
     matrixCounts: entry.matrixCounts,
     bigrams: entry.bigrams,
+    trigrams: entry.trigrams,
     appName,
+    typingTest,
+    runId: entry.runId,
   }
 }
 
 export class MinuteBuffer {
   private readonly buffers = new Map<string, Entry>()
-  // Bigram tracking is matrix-only (char events have no keycode). Reset
-  // on minute close so cross-minute pairs are dropped per the design
-  // (see Plan-analyze-bigram.md — 0.3% loss accepted to keep the flush
-  // path simple).
-  private previousMatrixKeycode: number | null = null
-  private previousMatrixTimestamp: number | null = null
+  // Bigram/trigram tracking is matrix-only (char events have no
+  // keycode) and shares a single 2-deep chain of the last two matrix
+  // events: k1 (older) -> k2 (newer, the bigram "previous") -> the
+  // incoming event closes the pair/triple. `prevIki` caches the
+  // already-validated k1->k2 interval so a trigram emit never has to
+  // recompute or re-check it — see recordNgramChain. Reset on minute
+  // close so cross-minute pairs are dropped per the design (see
+  // Plan-analyze-bigram.md — 0.3% loss accepted to keep the flush path
+  // simple).
+  private k1Keycode: number | null = null
+  private k2Keycode: number | null = null
+  private k2Ts: number | null = null
+  private prevIki: number | null = null
+  // `${scopeId}|${runId}` the chain currently belongs to. Two keyboards
+  // typing in parallel (or a run boundary inside one minute) interleave
+  // events from different scopes/runs; pairing across them would record
+  // phantom n-grams into whichever entry the newer event lands in, so a
+  // mismatch restarts the chain from the incoming event. minuteTs is
+  // deliberately not part of this key — minute boundaries reset through
+  // the existing drain/resetBigramChain path.
+  private chainKey: string | null = null
 
   addEvent(event: TypingAnalyticsEvent, fingerprint: TypingAnalyticsFingerprint): void {
     const scopeId = canonicalScopeKey(fingerprint)
     const minuteTs = floorMinute(event.ts)
-    const key = `${scopeId}|${minuteTs}`
+    // run id joins the bucket key so two runs sharing a wall-clock minute
+    // land in separate snapshots (exact per-run aggregation). '' is the
+    // non-test bucket, identical to the pre-run-tagging behaviour.
+    const runId = event.runId ?? ''
+    const key = `${scopeId}|${minuteTs}|${runId}`
     let entry = this.buffers.get(key)
     if (!entry) {
       entry = {
         scopeId,
         fingerprint,
         minuteTs,
+        runId,
         charCounts: new Map(),
         matrixCounts: new Map(),
         intervals: [],
         bigrams: new Map(),
+        trigrams: new Map(),
         keystrokes: 0,
         firstEventMs: event.ts,
         lastEventMs: event.ts,
         appSet: new Set<string>(),
+        typingTestSet: new Set<string>(),
       }
       this.buffers.set(key, entry)
     }
+
+    if (event.typingTest) entry.typingTestSet.add(event.typingTest)
 
     if (entry.keystrokes > 0) {
       const gap = event.ts - entry.lastEventMs
@@ -181,40 +238,73 @@ export class MinuteBuffer {
         holdCount: (existing?.holdCount ?? 0) + holdDelta,
       })
 
-      this.recordBigram(entry, event.keycode, event.ts)
+      this.recordNgramChain(entry, `${scopeId}|${runId}`, event.keycode, event.ts)
     }
   }
 
-  private recordBigram(entry: Entry, currKeycode: number, ts: number): void {
-    if (
-      this.previousMatrixKeycode !== null &&
-      this.previousMatrixTimestamp !== null
-    ) {
-      const iki = ts - this.previousMatrixTimestamp
-      // Forward-time only (out-of-order matches the existing intervals
-      // policy of dropping rather than reconstructing) and within session
-      // gap (cross-session pairs are noise, not typing rhythm).
-      if (iki > 0 && iki <= SESSION_IDLE_GAP_MS) {
-        const pairKey = `${this.previousMatrixKeycode}_${currKeycode}`
-        let ikis = entry.bigrams.get(pairKey)
-        if (!ikis) {
-          ikis = []
-          entry.bigrams.set(pairKey, ikis)
+  /** Advance the shared bigram/trigram chain by one matrix event and
+   * emit any pair/triple the new event completes. `k2` is the bigram
+   * "previous"; `k1` is the event before that, so the incoming event
+   * (`curr`) closes the pair `k2_curr` and, when `k1` is also present,
+   * the triple `k1_k2_curr`.
+   *
+   * Eligibility (`0 < iki <= SESSION_IDLE_GAP_MS`) is checked once for
+   * the `k2 -> curr` interval and reused for both emissions — the
+   * trigram value additionally needs `prevIki`, the already-validated
+   * `k1 -> k2` interval cached from the previous call, so it never
+   * re-derives or re-checks that older interval.
+   *
+   * A tied/out-of-order event (`iki <= 0`) is discarded without
+   * disturbing the chain. Otherwise the chain always advances on a
+   * strictly-forward event, even when the interval exceeds the session
+   * gap — a big gap just means `prevIki` (and therefore any trigram
+   * through it) reads as invalid until two consecutive eligible
+   * intervals rebuild it; the bigram side never depended on `k1` and is
+   * unaffected.
+   *
+   * `chainKey` scopes the chain to one `${scopeId}|${runId}` stream: an
+   * event from a different keyboard or test run restarts the chain from
+   * itself instead of pairing against the other stream's keys. */
+  private recordNgramChain(entry: Entry, chainKey: string, currKeycode: number, ts: number): void {
+    if (this.k2Ts === null || this.chainKey !== chainKey) {
+      // First matrix event this chain has seen, or the event belongs to
+      // a different scope/run than the current chain — nothing valid to
+      // pair against.
+      this.k1Keycode = null
+      this.prevIki = null
+      this.k2Keycode = currKeycode
+      this.k2Ts = ts
+      this.chainKey = chainKey
+      return
+    }
+    const iki = ts - this.k2Ts
+    if (iki <= 0) {
+      // Tie / out-of-order: discard this event, chain unchanged.
+      return
+    }
+    const eligible = iki <= SESSION_IDLE_GAP_MS
+    if (eligible) {
+      const pairKey = `${this.k2Keycode}_${currKeycode}`
+      let ikis = entry.bigrams.get(pairKey)
+      if (!ikis) {
+        ikis = []
+        entry.bigrams.set(pairKey, ikis)
+      }
+      ikis.push(iki)
+      if (this.k1Keycode !== null && this.prevIki !== null) {
+        const tripleKey = `${this.k1Keycode}_${this.k2Keycode}_${currKeycode}`
+        let ikis3 = entry.trigrams.get(tripleKey)
+        if (!ikis3) {
+          ikis3 = []
+          entry.trigrams.set(tripleKey, ikis3)
         }
-        ikis.push(iki)
+        ikis3.push((this.prevIki + iki) / 2)
       }
     }
-    // Strict forward only — matches the `iki > 0` filter above. Ties
-    // (same ts as prev) shouldn't have emitted a bigram and likewise
-    // shouldn't advance the chain, otherwise the next event would pair
-    // against the tied keycode rather than the older one we kept.
-    if (
-      this.previousMatrixTimestamp === null ||
-      ts > this.previousMatrixTimestamp
-    ) {
-      this.previousMatrixKeycode = currKeycode
-      this.previousMatrixTimestamp = ts
-    }
+    this.k1Keycode = this.k2Keycode
+    this.prevIki = eligible ? iki : null
+    this.k2Keycode = currKeycode
+    this.k2Ts = ts
   }
 
   /** Tag every currently-open buffer entry with an observed application
@@ -261,8 +351,11 @@ export class MinuteBuffer {
   }
 
   private resetBigramChain(): void {
-    this.previousMatrixKeycode = null
-    this.previousMatrixTimestamp = null
+    this.k1Keycode = null
+    this.k2Keycode = null
+    this.k2Ts = null
+    this.prevIki = null
+    this.chainKey = null
   }
 
   isEmpty(): boolean {

@@ -7,24 +7,25 @@ import { TypingTestHistory } from '../../typing-test/TypingTestHistory'
 import { ModalCloseButton } from './ModalCloseButton'
 import type { TypingTestResult } from '../../../shared/types/pipette-settings'
 
-function historyToggleClass(active: boolean): string {
-  const base = 'rounded-md border px-3 py-1.5 text-sm transition-colors'
-  if (active) return `${base} border-accent bg-accent/10 text-accent`
-  return `${base} border-edge text-content-secondary hover:text-content`
-}
+// History opens a modal — it is a dialog trigger, not a stateful toggle, so the
+// button keeps a single static style whether the modal is open or closed.
+const HISTORY_BUTTON_CLASS =
+  'flex h-8 w-full items-center justify-center rounded-md border border-edge px-3 text-sm text-content-secondary transition-colors hover:text-content'
 
 interface HistoryToggleProps {
   results: TypingTestResult[]
   deviceName?: string
+  onRename?: (date: string, name: string) => void
+  onDelete?: (date: string) => void
 }
 
-export function HistoryToggle({ results, deviceName }: HistoryToggleProps) {
+export function HistoryToggle({ results, deviceName, onRename, onDelete }: HistoryToggleProps) {
   const { t } = useTranslation()
   const [showHistory, setShowHistory] = useState(false)
 
-  const handleExportCsv = useCallback((csv: string) => {
-    const prefix = deviceName ? `${deviceName}_typing-test-history` : undefined
-    window.vialAPI.exportCsv(csv, prefix)
+  const handleExportCsv = useCallback((csv: string, filterSlug: string) => {
+    const base = deviceName ? `${deviceName}_typing-test-history` : 'typing-test-history'
+    window.vialAPI.exportCsv(csv, filterSlug ? `${base}_${filterSlug}` : base)
   }, [deviceName])
 
   const closeHistory = useCallback(() => setShowHistory(false), [])
@@ -35,9 +36,10 @@ export function HistoryToggle({ results, deviceName }: HistoryToggleProps) {
       <button
         type="button"
         data-testid="typing-test-history-toggle"
-        className={historyToggleClass(showHistory)}
+        className={HISTORY_BUTTON_CLASS}
         onClick={() => setShowHistory((v) => !v)}
-        aria-pressed={showHistory}
+        aria-haspopup="dialog"
+        aria-expanded={showHistory}
       >
         {t('editor.typingTest.history.title')}
       </button>
@@ -59,7 +61,7 @@ export function HistoryToggle({ results, deviceName }: HistoryToggleProps) {
               <h3 id="history-modal-title" className="text-lg font-semibold">{t('editor.typingTest.history.title')}</h3>
               <ModalCloseButton testid="history-modal-close" onClick={() => setShowHistory(false)} />
             </div>
-            <TypingTestHistory results={results} onExportCsv={handleExportCsv} />
+            <TypingTestHistory results={results} onExportCsv={handleExportCsv} onRename={onRename} onDelete={onDelete} deviceName={deviceName} />
           </div>
         </div>
       )}

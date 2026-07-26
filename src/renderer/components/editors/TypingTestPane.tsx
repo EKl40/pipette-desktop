@@ -1,27 +1,56 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe } from 'lucide-react'
+import { ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { ICON_SM } from '../../constants/ui-tokens'
 import { TypingTestView } from '../../typing-test/TypingTestView'
+import { TypingTestSettingsBar } from '../../typing-test/TypingTestSettingsBar'
+import { buildResultNameChips } from '../../typing-test/result-builder'
+import { PauseResumeModal } from '../../typing-test/PauseResumeModal'
 import { LanguageSelectorModal } from '../../typing-test/LanguageSelectorModal'
 import { TypingRecordingConsentModal } from '../../typing-test/TypingRecordingConsentModal'
+import { isRomajiCapable, carryRomajiFields } from '../../typing-test/romaji-input'
 import { useTypingHeatmap } from '../../typing-test/useTypingHeatmap'
 import { TYPING_HEATMAP_WINDOW_OPTIONS } from '../../../shared/types/app-config'
-import { HistoryToggle } from './HistoryToggle'
 import { KeyboardPane } from './KeyboardPane'
+import { HistoryToggle } from './HistoryToggle'
+import { ComparisonToggle } from './ComparisonToggle'
+import { computeComparison, matchingResults, conditionKey } from '../../typing-test/comparison'
 import { KEY_UNIT, KEYBOARD_PADDING } from '../keyboard/constants'
 import { repositionLayoutKeys, filterVisibleKeys } from '../../../shared/kle/filter-keys'
 import type { KleKey } from '../../../shared/kle/types'
-import type { TypingTestResult, TypingViewMenuTab } from '../../../shared/types/pipette-settings'
+import type { TypingTestResult, PooledTypingTestResult, TypingViewMenuTab, TypingTestComparisonBaseline, TypingTestComparisonBaselines } from '../../../shared/types/pipette-settings'
+import { DEFAULT_COMPARISON_BASELINE } from '../../../shared/types/pipette-settings'
 import type { TypingTestConfig } from '../../typing-test/types'
+import { DEFAULT_CONFIG, DEFAULT_LANGUAGE, DEFAULT_DISPLAY_LINES, DEFAULT_FONT_SIZE, DISPLAY_LINES_MIN, DISPLAY_LINES_MAX, FONT_OPTIONS } from '../../typing-test/types'
+
+const LINE_OPTIONS = Array.from({ length: DISPLAY_LINES_MAX - DISPLAY_LINES_MIN + 1 }, (_, i) => DISPLAY_LINES_MIN + i)
+
+/** Labelled group inside the left config panel — a small heading with an
+ *  underline divider, then its controls (kept at natural width). */
+function PanelSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex w-full flex-col items-start gap-2">
+      <h3 className="w-full border-b border-edge pb-1 text-xs font-semibold uppercase tracking-wide text-content-muted">
+        {title}
+      </h3>
+      {children}
+    </section>
+  )
+}
+
 import type { useTypingTest } from '../../typing-test/useTypingTest'
 import { BTN_TOGGLE_ACTIVE, BTN_TOGGLE_INACTIVE } from '../../constants/ui-tokens'
+import { ToggleRow } from './modal-controls'
+import type { AnalyticsOrigin } from './keymap-editor-types'
+import { PANEL_COLLAPSED_WIDTH } from './keymap-editor-types'
 
 export interface TypingTestPaneProps {
   typingTest: ReturnType<typeof useTypingTest>
   onConfigChange: (config: TypingTestConfig) => void
+  /** Last normal (words/time/quote) config, restored when leaving fileImport. */
+  monkeytypeConfig?: TypingTestConfig
   onLanguageChange: (lang: string) => Promise<void>
   layers: number
   layerNames?: string[]
@@ -31,11 +60,55 @@ export interface TypingTestPaneProps {
   keycodes: Map<string, string>
   encoderKeycodes: Map<string, [string, string]>
   remappedKeys: Set<string>
+  /** Encoder analogue of `remappedKeys` — see `KeyboardWidget`'s
+   *  `remappedEncoders`. */
+  remappedEncoders?: Set<string>
+  /** Active Key Label pack's per-key legend override — see
+   *  `KeyboardWidget`'s `remapLabel`. */
+  remapLabel?: (qmkId: string) => string
   layoutOptions: Map<number, number>
   scale: number
   keys: KleKey[]
   layerLabel: string
   contentRef?: React.RefObject<HTMLDivElement | null>
+  /** Memory mode (imported fileImport text): a paused snapshot is saved. */
+  hasSavedMemory?: boolean
+  onPauseTest?: () => void
+  onResumeTest?: () => void
+  onRestartTestFromStart?: () => void
+  /** Imported-text display preferences (fileImport mode). */
+  displayLines?: number
+  fontSize?: number
+  onDisplayLinesChange?: (lines: number) => void
+  onFontSizeChange?: (px: number) => void
+  /** Editor view toggles — hide the keymap pane / the stats (WPM) row.
+   *  Persisted per keyboard; only meaningful outside view-only mode. */
+  hideKeymap?: boolean
+  hideStatsRow?: boolean
+  hideControls?: boolean
+  onToggleHideKeymap?: (hidden: boolean) => void
+  onToggleHideStatsRow?: (hidden: boolean) => void
+  onToggleHideControls?: (hidden: boolean) => void
+  /** Auto-save finished results without a name (default true). Drives only the
+   *  toggle button — the save/name behavior lives in `useInputModes`. */
+  saveUnnamed?: boolean
+  onToggleSaveUnnamed?: (enabled: boolean) => void
+  /** The just-finished result (held unsaved or saved latest), for name chips. */
+  finishedResult?: TypingTestResult | null
+  /** Name the just-finished result (save under name when held, else rename). */
+  onNameFinishedResult?: (name: string) => void
+  /** Per-condition Measurement-row comparison baselines (persisted per
+   *  keyboard, synced). Keyed by condition; the current condition's baseline
+   *  is looked up and applied. */
+  comparisonBaselines?: TypingTestComparisonBaselines
+  onComparisonBaselineChange?: (conditionKey: string, baseline: TypingTestComparisonBaseline) => void
+  /** Left Settings panel expanded state (persisted per keyboard). */
+  settingsPanelOpen?: boolean
+  onToggleSettingsPanel?: (open: boolean) => void
+  /** Label a saved result (by ISO date) from the History modal. */
+  onRenameTypingTestResult?: (date: string, name: string) => void
+  /** Delete a saved result (by ISO date) from the History modal. */
+  onDeleteTypingTestResult?: (date: string) => void
   viewOnly?: boolean
   onViewOnlyChange?: (enabled: boolean) => void
   viewOnlyWindowSize?: { width: number; height: number }
@@ -62,6 +135,18 @@ export interface TypingTestPaneProps {
    * controls one switch at a time. */
   monitorAppEnabled?: boolean
   onMonitorAppEnabledChange?: (enabled: boolean) => void
+  /** AppConfig flag — keeps Pipette running in the tray after the last
+   * window closes. Mirrors Settings > Tools; surfaced here too since the
+   * view-only window is often the last one open. */
+  trayResident?: boolean
+  onTrayResidentChange?: (enabled: boolean) => void
+  /** AppConfig flag — launch resident in the tray without opening a
+   * window. Disabled while trayResident is off; turning trayResident off
+   * also clears this when set, since a hidden window with no tray icon
+   * to reopen it would be unreachable. Same linked-clear logic as
+   * SettingsToolsTab — keep both in sync. */
+  startInTray?: boolean
+  onStartInTrayChange?: (enabled: boolean) => void
   /** Which tab of the view-only menu is currently open. Window shows
    * size / always-on-top controls; REC shows the recording toggle and
    * the entry point to the analytics page; Monitor App shows the
@@ -72,7 +157,7 @@ export interface TypingTestPaneProps {
   /** Called when the user picks "View Analytics" from the REC tab.
    * The parent owns the navigation — the pane only surfaces the
    * entry point. */
-  onViewAnalytics?: () => void
+  onViewAnalytics?: (origin: AnalyticsOrigin) => void
   /** Keyboard uid used for the typing-view heatmap query. The heatmap
    * stays hidden while this is unset or recording is off so a session
    * without a device never sees stale overlay data. */
@@ -82,6 +167,7 @@ export interface TypingTestPaneProps {
 export function TypingTestPane({
   typingTest,
   onConfigChange,
+  monkeytypeConfig,
   onLanguageChange,
   layers,
   layerNames,
@@ -91,11 +177,37 @@ export function TypingTestPane({
   keycodes,
   encoderKeycodes,
   remappedKeys,
+  remappedEncoders,
+  remapLabel,
   layoutOptions,
   scale,
   keys,
   layerLabel,
   contentRef,
+  hasSavedMemory,
+  onPauseTest,
+  onResumeTest,
+  onRestartTestFromStart,
+  displayLines,
+  fontSize,
+  onDisplayLinesChange,
+  onFontSizeChange,
+  hideKeymap,
+  hideStatsRow,
+  hideControls,
+  onToggleHideKeymap,
+  onToggleHideStatsRow,
+  onToggleHideControls,
+  saveUnnamed = true,
+  onToggleSaveUnnamed,
+  finishedResult,
+  onNameFinishedResult,
+  comparisonBaselines,
+  onComparisonBaselineChange,
+  settingsPanelOpen = true,
+  onToggleSettingsPanel,
+  onRenameTypingTestResult,
+  onDeleteTypingTestResult,
   viewOnly,
   onViewOnlyChange,
   viewOnlyWindowSize,
@@ -110,6 +222,10 @@ export function TypingTestPane({
   onHeatmapWindowMinChange,
   monitorAppEnabled,
   onMonitorAppEnabledChange,
+  trayResident,
+  onTrayResidentChange,
+  startInTray,
+  onStartInTrayChange,
   menuTab = 'window',
   onMenuTabChange,
   onViewAnalytics,
@@ -134,7 +250,44 @@ export function TypingTestPane({
   const heatmapActive = heatmapMaxTotal > 0
   const [showLanguageModal, setShowLanguageModal] = useState(false)
   const [showConsentModal, setShowConsentModal] = useState(false)
+  const [showResumeModal, setShowResumeModal] = useState(false)
 
+  // Measurement-row comparison: pool every keyboard's saved results, then pick
+  // the baseline for the current condition. Refetched when this keyboard's
+  // history changes so a just-saved run joins the pool. `state.startTime`
+  // excludes the in-flight run from previous/best/average.
+  const [comparisonPool, setComparisonPool] = useState<PooledTypingTestResult[]>([])
+  useEffect(() => {
+    let cancelled = false
+    window.vialAPI.pipetteSettingsListAllTypingResults()
+      .then((all) => { if (!cancelled) setComparisonPool(all) })
+      .catch(() => { /* best-effort: no comparison if unavailable */ })
+    return () => { cancelled = true }
+  }, [typingTestHistory])
+
+  // The baseline is remembered per condition: switching the typing-test
+  // condition recalls the baseline saved for it (default: previous).
+  const currentConditionKey = conditionKey(typingTest.config, typingTest.language)
+  const comparisonBaselineValue = comparisonBaselines?.[currentConditionKey] ?? DEFAULT_COMPARISON_BASELINE
+  // Scope: previous/best/average compare against THIS keyboard's same-condition
+  // history only; a pinned baseline can be any keyboard's result (cross-keyboard
+  // pool), so the picked result resolves from the full pool.
+  const comparison = useMemo(() => {
+    const pool = comparisonBaselineValue.kind === 'pinned' ? comparisonPool : (typingTestHistory ?? [])
+    // startTime is null before the first run; computeComparison's `beforeMs`
+    // guard (`!= null`) treats null and undefined identically.
+    return computeComparison(pool, typingTest.config, typingTest.language, comparisonBaselineValue, typingTest.state.startTime ?? undefined)
+  }, [comparisonPool, typingTestHistory, typingTest.config, typingTest.language, comparisonBaselineValue, typingTest.state.startTime])
+  // Same-condition results only — the choices for a pinned baseline. No
+  // `beforeMs`: the user is pinning a past result, not measuring a live run.
+  const sameConditionResults = useMemo(
+    () => matchingResults(comparisonPool, typingTest.config, typingTest.language),
+    [comparisonPool, typingTest.config, typingTest.language],
+  )
+  const handleComparisonChange = useCallback(
+    (baseline: TypingTestComparisonBaseline) => onComparisonBaselineChange?.(currentConditionKey, baseline),
+    [onComparisonBaselineChange, currentConditionKey],
+  )
   const handleRecordToggle = useCallback(() => {
     if (!onRecordEnabledChange) return
     // Stopping is always allowed without re-prompting; only the
@@ -153,6 +306,18 @@ export function TypingTestPane({
     }
     onRecordEnabledChange(true)
   }, [onRecordEnabledChange, recordEnabled, recordingConsentAccepted])
+
+  const handleTrayResidentToggle = useCallback(() => {
+    if (!onTrayResidentChange) return
+    const next = !trayResident
+    onTrayResidentChange(next)
+    // Mirrors SettingsToolsTab: a hidden window with no tray icon to
+    // reopen it would be unreachable, so turning tray residency off
+    // also clears startInTray when it was on.
+    if (!next && startInTray) {
+      onStartInTrayChange?.(false)
+    }
+  }, [onTrayResidentChange, trayResident, startInTray, onStartInTrayChange])
 
   const handleConsentAccept = useCallback(() => {
     onRecordingConsentAccepted?.()
@@ -325,6 +490,225 @@ export function TypingTestPane({
     }
   }, [viewOnly, viewOnlyWindowSize, getDefaultCompactSize, onViewOnlyChange, typingTest])
 
+  // Data Source / language. The mode kind (FileImport / Normal) goes in the label —
+  // "Data Source(FileImport)" — and the button shows just the source (file name or
+  // language), truncated to one line; the full text is on the title.
+  let modeType: string
+  if (typingTest.config.mode === 'fileImport') {
+    modeType = t('editor.typingTest.language.tabFileImport')
+  } else if (typingTest.config.mode === 'tatoeba') {
+    modeType = t('editor.typingTest.language.tabTatoeba')
+  } else {
+    modeType = t('editor.typingTest.language.tabMonkeytype')
+  }
+  let modeLabel: string
+  if (typingTest.isLanguageLoading) {
+    modeLabel = t('editor.typingTest.language.loadingLanguage')
+  } else if (typingTest.config.mode === 'fileImport') {
+    modeLabel = typingTest.state.currentQuote?.source ?? t('editor.typingTest.language.fileImportText')
+  } else if (typingTest.config.mode === 'tatoeba') {
+    modeLabel = typingTest.config.language.replace(/_/g, ' ')
+  } else {
+    modeLabel = typingTest.language.replace(/_/g, ' ')
+  }
+
+  // Config controls, pinned to the window's top-left as a sidebar in editor
+  // mode (view-only has no config UI). Lifted out of the keymap row so it sits
+  // at the top-left instead of beside the centred keyboard.
+  // Left Settings pane — collapsible like the keymap editor's LayerListPanel.
+  // The outer box clips + transitions width; the content keeps its full width
+  // and is hidden when collapsed (only the toggle rail remains).
+  const settingsCollapsed = !settingsPanelOpen
+  const configSidebar = viewOnly ? null : (
+    <div
+      className="flex shrink-0 flex-col self-stretch overflow-hidden rounded-xl border border-edge bg-picker-bg transition-width duration-200 ease-out"
+      style={{ width: settingsCollapsed ? PANEL_COLLAPSED_WIDTH : '18rem' }}
+      data-testid={settingsCollapsed ? 'typing-settings-panel-collapsed' : 'typing-settings-panel'}
+    >
+      {!settingsCollapsed && (
+      <div className="flex min-h-0 w-72 flex-1 flex-col gap-4 overflow-y-auto p-3">
+      {/* Settings — language/mode, base layer, pattern / units / options. */}
+      <PanelSection title={t('editor.typingTest.section.settings')}>
+        {/* Mode / language — shown for every mode (words / time / quote /
+            fileImport); quote uses it to pick the quote source language. */}
+        <div className="flex w-full flex-col items-start gap-1">
+          <span className="text-sm text-content-muted">{t('editor.typingTest.modeLabel')}({modeType})</span>
+          <button
+            type="button"
+            data-testid="language-selector"
+            title={modeLabel}
+            className="flex h-8 w-full items-center rounded-md border border-edge px-2.5 text-sm text-content-secondary transition-colors hover:text-content"
+            onClick={() => setShowLanguageModal(true)}
+            disabled={typingTest.isLanguageLoading}
+          >
+            <span className="truncate">{modeLabel}</span>
+          </button>
+        </div>
+        {showLanguageModal && (
+          <LanguageSelectorModal
+            currentLanguage={typingTest.language}
+            currentFileImportTextId={typingTest.config.mode === 'fileImport' ? typingTest.config.textId : undefined}
+            currentTatoebaLanguage={typingTest.config.mode === 'tatoeba' ? typingTest.config.language : undefined}
+            onSelectLanguage={(name) => {
+              // Picking a MonkeyType language leaves fileImport / tatoeba mode —
+              // restore the last normal (words/time/quote) config so its
+              // Pattern/Units/Option settings survive the round trip; fall back
+              // to the default if none saved.
+              if (typingTest.config.mode === 'fileImport' || typingTest.config.mode === 'tatoeba') {
+                onConfigChange(monkeytypeConfig ?? DEFAULT_CONFIG)
+              }
+              void onLanguageChange(name)
+            }}
+            onSelectImport={(textId) => onConfigChange({ mode: 'fileImport', textId, ...carryRomajiFields(typingTest.config) })}
+            onSelectTatoeba={(language) => {
+              // Carry the previous tatoeba Pattern/Units forward (switching
+              // pack language shouldn't reset Lines/Time or their counts);
+              // default to Lines/5/30 when not already in tatoeba mode.
+              const cfg = typingTest.config
+              const { pattern, lineCount, duration } = cfg.mode === 'tatoeba'
+                ? cfg
+                : { pattern: 'lines' as const, lineCount: 5, duration: 30 }
+              onConfigChange({ mode: 'tatoeba', language, pattern, lineCount, duration, ...carryRomajiFields(cfg) })
+            }}
+            onCurrentTextDeleted={() => {
+              // The selected imported text was deleted — fall back to
+              // the default (words mode, English).
+              onConfigChange(DEFAULT_CONFIG)
+              void onLanguageChange(DEFAULT_LANGUAGE)
+            }}
+            onClose={() => setShowLanguageModal(false)}
+          />
+        )}
+        {/* Base Layer / Lines / Font side by side. Lines + Font are the shared
+            reading-window display settings (every mode); wraps if too narrow. */}
+        <div className="flex w-full items-start gap-2">
+          {layers > 1 && (
+            <div className="flex flex-1 flex-col items-start gap-1">
+              <span className="text-sm text-content-muted">{t('editor.typingTest.baseLayer')}</span>
+              <select
+                data-testid="base-layer-select"
+                aria-label={t('editor.typingTest.baseLayer')}
+                value={typingTest.baseLayer}
+                onChange={(e) => typingTest.setBaseLayer(Number(e.target.value))}
+                className="h-8 w-full rounded-md border border-edge bg-surface-alt px-2 text-sm text-content-secondary focus:border-accent focus:outline-none"
+              >
+                {Array.from({ length: layers }, (_, i) => (
+                  <option key={i} value={i}>{layerNames?.[i] || i}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="flex flex-1 flex-col items-start gap-1">
+            <span className="text-sm text-content-muted">{t('editor.typingTest.lines')}</span>
+            <select
+              data-testid="display-lines-select"
+              aria-label={t('editor.typingTest.lines')}
+              value={displayLines ?? DEFAULT_DISPLAY_LINES}
+              onChange={(e) => onDisplayLinesChange?.(Number(e.target.value))}
+              className="h-8 w-full rounded-md border border-edge bg-surface-alt px-2 text-sm text-content-secondary focus:border-accent focus:outline-none"
+            >
+              {LINE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-1 flex-col items-start gap-1">
+            <span className="text-sm text-content-muted">{t('editor.typingTest.fontSize')}</span>
+            <select
+              data-testid="font-size-select"
+              aria-label={t('editor.typingTest.fontSize')}
+              value={fontSize ?? DEFAULT_FONT_SIZE}
+              onChange={(e) => onFontSizeChange?.(Number(e.target.value))}
+              className="h-8 w-full rounded-md border border-edge bg-surface-alt px-2 text-sm text-content-secondary focus:border-accent focus:outline-none"
+            >
+              {FONT_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        </div>
+        {/* words/time/quote/tatoeba always get the full bar (tatoeba has its
+            own Pattern/Units, see TypingTestSettingsBar); fileImport only
+            gets it (Option row only) once its content is actually
+            romaji-capable — otherwise there is nothing for the bar to show,
+            same as before this mode's romaji support. */}
+        {(typingTest.config.mode !== 'fileImport'
+          || isRomajiCapable(typingTest.config, typingTest.language, typingTest.state.romajiCapable)) && (
+          <TypingTestSettingsBar
+            config={typingTest.config}
+            onConfigChange={onConfigChange}
+            language={typingTest.language}
+            textRomajiCapable={typingTest.state.romajiCapable}
+          />
+        )}
+      </PanelSection>
+
+      {/* Data — saved run history + comparison baseline settings. Always shown
+          (even with no saved results yet) so History stays reachable and the
+          comparison baseline can be set up before the first result. */}
+      <PanelSection title={t('editor.typingTest.section.data')}>
+        <HistoryToggle
+          results={typingTestHistory ?? []}
+          deviceName={deviceName}
+          onRename={onRenameTypingTestResult}
+          onDelete={onDeleteTypingTestResult}
+        />
+        <ComparisonToggle
+          pool={sameConditionResults}
+          baseline={comparisonBaselineValue}
+          onChange={handleComparisonChange}
+        />
+        {/* Save Unnamed — when on (default), a finished result is auto-saved
+            even without a name; when off, only named results are kept. */}
+        <ToggleRow
+          testid="typing-test-toggle-save-unnamed"
+          label={t('editor.typingTest.saveUnnamedToggle')}
+          on={saveUnnamed}
+          onToggle={() => onToggleSaveUnnamed?.(!saveUnnamed)}
+          title={t(saveUnnamed ? 'editor.typingTest.disableSaveUnnamed' : 'editor.typingTest.enableSaveUnnamed')}
+        />
+      </PanelSection>
+
+      {/* View — toggles ordered top-to-bottom to match the editor layout:
+          operation (controls row) → measurement (stats row) → keymap pane.
+          The switch is on when the section is visible. */}
+      <PanelSection title={t('editor.typingTest.section.view')}>
+        <ToggleRow
+          testid="typing-test-toggle-controls"
+          label={t('editor.typingTest.controlsToggle')}
+          on={!hideControls}
+          onToggle={() => onToggleHideControls?.(!hideControls)}
+          title={t(hideControls ? 'editor.typingTest.showControls' : 'editor.typingTest.hideControls')}
+        />
+        <ToggleRow
+          testid="typing-test-toggle-stats"
+          label={t('editor.typingTest.statsToggle')}
+          on={!hideStatsRow}
+          onToggle={() => onToggleHideStatsRow?.(!hideStatsRow)}
+          title={t(hideStatsRow ? 'editor.typingTest.showStats' : 'editor.typingTest.hideStats')}
+        />
+        <ToggleRow
+          testid="typing-test-toggle-keymap"
+          label={t('editor.typingTest.keymapToggle')}
+          on={!hideKeymap}
+          onToggle={() => onToggleHideKeymap?.(!hideKeymap)}
+          title={t(hideKeymap ? 'editor.typingTest.showKeymap' : 'editor.typingTest.hideKeymap')}
+        />
+      </PanelSection>
+      </div>
+      )}
+      {/* Collapse / expand toggle — pinned to the bottom (mt-auto). */}
+      <div className="mt-auto shrink-0 border-t border-edge p-2">
+        <button
+          type="button"
+          data-testid="typing-settings-panel-toggle"
+          title={t(settingsCollapsed ? 'editor.typingTest.expandSettings' : 'editor.typingTest.collapseSettings')}
+          aria-label={t(settingsCollapsed ? 'editor.typingTest.expandSettings' : 'editor.typingTest.collapseSettings')}
+          className="flex items-center justify-center rounded-md p-1 text-content-muted transition-colors hover:bg-surface-dim hover:text-content"
+          onClick={() => onToggleSettingsPanel?.(settingsCollapsed)}
+        >
+          {settingsCollapsed ? <ChevronsRight size={ICON_SM} aria-hidden="true" /> : <ChevronsLeft size={ICON_SM} aria-hidden="true" />}
+        </button>
+      </div>
+    </div>
+  )
+
   return (
     <>
       {showConsentModal && (
@@ -333,118 +717,117 @@ export function TypingTestPane({
           onCancel={handleConsentCancel}
         />
       )}
+      {showResumeModal && (
+        <PauseResumeModal
+          wordIndex={typingTest.state.currentWordIndex}
+          totalWords={typingTest.state.words.length}
+          onResume={() => { setShowResumeModal(false); onResumeTest?.() }}
+          onRestart={() => { setShowResumeModal(false); onRestartTestFromStart?.() }}
+          onCancel={() => setShowResumeModal(false)}
+        />
+      )}
+      {/* Editor: config sidebar pinned top-left, reading window + keymap
+          centred in the remaining space. View-only collapses the wrappers
+          (`contents`) so its scaled-pane layout is untouched. */}
+      <div className={viewOnly ? 'contents' : 'flex min-h-0 w-full flex-1 items-stretch gap-2'}>
+      {configSidebar}
+      <div className={viewOnly ? 'contents' : 'flex min-w-0 flex-1 flex-col items-center'}>
       {!viewOnly && (
         <TypingTestView
+          hideStatsRow={hideStatsRow}
+          hideControls={hideControls}
+          comparison={comparison}
           state={typingTest.state}
           wpm={typingTest.wpm}
+          kpm={typingTest.kpm}
           accuracy={typingTest.accuracy}
           elapsedSeconds={typingTest.elapsedSeconds}
           remainingSeconds={typingTest.remainingSeconds}
           config={typingTest.config}
           paused={typingTest.state.status === 'running' && !typingTest.windowFocused}
-          onRestart={typingTest.restart}
-          onConfigChange={onConfigChange}
           onCompositionStart={typingTest.processCompositionStart}
           onCompositionUpdate={typingTest.processCompositionUpdate}
           onCompositionEnd={typingTest.processCompositionEnd}
+          romajiGuide={typingTest.romajiGuide}
           onImeSpaceKey={() => typingTest.processKeyEvent(' ', false, false, false)}
+          displayLines={displayLines}
+          fontSize={fontSize}
+          onNameResult={onNameFinishedResult}
+          // Chips come from the just-finished result (held unsaved or saved).
+          resultNameChips={finishedResult ? buildResultNameChips(finishedResult, t, deviceName) : []}
+          onStart={() => typingTest.restart()}
+          onPause={() => onPauseTest?.()}
+          onResume={() => setShowResumeModal(true)}
+          hasSavedMemory={hasSavedMemory}
         />
       )}
       <div
         className={viewOnly ? 'flex min-h-0 w-full flex-1 cursor-pointer items-center justify-center overflow-hidden' : 'flex items-start justify-center overflow-auto'}
         onClick={viewOnly ? () => setViewOnlyControlsOpen((v) => !v) : undefined}
       >
-        <div className="relative" style={viewOnly && paneNaturalSizeRef.current.w > 0 ? { width: paneNaturalSizeRef.current.w * cssScale, height: paneNaturalSizeRef.current.h * cssScale, overflow: 'hidden' } : undefined}>
+        <div className={viewOnly ? 'relative' : 'relative w-full'} style={viewOnly && paneNaturalSizeRef.current.w > 0 ? { width: paneNaturalSizeRef.current.w * cssScale, height: paneNaturalSizeRef.current.h * cssScale, overflow: 'hidden' } : undefined}>
           {viewOnly && <div className="absolute inset-0 z-10" />}
           <div
             ref={viewOnly ? paneWrapperRef : undefined}
+            className={viewOnly ? undefined : 'w-full'}
             style={viewOnly ? { transform: `scale(${cssScale})`, transformOrigin: 'top left' } : undefined}
           >
-          {!viewOnly && (
-            <div className="mb-3 flex items-center justify-between px-5">
-              <div className="flex items-center gap-4">
-                {layers > 1 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-content-muted">{t('editor.typingTest.baseLayer')}:</span>
-                    <select
-                      data-testid="base-layer-select"
-                      aria-label={t('editor.typingTest.baseLayer')}
-                      value={typingTest.baseLayer}
-                      onChange={(e) => typingTest.setBaseLayer(Number(e.target.value))}
-                      className="rounded-md border border-edge bg-surface-alt px-2 py-1 text-sm text-content-secondary focus:border-accent focus:outline-none"
-                    >
-                      {Array.from({ length: layers }, (_, i) => (
-                        <option key={i} value={i}>{layerNames?.[i] || i}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {typingTest.config.mode !== 'quote' && (
-                  <button
-                    type="button"
-                    data-testid="language-selector"
-                    className="flex items-center gap-1.5 rounded-md border border-edge px-2.5 py-1 text-sm text-content-secondary transition-colors hover:text-content"
-                    onClick={() => setShowLanguageModal(true)}
-                    disabled={typingTest.isLanguageLoading}
-                  >
-                    {typingTest.isLanguageLoading ? (
-                      <span>{t('editor.typingTest.language.loadingLanguage')}</span>
-                    ) : (
-                      <>
-                        <Globe size={ICON_SM} aria-hidden="true" />
-                        <span>{typingTest.language.replace(/_/g, ' ')}</span>
-                      </>
-                    )}
-                  </button>
-                )}
-                {showLanguageModal && (
-                  <LanguageSelectorModal
-                    currentLanguage={typingTest.language}
-                    onSelectLanguage={onLanguageChange}
-                    onClose={() => setShowLanguageModal(false)}
-                  />
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                {typingTestHistory && typingTestHistory.length > 0 && (
-                  <HistoryToggle results={typingTestHistory} deviceName={deviceName} />
-                )}
-              </div>
-            </div>
+          {/* Editor: centre the keymap in the right pane. View-only must NOT
+              add justify-center — natural-size measurement happens at width 0,
+              where centring pushes content half-off and halves scrollWidth. */}
+          <div className={`flex w-full items-start${viewOnly ? '' : ' justify-center'}`}>
+          <div className="shrink-0">
+          <div className="w-fit">
+          {/* Keymap hidden only in the editor view — view-only mode is
+              keyboard-focused, so the toggle never applies there. */}
+          {!(hideKeymap && !viewOnly) && (
+            <KeyboardPane
+              paneId="primary"
+              isActive={false}
+              keys={keys}
+              keycodes={keycodes}
+              encoderKeycodes={encoderKeycodes}
+              selectedKey={null}
+              selectedEncoder={null}
+              selectedMaskPart={false}
+              selectedKeycode={null}
+              pressedKeys={pressedKeys}
+              everPressedKeys={undefined}
+              remappedKeys={remappedKeys}
+              remappedEncoders={remappedEncoders}
+              remapLabel={remapLabel}
+              layoutOptions={layoutOptions}
+              heatmapCells={heatmapCells}
+              heatmapMaxTotal={heatmapMaxTotal}
+              heatmapMaxTap={heatmapMaxTap}
+              heatmapMaxHold={heatmapMaxHold}
+              scale={viewOnly ? 1 : scale}
+              layerLabel={layerLabel}
+              layerLabelTestId="layer-label"
+              contentRef={contentRef}
+            />
           )}
-          <KeyboardPane
-            paneId="primary"
-            isActive={false}
-            keys={keys}
-            keycodes={keycodes}
-            encoderKeycodes={encoderKeycodes}
-            selectedKey={null}
-            selectedEncoder={null}
-            selectedMaskPart={false}
-            selectedKeycode={null}
-            pressedKeys={pressedKeys}
-            everPressedKeys={undefined}
-            remappedKeys={remappedKeys}
-            layoutOptions={layoutOptions}
-            heatmapCells={heatmapCells}
-            heatmapMaxTotal={heatmapMaxTotal}
-            heatmapMaxTap={heatmapMaxTap}
-            heatmapMaxHold={heatmapMaxHold}
-            scale={viewOnly ? 1 : scale}
-            layerLabel={layerLabel}
-            layerLabelTestId="layer-label"
-            contentRef={contentRef}
-          />
+          </div>
+          </div>
+          </div>
           {heatmapActive && (
             <p
               data-testid="typing-test-heatmap-legend"
               className="mt-1 text-center text-xs text-content-muted"
             >
-              {t('editor.typingTest.heatmap.legend')}
+              {t('editor.typingTest.heatmap.legend', { minutes: heatmapWindowMin ?? 5 })}
+            </p>
+          )}
+          {/* Layer-tracking note describes the keymap, so hide it with the keymap. */}
+          {!viewOnly && !hideKeymap && (
+            <p data-testid="typing-test-layer-note" className="text-center text-xs text-content-muted">
+              {t('editor.typingTest.layerNote')}
             </p>
           )}
         </div>
         </div>
+      </div>
+      </div>
       </div>
       {viewOnly && (
         <>
@@ -494,9 +877,10 @@ export function TypingTestPane({
 
             {/* Each tab body is wrapped in its own flex column so we can
                 pin a shared min-h. REC currently has the most controls
-                (Start/Stop, View Analytics, HeatMap window), so the
-                other tabs match its natural height. Keep this in sync
-                if any tab grows/shrinks meaningfully. */}
+                (Start/Stop, Monitor App, tray toggles, View Analytics,
+                HeatMap window), so the other tabs match its natural
+                height. Keep this in sync if any tab grows/shrinks
+                meaningfully. */}
             {menuTab === 'window' && (
               <div className="flex min-h-word-list flex-col gap-1.5">
                 <button
@@ -585,6 +969,42 @@ export function TypingTestPane({
                     {t('editor.typingTest.monitorApp.label')}
                   </button>
                 )}
+                {/* Tray toggles — same AppConfig fields and linked-clear
+                    semantics as Settings > Tools, surfaced here since the
+                    view-only window is often the last one open before the
+                    user reaches for the tray. */}
+                {onTrayResidentChange && (
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={trayResident ?? false}
+                    data-testid="typing-tray-resident-toggle"
+                    className={`whitespace-nowrap ${trayResident ? BTN_TOGGLE_ACTIVE : BTN_TOGGLE_INACTIVE}`}
+                    onClick={handleTrayResidentToggle}
+                  >
+                    {t('settings.trayResident')}
+                  </button>
+                )}
+                {onStartInTrayChange && (
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={startInTray ?? false}
+                    aria-disabled={!trayResident}
+                    data-testid="typing-start-in-tray-toggle"
+                    className={
+                      !trayResident
+                        ? 'whitespace-nowrap rounded border border-edge px-2 py-1 text-content-muted opacity-60 cursor-not-allowed'
+                        : `whitespace-nowrap ${startInTray ? BTN_TOGGLE_ACTIVE : BTN_TOGGLE_INACTIVE}`
+                    }
+                    onClick={() => {
+                      if (!trayResident) return
+                      onStartInTrayChange(!startInTray)
+                    }}
+                  >
+                    {t('settings.startInTray')}
+                  </button>
+                )}
                 {onViewAnalytics && (
                   <button
                     type="button"
@@ -593,10 +1013,10 @@ export function TypingTestPane({
                     className={`whitespace-nowrap ${BTN_TOGGLE_INACTIVE}`}
                     onClick={() => {
                       setViewOnlyControlsOpen(false)
-                      onViewAnalytics()
+                      onViewAnalytics('typingView')
                     }}
                   >
-                    {t('editor.typingTest.viewAnalytics')}
+                    {t('app.analyzeTab')}
                   </button>
                 )}
                 {onHeatmapWindowMinChange && (
@@ -657,11 +1077,7 @@ export function TypingTestPane({
         </div>
         </>
       )}
-      {!viewOnly && (
-        <p data-testid="typing-test-layer-note" className="text-center text-xs text-content-muted">
-          {t('editor.typingTest.layerNote')}
-        </p>
-      )}
+
     </>
   )
 }

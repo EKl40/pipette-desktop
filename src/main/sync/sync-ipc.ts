@@ -46,6 +46,7 @@ import { exportTypingDataForKeyboard, importTypingDataFiles, type ImportResult }
 import { getMachineHash } from '../typing-analytics/machine-hash'
 import { ensureCacheIsFresh } from '../typing-analytics/cache-rebuild'
 import { getTypingAnalyticsDB } from '../typing-analytics/db/typing-analytics-db'
+import { deleteAllTypingForKeyboard } from '../typing-analytics/typing-analytics-service'
 import type { SyncProgress, PasswordStrength, SyncResetTargets, LocalResetTargets, SyncScope, StoredKeyboardInfo, SyncDataScanResult, SyncCredentialFailureReason, SyncBundle } from '../../shared/types/sync'
 import { secureHandle, secureOn } from '../ipc-guard'
 import type { FavoriteIndex, SavedFavoriteMeta } from '../../shared/types/favorite-store'
@@ -57,6 +58,7 @@ import {
   tombstoneAllKeyboardMeta,
   tombstoneKeyboardMeta,
   upsertKeyboardMeta,
+  nameKeyboardOnConnect,
 } from './keyboard-meta'
 import { KEYBOARD_META_SYNC_UNIT } from '../../shared/types/keyboard-meta'
 import { I18N_SYNC_UNIT_PREFIX } from '../../shared/types/i18n-store'
@@ -268,6 +270,14 @@ export function setupSyncIpc(): void {
       }),
   )
 
+  // --- Name a keyboard on connect (names a new uid, revives a tombstone;
+  //     leaves an active/user-renamed entry untouched) ---
+  secureHandle(IpcChannels.KEYBOARD_META_NAME_IF_MISSING, async (_event, uid: string, name: string): Promise<void> => {
+    if (typeof uid !== 'string' || !isSafeKey(uid) || typeof name !== 'string') return
+    const result = await nameKeyboardOnConnect(uid, name)
+    if (result === 'upserted') notifyChange(KEYBOARD_META_SYNC_UNIT)
+  })
+
   // --- List stored keyboards ---
   secureHandle(IpcChannels.LIST_STORED_KEYBOARDS, async (): Promise<StoredKeyboardInfo[]> => {
     const userData = app.getPath('userData')
@@ -311,6 +321,12 @@ export function setupSyncIpc(): void {
       if (!isSafeKey(uid)) {
         throw new Error('Invalid uid')
       }
+      // Flush + unlink this keyboard's analytics JSONL and tombstone its
+      // SQLite-cache rows first, otherwise the Analyze view keeps showing the
+      // keyboard from the stale cache after the directory is removed.
+      await deleteAllTypingForKeyboard(uid).catch((err) => {
+        console.warn('[sync-ipc] reset keyboard: analytics cache cleanup failed', err)
+      })
       cancelPendingChanges(`keyboards/${uid}/`)
       const userData = app.getPath('userData')
       await rm(join(userData, 'sync', 'keyboards', uid), { recursive: true, force: true })
@@ -346,7 +362,12 @@ export function setupSyncIpc(): void {
         stopPolling()
       } else {
         if (targets.keyboards) cancelPendingChanges('keyboards/')
-        if (targets.favorites) cancelPendingChanges('favorites/')
+        if (targets.favorites) {
+          cancelPendingChanges('favorites/')
+          // Imported typing-test texts are global user content — reset
+          // them alongside favorites (the global-content reset bucket).
+          cancelPendingChanges('typing-test-texts')
+        }
         if (targets.i18nPacks) cancelPendingChanges(I18N_SYNC_UNIT_PREFIX)
         if (targets.themePacks) cancelPendingChanges(THEME_SYNC_UNIT_PREFIX)
         // Clearing appSettings resets autoSync config, so stop polling to match
@@ -357,6 +378,7 @@ export function setupSyncIpc(): void {
       }
       if (targets.favorites) {
         await rm(join(userData, 'sync', 'favorites'), { recursive: true, force: true })
+        await rm(join(userData, 'sync', 'typing-test-texts'), { recursive: true, force: true })
       }
       if (targets.i18nPacks) {
         await rm(join(userData, 'sync', 'i18n'), { recursive: true, force: true })
@@ -401,7 +423,13 @@ export function setupSyncIpc(): void {
         if (!bundle) continue
         const category = bundleTypeToCategory[bundle.type]
         if (!category) continue // typing-analytics / keyboard-meta not in export contract yet
-        categories[category][bundle.key] = { index: bundle.index, files: bundle.files }
+        // bundleTypeToCategory only maps 'favorite' / 'layout' / 'settings',
+        // so bundle.index is always a FavoriteIndex or SnapshotIndex here —
+        // SyncBundle['index'] just isn't discriminated by ['type'] in the type system.
+        categories[category][bundle.key] = {
+          index: bundle.index as FavoriteIndex | SnapshotIndex,
+          files: bundle.files,
+        }
       }
 
       const dialogOpts = {

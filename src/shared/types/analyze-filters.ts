@@ -11,6 +11,21 @@
 export const DEVICE_SCOPES = ['own', 'all'] as const
 export type StaticDeviceScope = typeof DEVICE_SCOPES[number]
 
+/** Which of the two mutually-exclusive minute-tag dimensions the Analyze
+ * filter row is currently driving. App and TypingTest filters target the
+ * same charts and are never useful together, so the UI shows one at a
+ * time (segmented toggle) and zeroes the inactive dimension's scopes
+ * before querying. */
+export const FILTER_DIMENSIONS = ['app', 'typingTest'] as const
+export type FilterDimension = typeof FILTER_DIMENSIONS[number]
+
+/** Coerce a persisted value to a valid `FilterDimension`, defaulting to
+ * `'app'` (the historical single-dimension behaviour) for absent or
+ * malformed input. */
+export function parseFilterDimension(value: unknown): FilterDimension {
+  return value === 'typingTest' ? 'typingTest' : 'app'
+}
+
 /** Individual remote machine-hash scope — picked from the Device
  * select when a user has data from another machine synced in. */
 export interface HashDeviceScope {
@@ -123,6 +138,13 @@ export function normalizeDeviceScopes(input: readonly DeviceScope[] | null | und
 export const HEATMAP_NORMALIZATIONS = ['absolute', 'perHour', 'shareOfTotal'] as const
 export type HeatmapNormalization = typeof HEATMAP_NORMALIZATIONS[number]
 
+/** `'count'` (default) keeps the historical press-count colouring;
+ * `'speed'` recolours the same keyboard by each key's reach IKI
+ * (average interval between the preceding key and this one), derived
+ * from the bigram aggregate rather than the matrix heatmap. */
+export const HEATMAP_MODES = ['count', 'speed'] as const
+export type HeatmapMode = typeof HEATMAP_MODES[number]
+
 export const AGGREGATE_MODES = ['cell', 'char'] as const
 export type AggregateMode = typeof AGGREGATE_MODES[number]
 
@@ -137,6 +159,16 @@ export type IntervalUnit = typeof INTERVAL_UNITS[number]
 
 export const INTERVAL_VIEW_MODES = ['timeSeries', 'distribution'] as const
 export type IntervalViewMode = typeof INTERVAL_VIEW_MODES[number]
+
+/** Distribution mode needs per-scope raw quartiles — the cross-scope
+ * `all` query already aggregates MIN / AVG / MAX over contributing
+ * scopes, so redistributing those meta-aggregates as "four samples per
+ * minute" would muddy the histogram. The chart, the CSV builder, and
+ * the filter modal's disabled rows all force `'own'` through this one
+ * predicate so the three surfaces can't drift. */
+export function distributionForcesOwnDevice(viewMode: IntervalViewMode): boolean {
+  return viewMode === 'distribution'
+}
 
 export const ACTIVITY_METRICS = ['keystrokes', 'wpm', 'sessions'] as const
 export type ActivityMetric = typeof ACTIVITY_METRICS[number]
@@ -198,6 +230,11 @@ export interface HeatmapFilters {
   aggregateMode?: AggregateMode
   normalization?: HeatmapNormalization
   keyGroupFilter?: KeyGroupFilter
+  /** Count vs. Speed colouring — see `HeatmapMode`. Absent (older
+   * persisted settings) normalizes to `'count'` via the same
+   * `{ ...DEFAULT, ...saved }` merge every other optional field here
+   * goes through. */
+  mode?: HeatmapMode
 }
 
 export interface WpmFilters {
@@ -269,6 +306,11 @@ export interface BigramFilters {
    * approximation, not exact ms (see Task-P3-bigrams-pair-interval-
    * threshold.md for rationale). */
   pairIntervalThresholdMs?: number
+  /** 2 = bigram, 3 = trigram — matches `TypingBigramAggregateOptions.gram`.
+   * Absent (older persisted settings) normalizes to `2` via the
+   * `{ ...DEFAULT, ...saved }` merge in `restoreFilters`, same as every
+   * other optional field on this shape. */
+  gram?: 2 | 3
 }
 
 export interface LayoutComparisonFilters {
@@ -300,6 +342,18 @@ export interface AnalyzeFilterSettings {
    * for an app that has no rows. Order is preserved; duplicates are
    * collapsed. */
   appScopes?: string[]
+  /** Selected typing-test labels; same persistence/normalization contract
+   * as appScopes. */
+  typingTestScopes?: string[]
+  /** Selected run ids — a second-level filter under typingTestScopes that
+   * narrows a chosen test material to specific History runs. Only applies
+   * when the typingTest dimension is active; same normalization contract
+   * as appScopes. */
+  runIdScopes?: string[]
+  /** Which dimension the filter row is driving. App and TypingTest are
+   * mutually exclusive; the inactive one's scopes are kept in storage
+   * but zeroed before querying. Absent = `'app'` (legacy default). */
+  filterDimension?: FilterDimension
   heatmap?: HeatmapFilters
   wpm?: WpmFilters
   interval?: IntervalFilters
@@ -380,6 +434,7 @@ function isValidHeatmapFilters(value: unknown): boolean {
   if (o.aggregateMode !== undefined && !includesAs(AGGREGATE_MODES, o.aggregateMode)) return false
   if (o.normalization !== undefined && !includesAs(HEATMAP_NORMALIZATIONS, o.normalization)) return false
   if (o.keyGroupFilter !== undefined && !includesAs(KEY_GROUPS, o.keyGroupFilter)) return false
+  if (o.mode !== undefined && !includesAs(HEATMAP_MODES, o.mode)) return false
   return true
 }
 
@@ -452,6 +507,7 @@ function isValidBigramFilters(value: unknown): boolean {
   if (o.slowLimit !== undefined && !isPositiveInt(o.slowLimit)) return false
   if (o.fingerLimit !== undefined && !isPositiveInt(o.fingerLimit)) return false
   if (o.pairIntervalThresholdMs !== undefined && !isNonNegativeInt(o.pairIntervalThresholdMs)) return false
+  if (o.gram !== undefined && o.gram !== 2 && o.gram !== 3) return false
   return true
 }
 
@@ -505,6 +561,19 @@ export function isValidAnalyzeFilterSettings(value: unknown): boolean {
   if (o.appScopes !== undefined) {
     if (!Array.isArray(o.appScopes)) return false
     if (!o.appScopes.every((v) => typeof v === 'string')) return false
+  }
+  if (o.typingTestScopes !== undefined) {
+    if (!Array.isArray(o.typingTestScopes)) return false
+    if (!o.typingTestScopes.every((v) => typeof v === 'string')) return false
+  }
+  if (o.runIdScopes !== undefined) {
+    if (!Array.isArray(o.runIdScopes)) return false
+    if (!o.runIdScopes.every((v) => typeof v === 'string')) return false
+  }
+  if (o.filterDimension !== undefined
+    && o.filterDimension !== 'app'
+    && o.filterDimension !== 'typingTest') {
+    return false
   }
   if (!isValidHeatmapFilters(o.heatmap)) return false
   if (!isValidWpmFilters(o.wpm)) return false

@@ -10,12 +10,15 @@ import type {
   HubUploadFavoritePostParams, HubUpdateFavoritePostParams,
   HubUploadAnalyticsPostParams, HubUpdateAnalyticsPostParams, HubPreviewAnalyticsPostParams,
   HubAnalyticsPreview, HubAnalyticsFilters, HubAnalyticsCategoryId,
+  HubPrivateUploadResult, HubPrivateKind,
+  HubPrivateUploadPostParams, HubPrivateUploadFavoritePostParams, HubPrivateUploadAnalyticsPostParams,
 } from '../../shared/types/hub'
 import { getIdToken } from '../sync/google-auth'
-import { Hub401Error, Hub403Error, Hub409Error, Hub429Error, authenticateWithHub, uploadPostToHub, updatePostOnHub, patchPostOnHub, deletePostFromHub, fetchMyPosts, fetchMyPostsByKeyboard, fetchAuthMe, patchAuthMe, getHubOrigin, uploadFeaturePostToHub, updateFeaturePostOnHub, uploadAnalyticsPostToHub, updateAnalyticsPostOnHub } from './hub-client'
+import { Hub401Error, Hub403Error, Hub404Error, Hub409Error, Hub429Error, authenticateWithHub, uploadPostToHub, updatePostOnHub, patchPostOnHub, deletePostFromHub, fetchMyPosts, fetchMyPostsByKeyboard, fetchAuthMe, patchAuthMe, getHubOrigin, uploadFeaturePostToHub, updateFeaturePostOnHub, uploadAnalyticsPostToHub, updateAnalyticsPostOnHub, uploadPrivatePostToHub, uploadPrivateFeaturePostToHub, uploadPrivateAnalyticsPostToHub, deletePrivatePostFromHub } from './hub-client'
 import {
   buildAnalyticsExport,
   estimateAnalyticsExportSizeBytes,
+  sanitizeFingerOverrides,
   validateAnalyticsExport,
   type BuildAnalyticsExportInput,
   type DeviceScope,
@@ -69,7 +72,8 @@ import type { HubKeyLabelInput } from './hub-key-labels'
 import type { HubKeyLabelItem, HubKeyLabelListResponse, HubKeyLabelListParams, HubKeyLabelTimestamp, HubKeyLabelTimestampsResponse } from '../../shared/types/hub-key-label'
 import { HUB_ERROR_KEY_LABEL_DUPLICATE, HUB_KEY_LABEL_TIMESTAMPS_BATCH_LIMIT } from '../../shared/types/hub-key-label'
 import { getRecord, saveRecord, setHubPostId } from '../key-label-store'
-import type { KeyLabelMeta, KeyLabelStoreResult } from '../../shared/types/key-label-store'
+import type { SaveRecordInput } from '../key-label-store'
+import type { KeyLabelMeta, KeyLabelRecord, KeyLabelStoreResult } from '../../shared/types/key-label-store'
 import { isValidFavoriteType, isValidVialProtocol, FAV_TYPE_TO_EXPORT_KEY, serializeFavData, buildFavExportFile } from '../../shared/favorite-data'
 import { serialize as serializeKeycode } from '../../shared/keycodes/keycodes'
 import type { FavoriteType, FavoriteIndex } from '../../shared/types/favorite-store'
@@ -225,6 +229,7 @@ async function prepareAnalyticsExport(
     appScopes,
     filters,
     layoutComparisonInputs,
+    fingerOverrides: sanitizeFingerOverrides(params.fingerOverrides),
     categories,
     appDataApps,
   })
@@ -367,6 +372,24 @@ function extractError(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback
 }
 
+/** Rebuilds a failed lookup result under a different `T` — `getRecord`
+ * resolves `KeyLabelStoreResult<KeyLabelRecord>`, but the handler needs to
+ * return `KeyLabelStoreResult<KeyLabelMeta>`, and the two `T`s don't share
+ * a `data` shape, so `record as KeyLabelStoreResult<KeyLabelMeta>` would be
+ * an unsound cast. Only the failure fields (`success`/`errorCode`/`error`)
+ * carry over. */
+function toKeyLabelLookupFailure(record: {
+  success: boolean
+  errorCode?: KeyLabelStoreResult<unknown>['errorCode']
+  error?: string
+}): KeyLabelStoreResult<KeyLabelMeta> {
+  return { success: record.success, errorCode: record.errorCode, error: record.error }
+}
+
+function toPrivateResult(res: { id: string; url: string; expires_at: string | null }): HubPrivateUploadResult {
+  return { success: true, id: res.id, url: res.url, expiresAt: res.expires_at }
+}
+
 function rethrowAsHubSentinel(err: unknown): void {
   if (err instanceof Hub403Error) throw new Error(HUB_ERROR_ACCOUNT_DEACTIVATED)
   if (err instanceof Hub429Error) throw new Error(HUB_ERROR_RATE_LIMITED)
@@ -473,7 +496,12 @@ async function fetchHubKeyLabelPayload(
   fallbackUploader?: string,
   fallbackHubUpdatedAt?: string,
 ): Promise<{
-  body: { name: string; map: Record<string, string>; composite_labels: Record<string, string> | null }
+  body: {
+    name: string
+    map: Record<string, string>
+    composite_labels: Record<string, string> | null
+    keymap_applicable?: boolean
+  }
   uploaderName: string | undefined
   hubUpdatedAt: string | undefined
 }> {
@@ -488,6 +516,104 @@ async function fetchHubKeyLabelPayload(
     // best-effort; keep the fallback values
   }
   return { body, uploaderName, hubUpdatedAt }
+}
+
+/**
+ * `HubKeyLabelInput` shared by upload/update — the local record's name,
+ * map and compositeLabels, plus `keymapApplicable` (always sent, even
+ * `false`, so a re-upload can clear a previously-true flag; see the
+ * `buildBody` comment in hub-key-labels.ts).
+ */
+function buildHubKeyLabelInput(record: KeyLabelRecord): HubKeyLabelInput {
+  return {
+    name: record.meta.name,
+    map: record.data.map,
+    ...(record.data.compositeLabels ? { compositeLabels: record.data.compositeLabels } : {}),
+    keymapApplicable: record.data.keymapApplicable ?? false,
+  }
+}
+
+/**
+ * `saveRecord()` fields shared by download/sync — the Hub body's map,
+ * compositeLabels and keymapApplicable, plus the cached uploader /
+ * hub-updated metadata. Callers still supply `id`/`name`/`hubPostId`
+ * since those differ (download seeds from the Hub body, sync keeps the
+ * local id/name and only refreshes the payload).
+ */
+function hubBodyToSaveRecordFields(
+  body: { map: Record<string, string>; composite_labels: Record<string, string> | null; keymap_applicable?: boolean },
+  uploaderName: string | undefined,
+  hubUpdatedAt: string | undefined,
+): Pick<SaveRecordInput, 'map' | 'uploaderName' | 'compositeLabels' | 'keymapApplicable' | 'hubUpdatedAt'> {
+  const composite = body.composite_labels ?? undefined
+  return {
+    map: body.map,
+    ...(uploaderName ? { uploaderName } : {}),
+    ...(composite ? { compositeLabels: composite } : {}),
+    ...(body.keymap_applicable ? { keymapApplicable: true } : {}),
+    ...(hubUpdatedAt ? { hubUpdatedAt } : {}),
+  }
+}
+
+/**
+ * i18n/theme upload responses only carry `{ id, title }` (`HubPostResponse`)
+ * — unlike Key Labels' upload/update responses, which return the full
+ * `HubKeyLabelItem` including `uploader_name`/`updated_at` directly.
+ * Neither `/api/i18n-packs` nor `/api/theme-packs` expose a single-item
+ * detail GET to fill that gap, so this re-uses the existing exact-name
+ * list filter (`?name=`) to find the just-created/updated item and read
+ * its `uploaderName`/`updatedAt` off the list response instead. Matches
+ * `fetchHubKeyLabelPayload`'s best-effort contract: on any failure (or if
+ * the id is not found in that name's results) both fields come back
+ * `undefined` and the caller's `setHubPostId` call simply leaves the
+ * previously-cached values alone.
+ *
+ * Upload is the only caller: a freshly created post needs `uploaderName`
+ * (the Author column has nothing else to key off yet). Update deliberately
+ * uses the narrower `enrichHubUpdatedAt` below instead of this — Update
+ * never changes `uploaderName`, so paying for the name-filtered list
+ * lookup (paginated, larger body, and — in the pathological case of two
+ * packs sharing a name — order-dependent) would buy nothing over the
+ * id-keyed timestamps endpoint. Both helpers cost the same +1 Hub
+ * request per action either way; the split is about which endpoint
+ * shape fits what the caller actually needs, not request count.
+ */
+async function enrichHubPackMeta(
+  listByName: (params: { name: string }) => Promise<{ items: { id: string; uploaderName?: string | null; updatedAt?: string }[] }>,
+  name: string,
+  postId: string,
+): Promise<{ uploaderName?: string; hubUpdatedAt?: string }> {
+  try {
+    const list = await listByName({ name })
+    const item = list.items.find((i) => i.id === postId)
+    return {
+      uploaderName: item?.uploaderName ?? undefined,
+      hubUpdatedAt: item?.updatedAt ?? undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Update-only counterpart to `enrichHubPackMeta`: since Update never
+ * touches `uploaderName` (see the i18n/theme Update handlers below), it
+ * only ever needs `hubUpdatedAt`. The id-keyed `/timestamps` endpoint is
+ * the better fit for that — no pagination, no name-collision ambiguity,
+ * and a much smaller response body than the full list lookup. Same
+ * best-effort contract as `enrichHubPackMeta`: any failure returns `{}`
+ * and the caller's `setHubPostId` leaves the cached `hubUpdatedAt` alone.
+ */
+async function enrichHubUpdatedAt(
+  fetchTimestamps: (ids: string[]) => Promise<{ items: { id: string; updated_at: string }[] }>,
+  postId: string,
+): Promise<{ hubUpdatedAt?: string }> {
+  try {
+    const res = await fetchTimestamps([postId])
+    return { hubUpdatedAt: res.items.find((i) => i.id === postId)?.updated_at }
+  } catch {
+    return {}
+  }
 }
 
 export function setupHubIpc(): void {
@@ -801,13 +927,100 @@ export function setupHubIpc(): void {
   // from `pack.name` + `pack.version`. Listing / download stays
   // anonymous; CRUD requires the JWT.
 
+  // --- Private (unlisted) upload handlers ---
+  //
+  // Each uploads to `/api/private/*` and returns the relative share URL
+  // + expiry. Persisting the link onto the local entry is the renderer's
+  // job (via the per-store `set-hub-private` IPC), mirroring how the
+  // public keymap/favorite uploads return a postId for the renderer to
+  // persist. The single delete handler is shared by Remove and the
+  // visibility-switch path; a 404 (already expired) counts as success.
+
+  secureHandle(
+    IpcChannels.HUB_UPLOAD_PRIVATE_POST,
+    async (_event, params: HubPrivateUploadPostParams): Promise<HubPrivateUploadResult> => {
+      try {
+        const title = validateTitle(params.title)
+        const files = buildFiles(params)
+        const res = await withTokenRetry((jwt) =>
+          uploadPrivatePostToHub(jwt, title, params.keyboardName, files, params.expiresInDays),
+        )
+        return toPrivateResult(res)
+      } catch (err) {
+        return { success: false, error: extractError(err, 'Upload failed') }
+      }
+    },
+  )
+
+  secureHandle(
+    IpcChannels.HUB_UPLOAD_PRIVATE_FAVORITE_POST,
+    async (_event, params: HubPrivateUploadFavoritePostParams): Promise<HubPrivateUploadResult> => {
+      try {
+        const { title, postType, jsonFile } = await prepareFavoritePost(params)
+        const res = await withTokenRetry((jwt) =>
+          uploadPrivateFeaturePostToHub(jwt, title, postType, jsonFile, params.expiresInDays),
+        )
+        return toPrivateResult(res)
+      } catch (err) {
+        return { success: false, error: extractError(err, 'Upload failed') }
+      }
+    },
+  )
+
+  secureHandle(
+    IpcChannels.HUB_UPLOAD_PRIVATE_ANALYTICS_POST,
+    async (_event, params: HubPrivateUploadAnalyticsPostParams): Promise<HubPrivateUploadResult> => {
+      try {
+        const built = await prepareAnalyticsExport(params)
+        if (!built.ok) return { success: false, error: built.error }
+        const title = validateTitle(params.title)
+        const baseName = sanitizeFilenameBase(params.keyboard.productName, params.uid)
+        const jsonBuffer = Buffer.from(JSON.stringify(built.exportData), 'utf-8')
+        const thumbnailBuffer = Buffer.from(params.thumbnailBase64, 'base64')
+        const res = await withTokenRetry((jwt) =>
+          uploadPrivateAnalyticsPostToHub(
+            jwt,
+            title,
+            { name: `${baseName}.json`, data: jsonBuffer },
+            { name: `${baseName}.jpg`, data: thumbnailBuffer },
+            params.expiresInDays,
+          ),
+        )
+        return toPrivateResult(res)
+      } catch (err) {
+        return { success: false, error: extractError(err, 'Analytics upload failed') }
+      }
+    },
+  )
+
+  secureHandle(
+    IpcChannels.HUB_DELETE_PRIVATE_POST,
+    async (_event, kind: HubPrivateKind, id: string): Promise<HubDeleteResult> => {
+      try {
+        if (typeof id !== 'string' || !id) return { success: false, error: 'Invalid id' }
+        await withTokenRetry((jwt) => deletePrivatePostFromHub(jwt, kind, id))
+        return { success: true }
+      } catch (err) {
+        // Already gone (expired / removed elsewhere) — treat as success so
+        // the local link can be cleared / a visibility switch can proceed.
+        if (err instanceof Hub404Error) return { success: true }
+        return { success: false, error: extractError(err, 'Delete failed') }
+      }
+    },
+  )
+
   secureHandle(
     IpcChannels.HUB_UPLOAD_I18N_POST,
     async (_event, params: HubUploadI18nPostParams): Promise<HubUploadResult> => {
       try {
         if (!params || typeof params !== 'object') return { success: false, error: 'Invalid params' }
         const result = await withTokenRetry((jwt) => uploadI18nPostToHub(jwt, params.pack))
-        await setI18nPackHubPostId(params.entryId, result.id)
+        // Carry the response's uploader/updated_at into the local meta
+        // (via a name-matched list lookup — see enrichHubPackMeta) so
+        // the Author/Updated columns and the isMine gate populate
+        // immediately without waiting for a sync.
+        const enriched = await enrichHubPackMeta(fetchI18nPostList, params.pack.name, result.id)
+        await setI18nPackHubPostId(params.entryId, result.id, enriched.uploaderName, enriched.hubUpdatedAt)
         return { success: true, postId: result.id }
       } catch (err) {
         return { success: false, error: extractError(err, 'i18n upload failed') }
@@ -822,7 +1035,13 @@ export function setupHubIpc(): void {
         if (!params || typeof params !== 'object') return { success: false, error: 'Invalid params' }
         validatePostId(params.postId)
         const result = await withTokenRetry((jwt) => updateI18nPostOnHub(jwt, params.postId, params.pack))
-        await setI18nPackHubPostId(params.entryId, result.id)
+        // Refresh hubUpdatedAt only — mirrors Key Labels' Update, which
+        // deliberately leaves uploaderName alone (the owner performing
+        // an update is assumed unchanged). Uses the id-keyed timestamps
+        // endpoint rather than enrichHubPackMeta's name-filtered list
+        // lookup, since uploaderName isn't needed here.
+        const enriched = await enrichHubUpdatedAt(fetchI18nPackTimestamps, result.id)
+        await setI18nPackHubPostId(params.entryId, result.id, undefined, enriched.hubUpdatedAt)
         return { success: true, postId: result.id }
       } catch (err) {
         return { success: false, error: extractError(err, 'i18n update failed') }
@@ -923,7 +1142,8 @@ export function setupHubIpc(): void {
       try {
         if (!params || typeof params !== 'object') return { success: false, error: 'Invalid params' }
         const result = await withTokenRetry((jwt) => uploadThemePostToHub(jwt, params.pack))
-        await setThemePackHubPostId(params.entryId, result.id)
+        const enriched = await enrichHubPackMeta(fetchThemePostList, params.pack.name, result.id)
+        await setThemePackHubPostId(params.entryId, result.id, enriched.uploaderName, enriched.hubUpdatedAt)
         return { success: true, postId: result.id }
       } catch (err) {
         return { success: false, error: extractError(err, 'theme upload failed') }
@@ -938,7 +1158,10 @@ export function setupHubIpc(): void {
         if (!params || typeof params !== 'object') return { success: false, error: 'Invalid params' }
         validatePostId(params.postId)
         const result = await withTokenRetry((jwt) => updateThemePostOnHub(jwt, params.postId, params.pack))
-        await setThemePackHubPostId(params.entryId, result.id)
+        // hubUpdatedAt only, via the id-keyed timestamps endpoint —
+        // see the i18n Update handler's comment.
+        const enriched = await enrichHubUpdatedAt(fetchThemePackTimestamps, result.id)
+        await setThemePackHubPostId(params.entryId, result.id, undefined, enriched.hubUpdatedAt)
         return { success: true, postId: result.id }
       } catch (err) {
         return { success: false, error: extractError(err, 'theme update failed') }
@@ -1107,7 +1330,6 @@ export function setupHubIpc(): void {
           return { success: false, errorCode: 'NOT_FOUND', error: 'Invalid hub post id' }
         }
         const { body, uploaderName, hubUpdatedAt } = await fetchHubKeyLabelPayload(hubPostId)
-        const composite = body.composite_labels ?? undefined
         // Use the Hub post id as the local id so the saved
         // `keyboardLayout` can be matched against Hub later (e.g. the
         // Missing Key Label dialog needs to look up the human name
@@ -1115,11 +1337,8 @@ export function setupHubIpc(): void {
         return await saveRecord({
           id: hubPostId,
           name: body.name,
-          ...(uploaderName ? { uploaderName } : {}),
-          map: body.map,
-          ...(composite ? { compositeLabels: composite } : {}),
           hubPostId,
-          ...(hubUpdatedAt ? { hubUpdatedAt } : {}),
+          ...hubBodyToSaveRecordFields(body, uploaderName, hubUpdatedAt),
         })
       } catch (err) {
         return { success: false, errorCode: 'IO_ERROR', error: extractError(err, 'Hub download failed') }
@@ -1134,12 +1353,10 @@ export function setupHubIpc(): void {
         return { success: false, errorCode: 'NOT_FOUND', error: 'Invalid id' }
       }
       const record = await getRecord(localId)
-      if (!record.success || !record.data) return record as KeyLabelStoreResult<KeyLabelMeta>
-      const input: HubKeyLabelInput = {
-        name: record.data.meta.name,
-        map: record.data.data.map,
-        ...(record.data.data.compositeLabels ? { compositeLabels: record.data.data.compositeLabels } : {}),
+      if (!record.success || !record.data) {
+        return toKeyLabelLookupFailure(record)
       }
+      const input = buildHubKeyLabelInput(record.data)
       try {
         const result = await withTokenRetry((jwt) => uploadKeyLabel(jwt, input))
         // Carry the response's uploader_name and updated_at into the
@@ -1164,16 +1381,14 @@ export function setupHubIpc(): void {
         return { success: false, errorCode: 'NOT_FOUND', error: 'Invalid id' }
       }
       const record = await getRecord(localId)
-      if (!record.success || !record.data) return record as KeyLabelStoreResult<KeyLabelMeta>
+      if (!record.success || !record.data) {
+        return toKeyLabelLookupFailure(record)
+      }
       const hubPostId = record.data.meta.hubPostId
       if (!hubPostId) {
         return { success: false, errorCode: 'NOT_FOUND', error: 'Entry has no hub post' }
       }
-      const input: HubKeyLabelInput = {
-        name: record.data.meta.name,
-        map: record.data.data.map,
-        ...(record.data.data.compositeLabels ? { compositeLabels: record.data.data.compositeLabels } : {}),
-      }
+      const input = buildHubKeyLabelInput(record.data)
       try {
         const result = await withTokenRetry((jwt) => updateKeyLabel(jwt, hubPostId, input))
         // Persist the new Hub-side updated_at so the Updated column
@@ -1196,7 +1411,9 @@ export function setupHubIpc(): void {
         return { success: false, errorCode: 'NOT_FOUND', error: 'Invalid id' }
       }
       const record = await getRecord(localId)
-      if (!record.success || !record.data) return record as KeyLabelStoreResult<KeyLabelMeta>
+      if (!record.success || !record.data) {
+        return toKeyLabelLookupFailure(record)
+      }
       const hubPostId = record.data.meta.hubPostId
       if (!hubPostId) {
         return { success: false, errorCode: 'NOT_FOUND', error: 'Entry has no hub post' }
@@ -1207,18 +1424,14 @@ export function setupHubIpc(): void {
           record.data.meta.uploaderName,
           record.data.meta.hubUpdatedAt,
         )
-        const composite = body.composite_labels ?? undefined
         // Preserve the local id, name (drag/rename), and hubPostId; only
-        // refresh the payload (map / compositeLabels), uploaderName,
-        // and hubUpdatedAt.
+        // refresh the payload (map / compositeLabels / keymapApplicable),
+        // uploaderName, and hubUpdatedAt.
         return await saveRecord({
           id: localId,
           name: record.data.meta.name,
-          ...(uploaderName ? { uploaderName } : {}),
-          map: body.map,
-          ...(composite ? { compositeLabels: composite } : {}),
           hubPostId,
-          ...(hubUpdatedAt ? { hubUpdatedAt } : {}),
+          ...hubBodyToSaveRecordFields(body, uploaderName, hubUpdatedAt),
         })
       } catch (err) {
         return { success: false, errorCode: 'IO_ERROR', error: extractError(err, 'Hub sync failed') }

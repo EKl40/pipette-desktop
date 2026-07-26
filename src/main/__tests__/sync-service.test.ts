@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { join } from 'node:path'
 import { access, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import type { DriveFile } from '../sync/google-drive'
 
 // --- Mock electron ---
 let mockUserDataPath = ''
@@ -38,10 +39,12 @@ vi.mock('electron', () => ({
   },
 }))
 
-const mockListFiles = vi.fn(async () => [])
-const mockDownloadFile = vi.fn(async () => ({}))
-const mockUploadFile = vi.fn(async () => 'file-id')
-const mockDeleteFile = vi.fn(async () => {})
+const mockListFiles = vi.fn(async (..._args: unknown[]): Promise<DriveFile[]> => [])
+const mockDownloadFile = vi.fn(async (_fileId: string): Promise<Record<string, unknown>> => ({}))
+const mockUploadFile = vi.fn(
+  async (_name: string, _envelope?: unknown, _existingFileId?: string): Promise<string> => 'file-id',
+)
+const mockDeleteFile = vi.fn(async (_fileId: string): Promise<void> => {})
 const mockDriveFileName = vi.fn((syncUnit: string) => syncUnit.replaceAll('/', '_') + '.enc')
 const mockSyncUnitFromFileName = vi.fn((name: string) => {
   const dayMatch = name.match(/^keyboards_(.+?)_devices_(.+?)_days_(\d{4}-\d{2}-\d{2})\.enc$/)
@@ -57,14 +60,15 @@ const mockSyncUnitFromFileName = vi.fn((name: string) => {
 
 vi.mock('../sync/google-drive', () => ({
   listFiles: (...args: unknown[]) => mockListFiles(...args),
-  downloadFile: (...args: unknown[]) => mockDownloadFile(...args),
-  uploadFile: (...args: unknown[]) => mockUploadFile(...args),
-  deleteFile: (...args: unknown[]) => mockDeleteFile(...args),
-  driveFileName: (...args: unknown[]) => mockDriveFileName(...args),
-  syncUnitFromFileName: (...args: unknown[]) => mockSyncUnitFromFileName(...args),
+  downloadFile: (...args: unknown[]) => mockDownloadFile(...(args as Parameters<typeof mockDownloadFile>)),
+  uploadFile: (...args: unknown[]) => mockUploadFile(...(args as Parameters<typeof mockUploadFile>)),
+  deleteFile: (...args: unknown[]) => mockDeleteFile(...(args as Parameters<typeof mockDeleteFile>)),
+  driveFileName: (...args: unknown[]) => mockDriveFileName(...(args as Parameters<typeof mockDriveFileName>)),
+  syncUnitFromFileName: (...args: unknown[]) =>
+    mockSyncUnitFromFileName(...(args as Parameters<typeof mockSyncUnitFromFileName>)),
 }))
 
-const mockGetAuthStatus = vi.fn(async () => ({ authenticated: true }))
+const mockGetAuthStatus = vi.fn(async (..._args: unknown[]) => ({ authenticated: true }))
 
 vi.mock('../sync/google-auth', () => ({
   getAuthStatus: (...args: unknown[]) => mockGetAuthStatus(...args),
@@ -108,20 +112,42 @@ vi.mock('../typing-analytics/sync', () => ({
   },
 }))
 
-const mockApplyRowsToCache = vi.fn(() => ({ scopes: 0, charMinutes: 0, matrixMinutes: 0, minuteStats: 0, sessions: 0 }))
+const mockApplyRowsToCache = vi.fn((..._args: unknown[]) => ({
+  scopes: 0,
+  charMinutes: 0,
+  matrixMinutes: 0,
+  minuteStats: 0,
+  sessions: 0,
+}))
 vi.mock('../typing-analytics/jsonl/apply-to-cache', () => ({
   applyRowsToCache: (...args: unknown[]) => mockApplyRowsToCache(...args),
 }))
 
-const mockReadRows = vi.fn(async () => ({ rows: [], lastId: null, partialLineSkipped: false }))
+// Loosely-typed test double for a JSONL row — the consumer of these rows
+// (applyRowsToCache) is itself mocked above, so the fixtures here only need
+// to match what sync-service.ts reads directly (id/kind/updated_at), not the
+// full discriminated JsonlRow union's per-kind payload shape.
+interface MockJsonlRow {
+  id: string
+  kind: string
+  updated_at: number
+  payload: Record<string, unknown>
+}
+const mockReadRows = vi.fn(async (..._args: unknown[]) => ({
+  rows: [] as MockJsonlRow[],
+  lastId: null as string | null,
+  partialLineSkipped: false,
+}))
 vi.mock('../typing-analytics/jsonl/jsonl-reader', () => ({
   readRows: (...args: unknown[]) => mockReadRows(...args),
 }))
 
 const mockListLocalKeyboardUids = vi.fn(() => [] as string[])
-const mockTombstoneRowsForUidHashInRange = vi.fn(() => ({
-  charMinutes: 0, matrixMinutes: 0, minuteStats: 0, sessions: 0,
-}))
+const mockTombstoneRowsForUidHashInRange = vi.fn(
+  (_uid: string, _machineHash: string, _startMs: number, _endMs: number, _updatedAt: number) => ({
+    charMinutes: 0, matrixMinutes: 0, minuteStats: 0, sessions: 0,
+  }),
+)
 vi.mock('../typing-analytics/db/typing-analytics-db', () => ({
   getTypingAnalyticsDB: vi.fn(() => ({
     listLocalKeyboardUids: mockListLocalKeyboardUids,
@@ -141,7 +167,7 @@ interface MockTypingSyncState {
   last_synced_at: number
 }
 let mockSyncState: MockTypingSyncState | null = null
-const mockLoadSyncState = vi.fn(async () => mockSyncState ? { ...mockSyncState } : null)
+const mockLoadSyncState = vi.fn(async (_userData: string) => (mockSyncState ? { ...mockSyncState } : null))
 const mockSaveSyncState = vi.fn(async (_userData: string, state: MockTypingSyncState) => {
   mockSyncState = state
 })
@@ -194,14 +220,34 @@ import { app } from 'electron'
 
 const POLL_INTERVAL_MS = 3 * 60 * 1000
 
-const FAKE_TIMER_OPTS = {
-  toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'] as const,
+const FAKE_TIMER_OPTS: Parameters<typeof vi.useFakeTimers>[0] = {
+  toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'],
 }
 
 async function flushIO(): Promise<void> {
   for (let i = 0; i < 10; i++) {
     await new Promise<void>((resolve) => setImmediate(resolve))
   }
+}
+
+/**
+ * Drains event-loop turns until `predicate` is true, then lets a couple
+ * more turns run so any bookkeeping chained after the awaited condition
+ * (e.g. remote-state updates that follow a download) settles too.
+ *
+ * `flushIO`'s fixed 10-turn drain assumes every awaited step resolves on
+ * the microtask/`setImmediate` queue. Polling paths that hit real fs I/O
+ * (the tests use a real mkdtemp userData dir) resolve via the libuv
+ * threadpool instead, so under load a fixed drain can come up short.
+ * This does not throw on timeout — it just falls through so the
+ * caller's own assertion produces the meaningful failure message.
+ */
+async function flushUntil(predicate: () => boolean, maxTurns = 500): Promise<void> {
+  for (let i = 0; i < maxTurns && !predicate(); i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
 function makeRemoteEnvelope(
@@ -535,6 +581,9 @@ describe('sync-service', () => {
 
       startPolling()
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+      await flushUntil(() => mockDownloadFile.mock.calls.some((call) => call[0] === 'pc-1'))
+      // Settle the rest of the tick so a hypothetical late data-file
+      // download can't land after the count assertion below.
       await flushIO()
 
       // Password-check downloaded for validation, but data file NOT downloaded
@@ -553,10 +602,13 @@ describe('sync-service', () => {
       startPolling()
       // First poll: records state, no data download
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+      await flushUntil(() => mockListFiles.mock.calls.length >= 1)
       await flushIO()
 
       // Second poll: detects modifiedTime change, downloads
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+      await flushUntil(() => mockDownloadFile.mock.calls.some((call) => call[0] === 'file-1'))
+      // Settle the tick before the exact listFiles count assertion.
       await flushIO()
 
       expect(mockListFiles).toHaveBeenCalledTimes(2)
@@ -569,12 +621,17 @@ describe('sync-service', () => {
       mockListFiles.mockResolvedValue([makeDriveFile('2025-01-01T00:00:00.000Z')])
 
       startPolling()
+      // Wait for the poll to actually run (listFiles fires at its start)
+      // before settling — a plain fixed drain could return before the
+      // tick completed and false-pass the negative count check below.
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+      await flushUntil(() => mockListFiles.mock.calls.length >= 1)
       await flushIO()
 
       const downloadCallCount = mockDownloadFile.mock.calls.length
 
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+      await flushUntil(() => mockListFiles.mock.calls.length >= 2)
       await flushIO()
 
       expect(mockDownloadFile.mock.calls.length).toBe(downloadCallCount)
@@ -1404,8 +1461,21 @@ describe('sync-service', () => {
 
         await executeSync('download', 'favorites')
 
-        // Subsequent poll should detect changes to keyboard file
-        // because updateRemoteState was called with all files
+        // First poll with the UNCHANGED file list: the scoped sync must
+        // have recorded f2's remote state, so nothing should download.
+        // Without this step, a missing f2 state entry (the bug this test
+        // guards against) would be indistinguishable from a detected
+        // change on the next poll — both trigger a download.
+        mockDownloadFile.mockClear()
+        startPolling()
+        const listCallsAfterSync = mockListFiles.mock.calls.length
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+        await flushUntil(() => mockListFiles.mock.calls.length > listCallsAfterSync)
+        await flushIO()
+        expect(mockDownloadFile).not.toHaveBeenCalledWith('f2')
+
+        // Second poll after the keyboard file's modifiedTime changes:
+        // now the download must happen for the locally-tracked keyboard.
         const updatedFiles = [
           { id: 'f1', name: 'favorites_tapDance.enc', modifiedTime: '2025-01-01T00:00:00.000Z' },
           { id: 'f2', name: 'keyboards_0x1234_settings.enc', modifiedTime: '2025-01-02T00:00:00.000Z' },
@@ -1414,11 +1484,9 @@ describe('sync-service', () => {
         mockListFiles.mockResolvedValue(updatedFiles)
         mockDownloadFile.mockResolvedValue(makeSettingsEnvelope('0x1234', '2025-01-02T00:00:00.000Z'))
 
-        startPolling()
         await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
-        await flushIO()
+        await flushUntil(() => mockDownloadFile.mock.calls.some((call) => call[0] === 'f2'))
 
-        // Polling should detect the keyboard file changed for the locally-tracked keyboard
         expect(mockDownloadFile).toHaveBeenCalledWith('f2')
 
         stopPolling()
@@ -1447,7 +1515,11 @@ describe('sync-service', () => {
 
         mockDownloadFile.mockClear()
         startPolling()
+        // Wait for the poll to actually run before the negative assertion,
+        // otherwise an under-drained tick could false-pass it.
+        const listCallsBeforePoll = mockListFiles.mock.calls.length
         await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+        await flushUntil(() => mockListFiles.mock.calls.length > listCallsBeforePoll)
         await flushIO()
 
         expect(mockDownloadFile).not.toHaveBeenCalledWith('f2')
@@ -1650,7 +1722,7 @@ describe('sync-service', () => {
 
       startPolling()
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
-      await flushIO()
+      await flushUntil(() => mockDownloadFile.mock.calls.some((call) => call[0] === 'pc-1'))
 
       // Should have downloaded password-check for validation
       expect(mockDownloadFile).toHaveBeenCalledWith('pc-1')
@@ -1746,7 +1818,10 @@ describe('sync-service', () => {
     function captureBeforeQuitHandler(): (e: { preventDefault: () => void }) => void {
       setupBeforeQuitHandler()
       const mockOn = vi.mocked(app.on)
-      const match = mockOn.mock.calls.find(([event]) => event === 'before-quit')
+      // `app.on` is overloaded per Electron event name, so TS narrows the mock's
+      // inferred call-tuple type to whichever overload it picked first. Cast to
+      // string for the comparison since at runtime this is always a plain event name.
+      const match = mockOn.mock.calls.find(([event]) => (event as string) === 'before-quit')
       if (!match) throw new Error('before-quit handler not registered')
       return match[1] as (e: { preventDefault: () => void }) => void
     }

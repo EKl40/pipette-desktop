@@ -20,7 +20,7 @@ import {
 import { unlink } from 'node:fs/promises'
 import { pLimit } from '../../shared/concurrency'
 import { IpcChannels } from '../../shared/ipc/channels'
-import { mergeEntries, gcTombstones } from './merge'
+import { mergeEntries, gcTombstones, type EntryMeta } from './merge'
 import {
   readIndexFile,
   bundleSyncUnit,
@@ -36,6 +36,7 @@ import {
 } from './keyboard-meta'
 import { KEYBOARD_META_SYNC_UNIT, type KeyboardMetaIndex } from '../../shared/types/keyboard-meta'
 import { KEY_LABEL_SYNC_UNIT } from '../key-label-store'
+import { TYPING_TEST_TEXT_SYNC_UNIT } from '../typing-test-text-store'
 import { I18N_SYNC_UNIT_PREFIX } from '../../shared/types/i18n-store'
 import { THEME_SYNC_UNIT_PREFIX } from '../../shared/types/theme-store'
 import {
@@ -142,6 +143,7 @@ export function matchesScope(syncUnit: string | null, scope: SyncScope): boolean
   if (syncUnit === null) return false
   if (syncUnit === KEYBOARD_META_SYNC_UNIT) return true // meta follows every scope
   if (syncUnit === KEY_LABEL_SYNC_UNIT) return true // key-labels follow every scope (global, all-keyboard)
+  if (syncUnit === TYPING_TEST_TEXT_SYNC_UNIT) return true // imported typing-test texts follow every scope (global, all-keyboard)
   if (syncUnit.startsWith(I18N_SYNC_UNIT_PREFIX)) return false // i18n checked once at startup via i18n-startup-sync
   if (syncUnit.startsWith(THEME_SYNC_UNIT_PREFIX)) return false // themes follow i18n pattern — not in periodic polls
   if (scope === 'favorites') return syncUnit.startsWith('favorites/')
@@ -560,8 +562,14 @@ async function mergeSyncUnit(
   await mkdir(basePath, { recursive: true })
 
   const localIndex = await readIndexFile(basePath)
-  const localEntries = gcTombstones(localIndex?.entries ?? [])
-  const remoteEntries = gcTombstones(remoteBundle.index.entries)
+  // Both sides' index shape is a union of each possible sync unit's own
+  // index type, which a generic function call can't unify against — every
+  // constituent reached on this "index-based sync units" branch (favorites,
+  // snapshots, analyze-filter, key-label, typing-test-text) is an
+  // EntryMeta[] at runtime. i18n/theme/keyboard-meta bundles don't have
+  // `.entries` and never reach this branch.
+  const localEntries = gcTombstones((localIndex?.entries ?? []) as EntryMeta[])
+  const remoteEntries = gcTombstones((remoteBundle.index as { entries: EntryMeta[] }).entries)
 
   // Merge entries (both sides GC'd to prevent expired-tombstone upload loops)
   const preserveLocalOrder = syncUnit === KEY_LABEL_SYNC_UNIT

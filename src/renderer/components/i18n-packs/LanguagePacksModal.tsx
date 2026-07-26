@@ -7,35 +7,53 @@
 //                  installed locally are tagged "Installed" rather than
 //                  exposing Download (avoids duplicate-name conflicts).
 // Mirrors KeyLabelsModal so users can predict behaviour across the
-// two manage modals.
+// two manage modals — including built-in English's real-store-entry
+// treatment, which mirrors Key Labels' built-in QWERTY: both drag
+// reorder and Name sort include it like any imported entry (see
+// `ensureBuiltinEnglishEntry` in main/i18n-pack-store.ts).
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Trans, useTranslation } from 'react-i18next'
-import { Circle, CheckCircle2 } from 'lucide-react'
-import { BTN_PRIMARY, ICON_XL } from '../../constants/ui-tokens'
-import { ModalCloseButton } from '../editors/ModalCloseButton'
+import { useTranslation } from 'react-i18next'
 import { useAppConfig } from '../../hooks/useAppConfig'
 import { useInlineRename } from '../../hooks/useInlineRename'
 import { useI18nPackStore } from '../../hooks/useI18nPackStore'
 import i18n from '../../i18n'
-import { validatePack } from '../../../shared/i18n/validate'
+import { validatePack, type ValidatePackResult } from '../../../shared/i18n/validate'
 import { computeCoverage } from '../../../shared/i18n/coverage'
 import { BASE_REVISION, ENGLISH_PACK_BODY } from '../../i18n/coverage-cache'
 import english from '../../i18n/locales/english.json'
-import { formatTimestamp } from '../../utils/format-timestamp'
-import type { I18nPackMeta } from '../../../shared/types/i18n-store'
+import { BUILTIN_ENGLISH_PACK_ID, type I18nPackMeta } from '../../../shared/types/i18n-store'
 import type { HubI18nPostListItem } from '../../../shared/types/hub'
 import { MissingKeysModal } from './MissingKeysModal'
 import { downloadJson } from '../../utils/download-json'
-import { buildHubI18nPackUrl, buildHubCategoryUrl, HUB_CATEGORY } from '../../../shared/hub-urls'
-import { useHubFreshness, hasUpdate, type HubFreshnessEntry } from '../../hooks/useHubFreshness'
+import { buildHubI18nPackUrl, HUB_CATEGORY } from '../../../shared/hub-urls'
+import { useHubFreshness } from '../../hooks/useHubFreshness'
+import { localizeHubError } from '../../utils/hub-error-i18n'
+import { PackManagerModal } from '../pack-modal/PackManagerModal'
+import { PackHubTab } from '../pack-modal/PackHubTab'
+import { PackSortButton } from '../pack-modal/PackSortButton'
+import { useHubOrigin } from '../pack-modal/useHubOrigin'
+import { useHubSearchList } from '../pack-modal/useHubSearchList'
+import { useDragReorder } from '../pack-modal/useDragReorder'
+import { applyDragOrder } from '../pack-modal/drag-order'
+import { useNameSort } from '../pack-modal/useNameSort'
+import { useImportPlacement } from '../pack-modal/useImportPlacement'
+import { useImportBatch, type CollectedImportBatch, type ImportBatchItem } from '../pack-modal/useImportBatch'
+import { basenameOf, type ImportBatchFailure } from '../pack-modal/import-batch-summary'
+import { isHubItemInstalled, type InstalledDetectionEntry } from '../pack-modal/installed-detection'
+import { fetchHubPackMeta } from '../pack-modal/fetch-hub-pack-meta'
+import { isOwnPack } from '../pack-modal/ownership'
+import type { PackActionResult, PackManagerTabId } from '../pack-modal/pack-modal-types'
+import {
+  LanguageInstalledRow,
+  LanguageHubRow,
+  type InstalledRow,
+  type HubRow,
+} from './LanguageInstalledRow'
 
 const APP_VERSION = (import.meta.env?.VITE_APP_VERSION as string | undefined) ?? '0.0.0'
 
 const BUILTIN_INTERNAL_ID = 'builtin:en'
-
-type TabId = 'installed' | 'hub'
 
 export interface LanguagePacksModalProps {
   open: boolean
@@ -44,36 +62,6 @@ export interface LanguagePacksModalProps {
   currentDisplayName?: string | null
   /** True when the user is signed into the Hub and can perform writes. */
   hubCanWrite?: boolean
-}
-
-interface InstalledRow {
-  reactKey: string
-  internalId: string
-  packId: string | null
-  hubPostId: string | null
-  name: string
-  version: string
-  /** ISO 8601 timestamp shown next to the name. Builtin English uses
-   * the renderer's build time; imported packs use `meta.updatedAt`. */
-  updatedAt: string
-  uploaderName: string
-  isBuiltin: boolean
-  active: boolean
-  coverage?: { totalKeys: number; coveredKeys: number }
-  /** True when the pack covers every key of the bundled English. The
-   * row shows the `version` chip when complete, otherwise a
-   * "not set keys" button that opens MissingKeysModal. */
-  isComplete: boolean
-  meta?: I18nPackMeta
-}
-
-interface HubRow {
-  reactKey: string
-  hubPostId: string
-  name: string
-  version: string
-  uploaderName: string
-  alreadyInstalled: boolean
 }
 
 export function LanguagePacksModal({
@@ -87,31 +75,28 @@ export function LanguagePacksModal({
   const rename = useInlineRename<string>()
   const appConfig = useAppConfig()
 
-  const [activeTab, setActiveTab] = useState<TabId>('installed')
-  const [search, setSearch] = useState('')
-  const [hubResults, setHubResults] = useState<HubI18nPostListItem[]>([])
-  const [hubDefaultResults, setHubDefaultResults] = useState<HubI18nPostListItem[]>([])
-  const [hubSearched, setHubSearched] = useState(false)
-  const [hubSearching, setHubSearching] = useState(false)
+  const [activeTab, setActiveTab] = useState<PackManagerTabId>('installed')
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [lastResult, setLastResult] = useState<{ id: string; kind: 'success' | 'error'; message: string } | null>(null)
-  const [hubOrigin, setHubOrigin] = useState('')
+  const [lastResult, setLastResult] = useState<PackActionResult | PackActionResult[] | null>(null)
   const [missingKeysFor, setMissingKeysFor] = useState<{ name: string; keys: string[] } | null>(null)
 
   const builtinName = (english as Record<string, unknown>).name as string ?? 'English'
   const builtinVersion = (english as Record<string, unknown>).version as string ?? '0.1.0'
 
-  useEffect(() => {
-    if (!open) return
-    void window.vialAPI.hubGetOrigin().then((origin) => { if (origin) setHubOrigin(origin) }).catch(() => null)
-  }, [open])
+  const hubOrigin = useHubOrigin(open)
 
   useEffect(() => {
     if (!open) return
-    const stale = store.metas.filter((m) => !m.deletedAt && m.matchedBaseVersion !== BASE_REVISION)
+    // Built-in English is excluded: it never carries a `matchedBaseVersion`
+    // (that field only ever gets stamped on an *imported* pack whose
+    // coverage was measured against the baseline), so it would
+    // otherwise always show up "stale" here and cost a wasted
+    // i18nPackGet + coverage compute every time the modal opens, for a
+    // recheck that can never actually apply to it.
+    const stale = store.metas.filter((m) => !m.deletedAt && m.id !== BUILTIN_ENGLISH_PACK_ID && m.matchedBaseVersion !== BASE_REVISION)
     if (stale.length === 0) return
     let cancelled = false
     void (async () => {
@@ -138,22 +123,39 @@ export function LanguagePacksModal({
 
   const activeLanguageId = appConfig.config.language ?? 'builtin:en'
 
+  // Built-in English's row shape is always this — hardcoded rather than
+  // read from the store meta, since the meta's own name/version/body is
+  // just a trivial placeholder (see `ensureBuiltinEnglishEntry`'s doc in
+  // main/i18n-pack-store.ts). Only `packId` varies: the real store id
+  // once `ensureBuiltinEnglishEntry` has run (normal case), or `null`
+  // during the brief pre-load window before `store.metas` has arrived —
+  // `null` also intentionally covers older/mocked stores in tests that
+  // don't include the entry, so this row's appearance never depends on
+  // the caller remembering to add it.
+  const builtinRow = useCallback((packId: string | null): InstalledRow => ({
+    reactKey: BUILTIN_INTERNAL_ID,
+    internalId: BUILTIN_INTERNAL_ID,
+    packId,
+    hubPostId: null,
+    name: builtinName,
+    version: builtinVersion,
+    updatedAt: __BUILD_TIME__,
+    uploaderName: 'pipette',
+    isBuiltin: true,
+    active: activeLanguageId === BUILTIN_INTERNAL_ID,
+    isComplete: true,
+  }), [builtinName, builtinVersion, activeLanguageId])
+
   const installedRows: InstalledRow[] = useMemo(() => {
-    const rows: InstalledRow[] = [{
-      reactKey: BUILTIN_INTERNAL_ID,
-      internalId: BUILTIN_INTERNAL_ID,
-      packId: null,
-      hubPostId: null,
-      name: builtinName,
-      version: builtinVersion,
-      updatedAt: __BUILD_TIME__,
-      uploaderName: 'pipette',
-      isBuiltin: true,
-      active: activeLanguageId === BUILTIN_INTERNAL_ID,
-      isComplete: true,
-    }]
+    const rows: InstalledRow[] = []
+    let sawBuiltin = false
     for (const meta of store.metas) {
       if (meta.deletedAt) continue
+      if (meta.id === BUILTIN_ENGLISH_PACK_ID) {
+        sawBuiltin = true
+        rows.push(builtinRow(meta.id))
+        continue
+      }
       const internalId = `pack:${meta.id}`
       // A pack is "complete" only when its matchedBaseVersion equals
       // the *current* English baseline. A stale match for an older
@@ -171,8 +173,11 @@ export function LanguagePacksModal({
         // the row visually consistent while signalling partial
         // coverage to the user.
         version: meta.matchedBaseVersion ?? '',
-        updatedAt: meta.updatedAt,
-        uploaderName: meta.hubPostId ? '' : 'local',
+        // Hub-side timestamp, not the local modification time — blank
+        // for never-uploaded local entries and legacy rows that
+        // predate this field, matching Key Labels' Updated column.
+        updatedAt: meta.hubUpdatedAt ?? '',
+        uploaderName: meta.uploaderName ?? '',
         isBuiltin: false,
         active: activeLanguageId === internalId,
         coverage: meta.coverage,
@@ -180,8 +185,9 @@ export function LanguagePacksModal({
         meta,
       })
     }
+    if (!sawBuiltin) rows.unshift(builtinRow(null))
     return rows
-  }, [store.metas, builtinName, builtinVersion, activeLanguageId])
+  }, [store.metas, activeLanguageId, builtinRow])
 
   const handleSelectLanguage = useCallback((internalId: string) => {
     if (internalId === activeLanguageId) return
@@ -189,10 +195,73 @@ export function LanguagePacksModal({
     void i18n.changeLanguage(internalId)
   }, [appConfig, activeLanguageId])
 
-  const installedHubPostIds = useMemo(
-    () => new Set(store.metas.filter((m) => !m.deletedAt && m.hubPostId).map((m) => m.hubPostId as string)),
-    [store.metas],
+  // Drag reorder + Name sort apply to every row with a real store id —
+  // now including built-in English once `ensureBuiltinEnglishEntry` has
+  // materialised it (see `installedRows` above). Only the transient
+  // pre-load fallback row (`packId === null`) is excluded, since there
+  // is no real id yet to persist an order against.
+  const draggableRows = useMemo(() => installedRows.filter((row) => row.packId !== null), [installedRows])
+  const dragReorderIds = useMemo(() => draggableRows.map((row) => row.packId as string), [draggableRows])
+  const drag = useDragReorder({
+    ids: dragReorderIds,
+    reorder: store.reorder,
+    onError: (error) => setActionError(error ?? t('i18n.errorGeneric')),
+  })
+  const displayedRows = useMemo<InstalledRow[]>(() => {
+    const ordered = applyDragOrder(draggableRows, drag.dragOrder, (row) => row.packId as string)
+    // Only the pre-load fallback (no real builtin id yet) needs
+    // prepending by hand — the real entry already sits at its correct
+    // position within `draggableRows`/`drag.dragOrder`.
+    const fallbackBuiltin = installedRows.find((row) => row.isBuiltin && row.packId === null)
+    return fallbackBuiltin ? [fallbackBuiltin, ...ordered] : ordered
+  }, [installedRows, draggableRows, drag.dragOrder])
+
+  const nameSortEntries = useMemo(
+    () => draggableRows.map((row) => ({ id: row.packId as string, name: row.name })),
+    [draggableRows],
   )
+  const nameSort = useNameSort({
+    open,
+    ready: !store.loading,
+    entries: nameSortEntries,
+    reorder: store.reorder,
+    onError: (error) => setActionError(error ?? t('i18n.errorGeneric')),
+  })
+  const handleSortByName = useCallback((): void => {
+    void nameSort.toggle(draggableRows.map((row) => ({ id: row.packId as string, name: row.name })))
+  }, [nameSort, draggableRows])
+  const placement = useImportPlacement({
+    open,
+    entries: nameSortEntries,
+    direction: nameSort.direction,
+    reorder: store.reorder,
+    rowTestidPrefix: 'language-packs',
+    onReorderError: (error) => setActionError(error ?? t('i18n.errorGeneric')),
+  })
+
+  // hubPostId-first + name-fallback (unified with Theme Packs / Key
+  // Labels — see installed-detection.ts). Built-in English counts as
+  // an "installed" name too, so a Hub pack literally named "English"
+  // shows Installed instead of a misleading Download. Sourced from
+  // `builtinName` (the authoritative bundled name), not the store
+  // meta's own (placeholder) `name` field — the real builtin-english
+  // meta is explicitly excluded below to avoid listing it twice.
+  const installedEntries = useMemo<InstalledDetectionEntry[]>(() => [
+    { name: builtinName },
+    ...store.metas
+      .filter((m) => !m.deletedAt && m.id !== BUILTIN_ENGLISH_PACK_ID)
+      .map((m) => ({ hubPostId: m.hubPostId, name: m.name })),
+  ], [store.metas, builtinName])
+
+  const { search, setSearch, hubResults, hubSearched, hubSearching, runSearch } = useHubSearchList<HubI18nPostListItem>({
+    open,
+    activeTab,
+    hubTabId: 'hub',
+    fetchPage: (query) => window.vialAPI.hubListI18nPosts({ q: query }),
+    errorMessage: (error) => error ?? t('i18n.errorGeneric'),
+    onSearchStart: () => setActionError(null),
+    onError: setActionError,
+  })
 
   const hubRows: HubRow[] = useMemo(() => hubResults.map((item) => ({
     reactKey: item.id,
@@ -200,8 +269,8 @@ export function LanguagePacksModal({
     name: item.name,
     version: item.version,
     uploaderName: item.uploaderName ?? '',
-    alreadyInstalled: installedHubPostIds.has(item.id),
-  })), [hubResults, installedHubPostIds])
+    alreadyInstalled: isHubItemInstalled(item, installedEntries),
+  })), [hubResults, installedEntries])
 
   const freshnessCandidates = useMemo(
     () => store.metas
@@ -221,53 +290,12 @@ export function LanguagePacksModal({
     fetchTimestamps,
   })
 
-  const runSearch = useCallback(async (query: string): Promise<void> => {
-    setHubSearching(true)
-    setActionError(null)
-    try {
-      const result = await window.vialAPI.hubListI18nPosts({ q: query })
-      if (result.success && result.data) {
-        setHubResults(result.data.items)
-        setHubSearched(true)
-        if (!query.trim()) setHubDefaultResults(result.data.items)
-      } else {
-        setActionError(result.error ?? t('i18n.errorGeneric'))
-      }
-    } finally {
-      setHubSearching(false)
-    }
-  }, [t])
-
-  // Auto-fetch Hub list when the hub tab becomes active (no query = latest items).
-  // Re-fetches each time the modal is opened so results stay fresh.
-  useEffect(() => {
-    if (!open || activeTab !== 'hub' || hubSearched) return
-    void runSearch('')
-  }, [open, activeTab, hubSearched, runSearch])
-
-  // Debounced search: fire once the user has typed 2+ characters.
-  // Below the threshold restore the initial results instead of clearing.
-  useEffect(() => {
-    if (!open || activeTab !== 'hub') return
-    const query = search.trim()
-    if (query.length < 2) {
-      if (hubDefaultResults.length > 0) setHubResults(hubDefaultResults)
-      return
-    }
-    const handle = window.setTimeout(() => { void runSearch(query) }, 300)
-    return () => { window.clearTimeout(handle) }
-  }, [open, activeTab, search, runSearch, hubDefaultResults])
-
   useEffect(() => {
     if (!open) {
       setActionError(null)
       setLastResult(null)
       setConfirmDeleteId(null)
       setConfirmRemoveId(null)
-      setHubSearched(false)
-      setHubResults([])
-      setHubDefaultResults([])
-      setSearch('')
     }
   }, [open])
 
@@ -279,14 +307,30 @@ export function LanguagePacksModal({
   const handleDelete = useCallback(async (row: InstalledRow): Promise<void> => {
     if (!row.packId) return
     // Delete is the strongest action: tombstone locally and, if the
-    // pack mirrors a Hub post, drop the post too so the user does not
-    // need to click Remove + Delete in sequence to fully clean up.
+    // pack mirrors a Hub post *we own*, drop the post too so the user
+    // does not need to click Remove + Delete in sequence to fully
+    // clean up. If the Hub deletion fails, abort the cascade —
+    // proceeding to a local-only delete would strand an orphan post
+    // whose name can never be re-uploaded, exactly what the cascade is
+    // meant to avoid. That argument only holds for a post the user
+    // could actually re-upload themselves, though — a downloaded
+    // (foreign) pack also carries `hubPostId` (for Sync/freshness
+    // linkage), so gating on presence alone would attempt — and fail —
+    // a Hub delete the user has no rights to, then block the local
+    // delete on that failure. Not-owned entries delete locally only,
+    // no Hub call, same as Update/Remove's `isMine` gating.
+    const owned = row.hubPostId && isOwnPack(row.hubPostId, row.uploaderName, currentDisplayName ?? null)
     setPendingId(row.packId)
     setActionError(null)
     setLastResult(null)
     try {
-      if (row.hubPostId) {
-        await window.vialAPI.hubDeleteI18nPost(row.hubPostId, row.packId).catch(() => null)
+      if (owned) {
+        const hubResult = await window.vialAPI.hubDeleteI18nPost(row.hubPostId as string, row.packId)
+          .catch((err) => ({ success: false, error: err instanceof Error ? err.message : String(err) }))
+        if (!hubResult.success) {
+          setLastResult({ id: row.packId, kind: 'error', message: hubResult.error ?? t('i18n.errorGeneric') })
+          return
+        }
       }
       const result = await store.remove(row.packId)
       if (!result.success) {
@@ -298,7 +342,7 @@ export function LanguagePacksModal({
       setPendingId(null)
       setConfirmDeleteId(null)
     }
-  }, [store, t])
+  }, [store, t, currentDisplayName])
 
   // Push the local pack body to its existing Hub post. Used by the
   // explicit "Update" action and by the auto-sync paths below
@@ -321,10 +365,29 @@ export function LanguagePacksModal({
       await store.refresh()
       return { success: true }
     }
-    return { success: false, error: res.error ?? t('hub.updateFailed') }
+    return { success: false, error: localizeHubError(res.error, 'hub.updateFailed', t) }
   }, [store, t])
 
   const handleRenameCommit = useCallback(async (id: string): Promise<void> => {
+    // Guards on `useImportBatch`'s own re-entrancy ref (destructured as
+    // `isImportingRef` below) rather than a locally-mirrored ref — a
+    // ref written only inside an event handler (`runImport`), never
+    // during render, so it can't go stale under a discarded/interrupted
+    // concurrent render the way `someRef.current = someState` could.
+    // Referencing `isImportingRef` here, even though it is destructured
+    // further down in this file, is safe: this callback's body only
+    // runs later, in response to a real blur/Enter event, by which time
+    // the whole render (including that destructure) has long finished.
+    //
+    // A rename already committed its `store.rename` call the instant
+    // the underlying input blurred — including the blur a click on the
+    // Import button itself triggers, which fires before that click's
+    // own handler runs — so this check cannot intercept that exact
+    // call. It DOES catch every other path: a rename input left open
+    // when a batch was already running, and any stray commit that
+    // slips through after the cancel-on-import-start effect below has
+    // already reset the editor for this render.
+    if (isImportingRef.current) return
     const newName = rename.commitRename(id)
     if (!newName) return
     setActionError(null)
@@ -378,9 +441,15 @@ export function LanguagePacksModal({
       // a Hub sync after a baseline bump correctly drops the row to
       // "incomplete" instead of inheriting stale completeness.
       const coverage = computeCoverage(result.data.pack, ENGLISH_PACK_BODY)
+      // Refresh the Author/Updated cache the same way upload/update do —
+      // the download body carries no metadata, so look the post back up
+      // by its (possibly just-changed) name via the Hub list endpoint.
+      const enriched = await fetchHubPackMeta(window.vialAPI.hubListI18nPosts, result.data.pack.name, row.hubPostId)
       const apply = await store.applyImport(result.data.pack, {
         id: row.packId ?? undefined,
         hubPostId: row.hubPostId,
+        hubUpdatedAt: enriched.hubUpdatedAt,
+        uploaderName: enriched.uploaderName,
         enabled: true,
         appVersionAtImport: APP_VERSION,
         matchedBaseVersion: coverage.coverageRatio === 1 ? BASE_REVISION : null,
@@ -508,24 +577,20 @@ export function LanguagePacksModal({
     }
   }, [t])
 
-  // Inline import path: validate locally, compute coverage, then ask
-  // the store to persist. Failures surface through `setActionError`
-  // (the same banner KeyLabels uses) instead of opening a separate
-  // confirmation modal.
-  const persistImportedPack = useCallback(async (
+  // Core validate + coverage + persist step, shared by the single-item
+  // Hub-download path (`persistImportedPack` below) and the multi-file
+  // import batch (`collectImportResults`). Returns the outcome instead
+  // of touching state so each caller decides how to surface it (single
+  // banner vs. an accumulated batch summary).
+  const importOnePack = useCallback(async (
     raw: unknown,
-    extra: { hubPostId?: string } = {},
-  ): Promise<void> => {
-    setActionError(null)
-    setLastResult(null)
+  ): Promise<{ ok: true; meta: I18nPackMeta; validation: ValidatePackResult } | { ok: false; error: string }> => {
     const validation = validatePack(raw)
     if (!validation.ok) {
-      setActionError(validation.errors[0] ?? t('i18n.errorGeneric'))
-      return
+      return { ok: false, error: validation.errors[0] ?? t('i18n.errorGeneric') }
     }
     if (validation.dangerousKeys.length > 0) {
-      setActionError(t('i18n.preview.dangerousWarning'))
-      return
+      return { ok: false, error: t('i18n.preview.dangerousWarning') }
     }
     const coverage = computeCoverage(raw, ENGLISH_PACK_BODY)
     const result = await store.applyImport(raw, {
@@ -536,39 +601,109 @@ export function LanguagePacksModal({
       dangerousKeyCount: validation.dangerousKeys.length,
     })
     if (!result.success || !result.meta) {
-      setActionError(result.error ?? t('i18n.errorGeneric'))
+      return { ok: false, error: result.error ?? t('i18n.errorGeneric') }
+    }
+    return { ok: true, meta: result.meta, validation }
+  }, [store, t])
+
+  // Single-item import path: Hub download funnels through here (the
+  // toolbar's own multi-file import now goes through `importOnePack`
+  // directly — see `collectImportResults` below). Failures surface
+  // through `setActionError` (the same banner KeyLabels uses) instead
+  // of opening a separate confirmation modal.
+  const persistImportedPack = useCallback(async (
+    raw: unknown,
+    extra: { hubPostId?: string } = {},
+  ): Promise<void> => {
+    setActionError(null)
+    setLastResult(null)
+    const beforeIds = placement.snapshotBeforeIds()
+    const imported = await importOnePack(raw)
+    if (!imported.ok) {
+      setActionError(imported.error)
       return
     }
-    setLastResult({ id: result.meta.id, kind: 'success', message: t('common.saved') })
-    handleSelectLanguage(`pack:${result.meta.id}`)
+    const { meta, validation } = imported
+    setLastResult({ id: meta.id, kind: 'success', message: t('common.saved') })
+    handleSelectLanguage(`pack:${meta.id}`)
+    await placement.place({ id: meta.id, name: meta.name }, { beforeIds })
+
     if (extra.hubPostId) {
-      void window.vialAPI.i18nPackSetHubPostId(result.meta.id, extra.hubPostId)
+      // Same Author/Updated enrichment as handleSync — the download
+      // body itself has no metadata, so look the post back up by name.
+      const enriched = validation.header
+        ? await fetchHubPackMeta(window.vialAPI.hubListI18nPosts, validation.header.name, extra.hubPostId)
+        : {}
+      void window.vialAPI.i18nPackSetHubPostId(meta.id, extra.hubPostId, enriched.uploaderName, enriched.hubUpdatedAt)
       return
     }
     // Auto-sync to Hub when this overwrite landed on an entry that
     // already mirrors a Hub post. Promote the inline badge from
     // "Saved" to "Synced" so the user can see the second step
     // completed; failure surfaces inline without rolling back local.
-    if (result.meta.hubPostId) {
-      const upd = await pushPackToHub(result.meta.id, result.meta.hubPostId)
+    if (meta.hubPostId) {
+      const upd = await pushPackToHub(meta.id, meta.hubPostId)
       if (upd.success) {
-        setLastResult({ id: result.meta.id, kind: 'success', message: t('common.synced') })
+        setLastResult({ id: meta.id, kind: 'success', message: t('common.synced') })
       } else {
         setActionError(upd.error ?? t('hub.updateFailed'))
       }
     }
-  }, [store, t, pushPackToHub, handleSelectLanguage])
+  }, [importOnePack, t, pushPackToHub, handleSelectLanguage, placement])
 
-  const handleImportFile = useCallback(async (): Promise<void> => {
-    setActionError(null)
+  // Multi-file import batch: every selected file is parsed and saved
+  // independently here; dedupe, hub-sync, placement and the toolbar
+  // summary/failure banner are handled by the shared `useImportBatch`
+  // hook below (see its module doc for the extraction rationale). The
+  // snapshot is taken right after the "canceled" check — before any
+  // per-file save runs — matching `placement.snapshotEntries()`'s
+  // "before the batch's own mutations begin" contract.
+  const collectImportResults = useCallback(async (): Promise<CollectedImportBatch<I18nPackMeta> | null> => {
     const dialogResult = await store.importFromDialog()
-    if (dialogResult.canceled) return
-    if (dialogResult.parseError || dialogResult.raw === undefined) {
-      setActionError(t('i18n.errorInvalidJson'))
-      return
+    if (dialogResult.canceled) return null
+    const snapshot = placement.snapshotEntries()
+    const notSavedFailures: ImportBatchFailure[] = []
+    const successes: ImportBatchItem<I18nPackMeta>[] = []
+    for (const file of dialogResult.files) {
+      const fileName = basenameOf(file.filePath)
+      if (file.parseError || file.raw === undefined) {
+        notSavedFailures.push({ fileName, reason: file.parseError ?? t('i18n.errorInvalidJson') })
+        continue
+      }
+      const imported = await importOnePack(file.raw)
+      if (!imported.ok) {
+        notSavedFailures.push({ fileName, reason: imported.error })
+        continue
+      }
+      successes.push({ fileName, meta: imported.meta })
     }
-    await persistImportedPack(dialogResult.raw)
-  }, [persistImportedPack, store, t])
+    return { successes, notSavedFailures, snapshot }
+  }, [store, t, placement, importOnePack])
+
+  const { importing, importSummary, runImport, isImportingRef } = useImportBatch<I18nPackMeta>({
+    open,
+    placement,
+    setLastResult,
+    setActionError,
+    t,
+    collectResults: collectImportResults,
+    hubSync: (meta) => pushPackToHub(meta.id, meta.hubPostId!),
+    onCollapsedToOne: (meta) => handleSelectLanguage(`pack:${meta.id}`),
+  })
+
+  // Closes any inline rename that was already open the moment a batch
+  // starts, so its input unmounts instead of sitting there interactive
+  // (and committable) for the whole duration of the import — see
+  // `handleRenameCommit`'s own `isImportingRef` guard above for the one
+  // race this cannot cover (a rename input's blur, and the click that
+  // starts the batch, are the same user click; the blur's commit is
+  // already in flight before `importing` ever flips true).
+  useEffect(() => {
+    if (importing) rename.cancelRename()
+    // `rename.cancelRename` is a stable (`useCallback([])`) identity —
+    // intentionally not in the deps array so this only re-fires when
+    // `importing` itself flips, not on every unrelated render.
+  }, [importing])
 
   const handleHubDownload = useCallback(async (postId: string): Promise<void> => {
     setPendingId(postId)
@@ -586,76 +721,66 @@ export function LanguagePacksModal({
     }
   }, [persistImportedPack, t])
 
-  if (!open) return null
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      data-testid="language-packs-modal-backdrop"
-      onClick={onClose}
+  return (
+    <PackManagerModal
+      open={open}
+      onClose={onClose}
+      title={t('i18n.modalTitle')}
+      testids={{
+        backdrop: 'language-packs-modal-backdrop',
+        modal: 'language-packs-modal',
+        closeButton: 'language-packs-modal-close',
+        tabsContainer: 'language-packs-tabs',
+        tabInstalled: 'language-packs-tab-installed',
+        tabHub: 'language-packs-tab-hub',
+        searchInput: 'language-packs-search-input',
+        searchButton: 'language-packs-search-button',
+        importButton: 'language-packs-import-button',
+        errorBanner: 'language-packs-error',
+        importFeedback: 'language-packs-import-feedback',
+      }}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      installedLabel={t('common.installed')}
+      hubLabel={t('common.findOnHub')}
+      search={search}
+      onSearchChange={setSearch}
+      onSearchEnter={() => void runSearch(search)}
+      onSearchClick={() => void runSearch(search.trim())}
+      searchPlaceholder={t('common.searchPlaceholder')}
+      searchButtonLabel={hubSearching ? t('keyLabels.searching') : t('i18n.search')}
+      searchDisabled={hubSearching || search.trim().length < 2}
+      importLabel={t('i18n.import')}
+      onImport={() => void runImport()}
+      importDisabled={importing}
+      sortButton={(
+        <PackSortButton
+          direction={nameSort.direction}
+          onClick={handleSortByName}
+          disabled={nameSort.pending || importing}
+          testid="language-packs-sort-button"
+        />
+      )}
+      importFeedback={importing ? t('common.importing') : (importSummary ?? placement.feedback)}
+      actionError={actionError}
+      afterContent={(
+        <MissingKeysModal
+          open={!!missingKeysFor}
+          onClose={() => setMissingKeysFor(null)}
+          packName={missingKeysFor?.name ?? ''}
+          missingKeys={missingKeysFor?.keys ?? []}
+          base={ENGLISH_PACK_BODY}
+        />
+      )}
     >
-      <div
-        className="w-modal-lg max-w-modal-vw h-modal-80vh flex flex-col rounded-lg bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        data-testid="language-packs-modal"
-      >
-        <div className="flex items-center justify-between border-b border-edge px-4 py-3">
-          <h2 className="text-base font-semibold text-content">{t('i18n.modalTitle')}</h2>
-          <ModalCloseButton testid="language-packs-modal-close" onClick={onClose} />
-        </div>
-
-        <div className="flex border-b border-edge" data-testid="language-packs-tabs">
-          <TabButton id="installed" label={t('common.installed')} active={activeTab === 'installed'} onClick={() => setActiveTab('installed')} />
-          <TabButton id="hub" label={t('common.findOnHub')} active={activeTab === 'hub'} onClick={() => setActiveTab('hub')} />
-        </div>
-
-        {activeTab === 'hub' && (
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-edge">
-            <input
-              type="text"
-              value={search}
-              placeholder={t('common.searchPlaceholder')}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(search) }}
-              className="flex-1 rounded border border-edge bg-surface px-3 py-1.5 text-sm text-content focus:border-accent focus:outline-none"
-              data-testid="language-packs-search-input"
-            />
-            <button
-              type="button"
-              disabled={hubSearching || search.trim().length < 2}
-              onClick={() => void runSearch(search.trim())}
-              className={BTN_PRIMARY}
-              data-testid="language-packs-search-button"
-            >
-              {hubSearching ? t('keyLabels.searching') : t('i18n.search')}
-            </button>
-          </div>
-        )}
-
-        {activeTab === 'installed' && (
-          <div className="flex items-center justify-end px-4 py-3 border-b border-edge">
-            <button
-              type="button"
-              onClick={() => void handleImportFile()}
-              className="rounded border border-edge bg-surface px-3 py-1.5 text-sm font-medium text-content hover:bg-surface-hover"
-              data-testid="language-packs-import-button"
-            >
-              {t('i18n.import')}
-            </button>
-          </div>
-        )}
-
-        {actionError && (
-          <div className="mx-4 my-2 rounded border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700" data-testid="language-packs-error">
-            {actionError}
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto px-4 py-2">
-          {activeTab === 'installed' ? (
-            <InstalledTable
-              rows={installedRows}
+      {activeTab === 'installed' ? (
+        <div className="space-y-2">
+          {displayedRows.map((row) => (
+            <LanguageInstalledRow
+              key={row.reactKey}
+              row={row}
               pendingId={pendingId}
+              importing={importing}
               confirmDeleteId={confirmDeleteId}
               setConfirmDeleteId={setConfirmDeleteId}
               confirmRemoveId={confirmRemoveId}
@@ -663,7 +788,6 @@ export function LanguagePacksModal({
               lastResult={lastResult}
               currentDisplayName={currentDisplayName ?? null}
               hubCanWrite={hubCanWrite ?? false}
-              hubOrigin={hubOrigin}
               hubFreshness={hubFreshness}
               rename={rename}
               onRenameKey={handleRenameKey}
@@ -677,453 +801,38 @@ export function LanguagePacksModal({
               onDelete={handleDelete}
               onExport={handleExport}
               onNotSetKeys={handleNotSetKeys}
+              onDragStart={() => drag.onDragStart(row.packId as string)}
+              onDragOver={() => drag.onDragOver(row.packId as string)}
+              onDragEnd={() => {
+                void (async () => {
+                  const moved = await drag.onDragEnd()
+                  if (moved) nameSort.markFree()
+                })()
+              }}
             />
-          ) : (
-            <HubTable
-              rows={hubRows}
-              hubSearched={hubSearched}
+          ))}
+        </div>
+      ) : (
+        <PackHubTab
+          rows={hubRows}
+          renderRow={(row) => (
+            <LanguageHubRow
+              key={row.reactKey}
+              row={row}
               pendingId={pendingId}
-              hubOrigin={hubOrigin}
+              importing={importing}
               onDownload={(postId) => void handleHubDownload(postId)}
             />
           )}
-        </div>
-      </div>
-      <MissingKeysModal
-        open={!!missingKeysFor}
-        onClose={() => setMissingKeysFor(null)}
-        packName={missingKeysFor?.name ?? ''}
-        missingKeys={missingKeysFor?.keys ?? []}
-        base={ENGLISH_PACK_BODY}
-      />
-    </div>,
-    document.body,
-  )
-}
-
-interface TabButtonProps {
-  id: TabId
-  label: string
-  active: boolean
-  onClick: () => void
-}
-
-function TabButton({ id, label, active, onClick }: TabButtonProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-        active ? 'border-b-2 border-accent text-accent' : 'text-content-secondary hover:text-content'
-      }`}
-      data-testid={`language-packs-tab-${id}`}
-      aria-pressed={active}
-    >
-      {label}
-    </button>
-  )
-}
-
-interface InstalledTableProps {
-  rows: InstalledRow[]
-  pendingId: string | null
-  confirmDeleteId: string | null
-  setConfirmDeleteId: (id: string | null) => void
-  confirmRemoveId: string | null
-  setConfirmRemoveId: (id: string | null) => void
-  lastResult: { id: string; kind: 'success' | 'error'; message: string } | null
-  currentDisplayName: string | null
-  hubCanWrite: boolean
-  hubOrigin: string
-  hubFreshness: Map<string, HubFreshnessEntry>
-  rename: ReturnType<typeof useInlineRename<string>>
-  onRenameKey: (event: React.KeyboardEvent<HTMLInputElement>, id: string) => void
-  onRenameCommit: (id: string) => void | Promise<void>
-  onSelectLanguage: (internalId: string) => void
-  onOpen: (row: InstalledRow) => void
-  onUpload: (row: InstalledRow) => void
-  onUpdate: (row: InstalledRow) => void
-  onSync: (row: InstalledRow) => void
-  onRemove: (row: InstalledRow) => void
-  onDelete: (row: InstalledRow) => void
-  onExport: (row: InstalledRow) => void
-  onNotSetKeys: (row: InstalledRow) => void
-}
-
-function InstalledTable(props: InstalledTableProps): JSX.Element {
-  const { rows } = props
-  return (
-    <div className="space-y-2">
-      {rows.map((row) => (
-        <InstalledRowView key={row.reactKey} row={row} {...props} />
-      ))}
-    </div>
-  )
-}
-
-interface InstalledRowViewProps extends Omit<InstalledTableProps, 'rows'> {
-  row: InstalledRow
-}
-
-function InstalledRowView({
-  row,
-  pendingId,
-  confirmDeleteId,
-  setConfirmDeleteId,
-  confirmRemoveId,
-  setConfirmRemoveId,
-  lastResult,
-  hubCanWrite,
-  hubFreshness,
-  rename,
-  onRenameKey,
-  onRenameCommit,
-  onSelectLanguage,
-  onOpen,
-  onUpload,
-  onUpdate,
-  onSync,
-  onRemove,
-  onDelete,
-  onExport,
-  onNotSetKeys,
-}: InstalledRowViewProps): JSX.Element {
-  const { t } = useTranslation()
-  const busy = pendingId !== null && (pendingId === row.packId || pendingId === row.hubPostId)
-  const freshness = row.packId ? hubFreshness.get(row.packId) : undefined
-  const hasUpdateAvailable = hasUpdate(freshness, row.meta?.hubUpdatedAt)
-  const hubRemoved = !!freshness && freshness.removed
-  const editing = !!row.packId && rename.editingId === row.packId
-  const renderName = (): JSX.Element => {
-    if (editing && row.packId) {
-      return (
-        <input
-          autoFocus
-          type="text"
-          value={rename.editLabel}
-          onChange={(e) => rename.setEditLabel(e.target.value)}
-          onBlur={() => void onRenameCommit(row.packId as string)}
-          onKeyDown={(e) => onRenameKey(e, row.packId as string)}
-          maxLength={64}
-          className="w-full border-b border-edge bg-transparent px-1 text-sm text-content focus:outline-none focus:border-accent"
-          data-testid={`language-packs-rename-input-${row.reactKey}`}
+          hubSearched={hubSearched}
+          emptyText={t('i18n.hubEmpty')}
+          emptyTestid="language-packs-hub-empty"
+          hubOrigin={hubOrigin}
+          category={HUB_CATEGORY.I18N_PACKS}
+          initialLinkTestid="language-packs-hub-initial-link"
         />
-      )
-    }
-    if (!row.isBuiltin && row.packId) {
-      return (
-        <span
-          className="block w-full truncate text-content cursor-pointer"
-          onClick={() => rename.startRename(row.packId as string, row.name)}
-          data-testid={`language-packs-name-${row.reactKey}`}
-        >
-          {row.name}
-        </span>
-      )
-    }
-    return <span className="text-content">{row.name}</span>
-  }
-  const updatedAt = row.updatedAt ? formatTimestamp(row.updatedAt) : ''
-  const linkClass = 'text-xs font-medium hover:underline disabled:opacity-50'
-
-  const showUpload = !row.isBuiltin && !row.hubPostId && hubCanWrite
-  const showHubPair = !row.isBuiltin && Boolean(row.hubPostId)
-  // The simplified "isMine" check: when uploaderName is unavailable
-  // we conservatively show Update / Remove only if the user is signed
-  // in for writes. Hub returns uploader_name on download / list paths
-  // but the local meta does not cache it for i18n packs.
-  const showUpdateRemove = showHubPair && hubCanWrite
-
-  return (
-    <div
-      className={`flex flex-col rounded border bg-surface ${row.active ? 'border-accent' : 'border-edge'}`}
-      data-testid={`language-packs-row-${row.reactKey}`}
-    >
-      <div className="flex items-center gap-3 px-3 py-2">
-        <button
-          type="button"
-          aria-label={t('i18n.selectLanguage', { name: row.name })}
-          className="shrink-0 text-content-muted hover:text-accent transition-colors"
-          onClick={() => onSelectLanguage(row.internalId)}
-          data-testid={`language-packs-select-${row.reactKey}`}
-        >
-          {row.active ? (
-            <CheckCircle2 size={ICON_XL} className="text-accent" aria-hidden="true" />
-          ) : (
-            <Circle size={ICON_XL} aria-hidden="true" />
-          )}
-        </button>
-        <div className="flex-1 min-w-0 text-sm font-medium">{renderName()}</div>
-        <div
-          className={`shrink-0 whitespace-nowrap text-xs ${hubRemoved ? 'text-rose-600' : 'text-content-muted'}`}
-          data-testid={`language-packs-timestamp-${row.reactKey}`}
-        >
-          {hubRemoved ? t('keyLabels.hubRemoved') : updatedAt}
-        </div>
-        <div className="shrink-0 whitespace-nowrap text-xs">
-          {row.isComplete ? (
-            <span className="text-content-muted" data-testid={`language-packs-version-${row.reactKey}`}>
-              {row.version ? `v${row.version}` : ''}
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="text-accent hover:underline disabled:opacity-50"
-              onClick={(e) => {
-                e.stopPropagation()
-                onNotSetKeys(row)
-              }}
-              disabled={busy}
-              data-testid={`language-packs-not-set-keys-${row.reactKey}`}
-            >
-              {t('i18n.notSetKeys')}
-            </button>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {row.isBuiltin && (
-            <>
-              <button
-                type="button"
-                className={`${linkClass} text-content-muted`}
-                onClick={() => onExport(row)}
-                data-testid={`language-packs-export-${row.reactKey}`}
-              >
-                {t('keyLabels.actionExport')}
-              </button>
-              {/* Reserve the same width as the Delete action so the
-                  built-in row's right edge lines up with imported rows. */}
-              <span aria-hidden="true" className={`${linkClass} invisible`}>
-                {t('keyLabels.actionDelete')}
-              </span>
-            </>
-          )}
-          {!row.isBuiltin && (
-            confirmDeleteId === row.reactKey ? (
-              <span className="inline-flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onDelete(row)
-                  }}
-                  className={`${linkClass} text-danger`}
-                  data-testid={`language-packs-confirm-delete-${row.reactKey}`}
-                >
-                  {t('common.confirmDelete')}
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setConfirmDeleteId(null)
-                  }}
-                  className={`${linkClass} text-content-muted`}
-                  data-testid={`language-packs-cancel-delete-${row.reactKey}`}
-                >
-                  {t('common.cancel')}
-                </button>
-              </span>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className={`${linkClass} text-content-muted`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onExport(row)
-                  }}
-                  disabled={busy}
-                  data-testid={`language-packs-export-${row.reactKey}`}
-                >
-                  {t('keyLabels.actionExport')}
-                </button>
-                <button
-                  type="button"
-                  className={`${linkClass} text-danger`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setConfirmDeleteId(row.reactKey)
-                  }}
-                  disabled={busy}
-                  data-testid={`language-packs-delete-${row.reactKey}`}
-                >
-                  {t('keyLabels.actionDelete')}
-                </button>
-              </>
-            )
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-3 px-3 pb-2">
-        <span className="flex-1 min-w-0">
-          {lastResult && (lastResult.id === row.packId || lastResult.id === row.hubPostId) && (
-            <span
-              className={`text-xs font-medium ${lastResult.kind === 'success' ? 'text-accent' : 'text-rose-600'}`}
-              data-testid={`language-packs-result-${row.reactKey}`}
-            >
-              {lastResult.message}
-            </span>
-          )}
-        </span>
-        {row.hubPostId && (
-          <button
-            type="button"
-            className={`${linkClass} text-accent`}
-            onClick={() => onOpen(row)}
-            disabled={busy}
-            data-testid={`language-packs-open-${row.reactKey}`}
-          >
-            {t('hub.openInBrowser')}
-          </button>
-        )}
-        {showUpload && (
-          <button
-            type="button"
-            className={`${linkClass} text-accent`}
-            onClick={() => onUpload(row)}
-            disabled={busy}
-            data-testid={`language-packs-upload-${row.reactKey}`}
-          >
-            {t('keyLabels.actionUpload')}
-          </button>
-        )}
-        {showHubPair && !showUpdateRemove && (
-          <button
-            type="button"
-            className={`${linkClass} text-accent inline-flex items-center gap-1`}
-            onClick={() => onSync(row)}
-            disabled={busy}
-            data-testid={`language-packs-sync-${row.reactKey}`}
-          >
-            {hasUpdateAvailable && (
-              <span
-                aria-hidden="true"
-                className="h-1.5 w-1.5 rounded-full bg-success animate-pulse"
-                data-testid={`language-packs-update-available-${row.reactKey}`}
-              />
-            )}
-            {t('keyLabels.actionSync')}
-          </button>
-        )}
-        {showUpdateRemove && (
-          confirmRemoveId === row.reactKey ? (
-            <>
-              <button
-                type="button"
-                className={`${linkClass} text-danger`}
-                onClick={() => onRemove(row)}
-                disabled={busy}
-                data-testid={`language-packs-confirm-remove-${row.reactKey}`}
-              >
-                {t('hub.confirmRemove')}
-              </button>
-              <button
-                type="button"
-                className={`${linkClass} text-content-muted`}
-                onClick={() => setConfirmRemoveId(null)}
-                data-testid={`language-packs-cancel-remove-${row.reactKey}`}
-              >
-                {t('common.cancel')}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className={`${linkClass} text-accent`}
-                onClick={() => onUpdate(row)}
-                disabled={busy}
-                data-testid={`language-packs-update-${row.reactKey}`}
-              >
-                {t('keyLabels.actionUpdate')}
-              </button>
-              <button
-                type="button"
-                className={`${linkClass} text-danger`}
-                onClick={() => setConfirmRemoveId(row.reactKey)}
-                disabled={busy}
-                data-testid={`language-packs-remove-${row.reactKey}`}
-              >
-                {t('keyLabels.actionRemove')}
-              </button>
-            </>
-          )
-        )}
-      </div>
-    </div>
-  )
-}
-
-interface HubTableProps {
-  rows: HubRow[]
-  hubSearched: boolean
-  pendingId: string | null
-  hubOrigin: string
-  onDownload: (postId: string) => void
-}
-
-function HubTable({ rows, hubSearched, pendingId, hubOrigin, onDownload }: HubTableProps): JSX.Element {
-  const { t } = useTranslation()
-  if (rows.length === 0) {
-    return (
-      <p className="py-4 text-center text-sm text-content-muted" data-testid="language-packs-hub-empty">
-        {hubSearched ? (
-          t('i18n.hubEmpty')
-        ) : (
-          <Trans
-            i18nKey="common.findOnHubHint"
-            components={{
-              hub: hubOrigin ? (
-                <a
-                  href={buildHubCategoryUrl(hubOrigin, HUB_CATEGORY.I18N_PACKS)}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    void window.vialAPI.openExternal(buildHubCategoryUrl(hubOrigin, HUB_CATEGORY.I18N_PACKS))
-                  }}
-                  className="text-accent hover:underline"
-                  data-testid="language-packs-hub-initial-link"
-                />
-              ) : (
-                <span />
-              ),
-            }}
-          />
-        )}
-      </p>
-    )
-  }
-  return (
-    <div className="space-y-2">
-      {rows.map((row) => (
-        <div
-          key={row.reactKey}
-          className="flex items-center gap-3 rounded border border-edge bg-surface px-3 py-2"
-          data-testid={`language-packs-hub-row-${row.hubPostId}`}
-        >
-          <div className="flex-1 min-w-0">
-            <div className="truncate text-sm font-medium text-content">{row.name}</div>
-            <div className="text-xs text-content-muted">v{row.version}{row.uploaderName ? ` · ${row.uploaderName}` : ''}</div>
-          </div>
-          <div className="shrink-0">
-            {row.alreadyInstalled ? (
-              <span className="text-xs text-content-muted">{t('common.installed')}</span>
-            ) : (
-              <button
-                type="button"
-                className="text-xs font-medium text-accent hover:underline disabled:opacity-50"
-                onClick={() => onDownload(row.hubPostId)}
-                disabled={pendingId === row.hubPostId}
-                data-testid={`language-packs-hub-download-${row.hubPostId}`}
-              >
-                {t('keyLabels.actionDownload')}
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
+      )}
+    </PackManagerModal>
   )
 }
 

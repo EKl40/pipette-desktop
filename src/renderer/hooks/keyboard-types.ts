@@ -49,6 +49,11 @@ export interface KeyboardState {
   keyOverrideEntries: KeyOverrideEntry[]
   altRepeatKeyEntries: AltRepeatKeyEntry[]
   unlockStatus: UnlockStatus
+  // True once unlockStatus reflects a real device answer (or a forced
+  // VIA-only/dummy/pipette-file unlocked state) rather than the initial
+  // placeholder. A failed getUnlockStatus() leaves this false, so callers
+  // must never treat "not known" as "confirmed locked".
+  unlockStatusKnown: boolean
   // QMK Backlight
   backlightBrightness: number
   backlightEffect: number
@@ -75,6 +80,17 @@ export interface KeyboardState {
   layerNames: string[]
   // Keychron
   keychron: KeychronState | null
+  // Bumped by `applyVilFile` on every successful restore (snapshot / layout
+  // store / .vil import all converge there — Plan-qwerty-select-no-rewrite
+  // §snapshot/.vil 復元時のクリーンアップ). App.tsx watches this counter to
+  // clear the keymap undo/redo history and close a stray Keyboard Layout
+  // apply-confirm modal — both things that KeymapEditor's own uid/keymap-size
+  // clear effect misses because a restore keeps the same uid and never
+  // empties the keymap.
+  // Monotonic for the whole app session: `reset()` (disconnect) carries
+  // the current value forward instead of zeroing it via `emptyState()`,
+  // so consumers can watch for a plain change rather than an increase.
+  keymapRestoreSeq: number
 }
 
 export function emptyState(): KeyboardState {
@@ -105,6 +121,7 @@ export function emptyState(): KeyboardState {
     keyOverrideEntries: [],
     altRepeatKeyEntries: [],
     unlockStatus: { unlocked: false, inProgress: false, keys: [] },
+    unlockStatusKnown: false,
     backlightBrightness: 0,
     backlightEffect: 0,
     rgblightBrightness: 0,
@@ -124,6 +141,7 @@ export function emptyState(): KeyboardState {
     qmkSettingsValues: {},
     layerNames: [],
     keychron: null,
+    keymapRestoreSeq: 0
   }
 }
 

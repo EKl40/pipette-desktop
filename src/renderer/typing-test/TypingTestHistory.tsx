@@ -2,29 +2,43 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Trophy } from 'lucide-react'
+import { Trophy, SquarePen } from 'lucide-react'
+import { ICON_SM } from '../constants/ui-tokens'
 import type { TypingTestResult } from '../../shared/types/pipette-settings'
 import { buildCsv } from '../../shared/csv-export'
 import { computeStats } from './history-stats'
 import { WpmSparkline } from './WpmSparkline'
-import { formatDate } from '../components/editors/store-modal-shared'
+import { AccuracyTrendSection } from './AccuracyTrendSection'
+import { MistakeRankingSection } from './MistakeRankingSection'
+import { formatDate, ACTION_BTN, DELETE_BTN, CONFIRM_DELETE_BTN, FILTER_SELECT_CLASS } from '../components/editors/store-modal-shared'
+import { resultKpm, buildResultNameChips } from './result-builder'
+import { formatConditionLabel } from './condition-label'
+import { ResultNameModal } from './ResultNameModal'
+import { Tooltip } from '../components/ui/Tooltip'
 
 type ModeFilter = 'all' | 'words' | 'time' | 'quote'
-type SortColumn = 'date' | 'wpm' | 'accuracy' | 'mode' | 'duration'
+type SortColumn = 'date' | 'wpm' | 'kpm' | 'accuracy' | 'mode' | 'duration'
 type SortDirection = 'asc' | 'desc'
+/** Top-level split: Monkeytype (words/time/quote) vs imported Text (fileImport).
+ *  Their baselines aren't comparable, so stats / chart / export are separate. */
+type HistoryTab = 'monkeytype' | 'text'
 
 interface Props {
   results: TypingTestResult[]
-  onExportCsv?: (csv: string) => void
+  /** Export the currently-filtered rows. `filterSlug` describes the active
+   *  tab + selection (e.g. `normal-words`, `text-Alpha`) for the filename. */
+  onExportCsv?: (csv: string, filterSlug: string) => void
+  /** Label a result (keyed by ISO date) for run comparison. */
+  onRename?: (date: string, name: string) => void
+  /** Delete a single result (keyed by ISO date). */
+  onDelete?: (date: string) => void
+  /** Current keyboard name, offered as a quick-insert chip when renaming. */
+  deviceName?: string
 }
 
 const MAX_TABLE_ROWS = 20
 
-function modeFilterButtonClass(active: boolean): string {
-  const base = 'rounded-md border px-2.5 py-1 text-xs transition-colors'
-  if (active) return `${base} border-accent bg-accent/10 text-accent`
-  return `${base} border-edge text-content-secondary hover:text-content`
-}
+const EXPORT_BTN_CLASS = 'inline-flex h-8 items-center rounded-md border border-edge px-2.5 text-xs text-content-secondary transition-colors hover:text-content'
 
 const MAX_SPARKLINE_RESULTS = 50
 
@@ -35,36 +49,105 @@ function formatDuration(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+/** Mode-column detail. FileImport (imported-text) runs show the snapshotted text
+ *  name (falling back to the stable textId for legacy rows saved before the
+ *  name was captured); words/time/quote show their `mode2` value verbatim.
+ *  Tatoeba is NOT handled here — its `mode2` is a composite
+ *  `language|pattern|count` (see `deriveMode2`), so the Mode column renders
+ *  it via `formatConditionLabel` instead of this raw value. */
+function modeDetail(r: TypingTestResult): string {
+  if (r.mode === 'fileImport') return r.fileImportTextName ?? (r.mode2 != null ? String(r.mode2) : '')
+  return r.mode2 != null ? String(r.mode2) : ''
+}
+
+/** Stable filter key for an imported-text (fileImport) run; its textId is `mode2`. */
+function fileImportTextId(r: TypingTestResult): string {
+  return String(r.mode2 ?? '')
+}
+
+/** Filename slug describing the active export selection (tab + filter), so each
+ *  filtered export lands in a distinct, self-describing file. Monkeytype-all and
+ *  Text-all stay distinct via the tab prefix. */
+function exportFilterSlug(
+  isText: boolean,
+  modeFilter: ModeFilter,
+  textFilter: string,
+  fileImportTexts: { id: string, name: string }[],
+): string {
+  if (isText) {
+    if (textFilter === 'all') return 'text'
+    // Fall back to the textId for an empty / missing name so the slug never
+    // ends in a bare `text-`.
+    return `text-${fileImportTexts.find((c) => c.id === textFilter)?.name || textFilter}`
+  }
+  return modeFilter === 'all' ? 'monkeytype' : `monkeytype-${modeFilter}`
+}
+
 const MODE_FILTERS: ModeFilter[] = ['all', 'words', 'time', 'quote']
 
-const CSV_HEADERS = ['date', 'wpm', 'accuracy', 'wordCount', 'correctChars', 'incorrectChars', 'durationSeconds', 'rawWpm', 'mode', 'mode2', 'language', 'punctuation', 'numbers', 'consistency', 'isPb'] as const
+const CSV_HEADERS = ['date', 'name', 'wpm', 'kpm', 'accuracy', 'wordCount', 'correctChars', 'incorrectChars', 'durationSeconds', 'rawWpm', 'mode', 'mode2', 'fileImportTextName', 'language', 'punctuation', 'numbers', 'consistency', 'isPb'] as const
 
 function buildResultsCsv(results: TypingTestResult[]): string {
   return buildCsv(
     CSV_HEADERS,
-    results.map((r) => CSV_HEADERS.map((key) => r[key])),
+    results.map((r) => CSV_HEADERS.map((key) => (key === 'kpm' ? resultKpm(r) : r[key as keyof TypingTestResult]))),
   )
 }
 
-export function TypingTestHistory({ results, onExportCsv }: Props) {
+export function TypingTestHistory({ results, onExportCsv, onRename, onDelete, deviceName }: Props) {
   const { t } = useTranslation()
+  const [tab, setTab] = useState<HistoryTab>('monkeytype')
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
+  // Text-tab filter, keyed by the stable textId (mode2). 'all' = no filter.
+  const [textFilter, setTextFilter] = useState<string>('all')
   const [sortColumn, setSortColumn] = useState<SortColumn>('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [confirmDeleteDate, setConfirmDeleteDate] = useState<string | null>(null)
+  const isText = tab === 'text'
 
   const handleSort = useCallback((column: SortColumn) => {
     setSortDirection((prev) => (sortColumn === column && prev === 'desc') ? 'asc' : 'desc')
     setSortColumn(column)
   }, [sortColumn])
 
-  const handleExport = useCallback(() => {
-    onExportCsv?.(buildResultsCsv(results))
-  }, [results, onExportCsv])
+  // Active tab's rows: fileImport for Text, everything else for Monkeytype.
+  const tabResults = useMemo(
+    () => results.filter((r) => isText ? r.mode === 'fileImport' : r.mode !== 'fileImport'),
+    [results, isText],
+  )
+
+  // Distinct imported texts (fileImport rows), keyed by stable textId, displayed by
+  // the snapshotted name. Drives the Text-tab filter dropdown.
+  const fileImportTexts = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of results) {
+      if (r.mode !== 'fileImport') continue
+      const id = fileImportTextId(r)
+      if (!seen.has(id)) seen.set(id, r.fileImportTextName ?? id)
+    }
+    return Array.from(seen, ([id, name]) => ({ id, name }))
+  }, [results])
+
+  // Fall back to 'all' when the selected text no longer exists (e.g. all its
+  // rows were deleted), so the dropdown stays controlled and the stats/chart
+  // never collapse to an empty selection.
+  const effectiveTextFilter = textFilter === 'all' || fileImportTexts.some((c) => c.id === textFilter)
+    ? textFilter
+    : 'all'
 
   const filtered = useMemo(() => {
-    if (modeFilter === 'all') return results
-    return results.filter((r) => (r.mode ?? 'words') === modeFilter)
-  }, [results, modeFilter])
+    if (isText) {
+      if (effectiveTextFilter === 'all') return tabResults
+      return tabResults.filter((r) => fileImportTextId(r) === effectiveTextFilter)
+    }
+    if (modeFilter === 'all') return tabResults
+    return tabResults.filter((r) => (r.mode ?? 'words') === modeFilter)
+  }, [tabResults, isText, modeFilter, effectiveTextFilter])
+
+  // Export is per-tab: only the rows currently shown.
+  const handleExport = useCallback(() => {
+    onExportCsv?.(buildResultsCsv(filtered), exportFilterSlug(isText, modeFilter, effectiveTextFilter, fileImportTexts))
+  }, [filtered, onExportCsv, isText, modeFilter, effectiveTextFilter, fileImportTexts])
 
   const stats = useMemo(() => computeStats(filtered), [filtered])
   const sparklineResults = useMemo(
@@ -82,12 +165,17 @@ export function TypingTestHistory({ results, onExportCsv }: Props) {
         case 'wpm':
           cmp = a.wpm - b.wpm
           break
+        case 'kpm':
+          cmp = resultKpm(a) - resultKpm(b)
+          break
         case 'accuracy':
           cmp = a.accuracy - b.accuracy
           break
         case 'mode': {
-          const modeA = `${a.mode ?? ''}${a.mode2 ?? ''}`
-          const modeB = `${b.mode ?? ''}${b.mode2 ?? ''}`
+          // Sort by what the Mode column actually shows (text name for fileImport),
+          // so fileImport rows order by name rather than an opaque textId.
+          const modeA = `${a.mode ?? ''}${modeDetail(a)}`
+          const modeB = `${b.mode ?? ''}${modeDetail(b)}`
           cmp = modeA.localeCompare(modeB)
           break
         }
@@ -101,29 +189,66 @@ export function TypingTestHistory({ results, onExportCsv }: Props) {
 
   return (
     <div data-testid="typing-test-history" className="flex h-full max-w-4xl flex-col gap-3">
-      {/* Header: mode filter + export */}
+      {/* Top tabs: Monkeytype (words/time/quote) vs imported Text (fileImport). */}
+      <div className="flex items-center gap-4 border-b border-edge">
+        {(['monkeytype', 'text'] as HistoryTab[]).map((tb) => (
+          <button
+            key={tb}
+            type="button"
+            data-testid={`history-tab-${tb}`}
+            aria-selected={tab === tb}
+            className={tab === tb
+              ? 'border-b-2 border-accent px-1 pb-1.5 text-sm font-semibold text-accent'
+              : 'border-b-2 border-transparent px-1 pb-1.5 text-sm text-content-secondary hover:text-content'}
+            onClick={() => setTab(tb)}
+          >
+            {t(tb === 'text' ? 'editor.typingTest.history.tabFileImport' : 'editor.typingTest.history.tabMonkeytype')}
+          </button>
+        ))}
+      </div>
+
+      {/* Sub-filter (mode dropdown for Monkeytype, text dropdown for Text) +
+          per-tab export. Both selects feed `filtered`, so the stats row and the
+          sparkline reflect the current selection too. */}
       <div className="flex items-center gap-2">
-        <div className="flex gap-1.5">
-          {MODE_FILTERS.map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              data-testid={`history-filter-${mode}`}
-              className={modeFilterButtonClass(modeFilter === mode)}
-              aria-pressed={modeFilter === mode}
-              onClick={() => setModeFilter(mode)}
-            >
-              {mode === 'all'
-                ? t('editor.typingTest.history.allModes')
-                : t(`editor.typingTest.mode.${mode}`)}
-            </button>
-          ))}
-        </div>
+        {!isText && (
+          <select
+            data-testid="history-filter-mode"
+            aria-label={t('editor.typingTest.history.filterMode')}
+            className={FILTER_SELECT_CLASS}
+            value={modeFilter}
+            onChange={(e) => setModeFilter(e.target.value as ModeFilter)}
+          >
+            {MODE_FILTERS.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode === 'all'
+                  ? t('editor.typingTest.history.allModes')
+                  : t(`editor.typingTest.mode.${mode}`)}
+              </option>
+            ))}
+          </select>
+        )}
+        {isText && fileImportTexts.length > 0 && (
+          <select
+            data-testid="history-filter-text"
+            aria-label={t('editor.typingTest.history.filterText')}
+            className={FILTER_SELECT_CLASS}
+            value={effectiveTextFilter}
+            onChange={(e) => setTextFilter(e.target.value)}
+          >
+            <option value="all">{t('editor.typingTest.history.allModes')}</option>
+            {fileImportTexts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name || t('editor.typingTest.history.unnamed')}
+              </option>
+            ))}
+          </select>
+        )}
         {onExportCsv && (
           <button
             type="button"
             data-testid="history-export-csv"
-            className={`ml-auto ${modeFilterButtonClass(false)}`}
+            className={`ml-auto ${EXPORT_BTN_CLASS}`}
             onClick={handleExport}
           >
             {t('editor.typingTest.history.exportCsv')}
@@ -147,38 +272,86 @@ export function TypingTestHistory({ results, onExportCsv }: Props) {
         </div>
       )}
 
+      <AccuracyTrendSection results={tabResults} />
+      <MistakeRankingSection results={tabResults} />
+
       {/* Results table — fills remaining height */}
       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-edge">
         {sorted.length > 0 ? (
           <table className="w-full text-left text-xs">
             <thead className="sticky top-0 bg-surface-alt text-content-muted">
               <tr>
+                <th className="px-3 py-1.5">{t('editor.typingTest.history.name')}</th>
                 <SortableHeader column="date" label={t('editor.typingTest.history.date')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                 <SortableHeader column="wpm" label={t('editor.typingTest.wpm')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                <SortableHeader column="kpm" label={t('editor.typingTest.kpm')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                 <SortableHeader column="accuracy" label={t('editor.typingTest.accuracy')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                <SortableHeader column="mode" label={t('editor.typingTest.history.mode')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                <SortableHeader column="mode" label={isText ? t('editor.typingTest.history.tabText') : t('editor.typingTest.history.mode')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                 <SortableHeader column="duration" label={t('editor.typingTest.time')} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                 <th className="px-3 py-1.5">{t('editor.typingTest.history.pb')}</th>
+                {onDelete && <th className="px-3 py-1.5" aria-label={t('editor.typingTest.history.delete')} />}
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r, i) => (
+              {sorted.map((r) => (
                 <tr
-                  key={i}
+                  key={r.date}
                   className="border-t border-edge/50 transition-colors hover:bg-surface-alt/50"
                 >
-                  <td className="px-3 py-1.5 text-content-muted">{formatDate(r.date)}</td>
-                  <td className="px-3 py-1.5 font-mono font-semibold text-accent">{r.wpm}</td>
-                  <td className="px-3 py-1.5 font-mono">{r.accuracy}%</td>
-                  <td className="px-3 py-1.5 text-content-muted">
-                    {t(`editor.typingTest.mode.${r.mode ?? 'words'}`)}{r.mode2 != null ? ` ${r.mode2}` : ''}
+                  <NameCell result={r} onRename={onRename} deviceName={deviceName} />
+                  <td className="whitespace-nowrap px-3 py-1.5 text-content-muted">{formatDate(r.date)}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 font-mono font-semibold text-accent">{r.wpm}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 font-mono font-semibold text-accent">{resultKpm(r)}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 font-mono">{r.accuracy}%</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-content-muted">
+                    {isText
+                      ? (modeDetail(r) || t('editor.typingTest.history.unnamed'))
+                      // Tatoeba's mode2 is a composite (language|pattern|count, see
+                      // deriveMode2) — formatConditionLabel already knows how to
+                      // render it (e.g. "Tatoeba 5 Lines (english)").
+                      : (r.mode === 'tatoeba'
+                        ? formatConditionLabel(r, t)
+                        : `${t(`editor.typingTest.mode.${r.mode ?? 'words'}`)}${modeDetail(r) ? ` ${modeDetail(r)}` : ''}`)}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-content-muted">
+                  <td className="whitespace-nowrap px-3 py-1.5 font-mono text-content-muted">
                     {formatDuration(r.durationSeconds)}
                   </td>
                   <td className="px-3 py-1.5">
                     {r.isPb && <Trophy role="img" className="inline-block size-3.5 text-warning" aria-label={t('editor.typingTest.history.pb')} />}
                   </td>
+                  {onDelete && (
+                    <td className="px-3 py-1.5">
+                      {confirmDeleteDate === r.date ? (
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            className={CONFIRM_DELETE_BTN}
+                            onClick={() => { onDelete(r.date); setConfirmDeleteDate(null) }}
+                            data-testid={`history-delete-confirm-${r.date}`}
+                          >
+                            {t('common.confirmDelete')}
+                          </button>
+                          <button
+                            type="button"
+                            className={ACTION_BTN}
+                            onClick={() => setConfirmDeleteDate(null)}
+                            data-testid={`history-delete-cancel-${r.date}`}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className={DELETE_BTN}
+                          onClick={() => setConfirmDeleteDate(r.date)}
+                          data-testid={`history-delete-${r.date}`}
+                        >
+                          {t('common.delete')}
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -238,9 +411,62 @@ interface StatItemProps {
 
 function StatItem({ label, value, highlight }: StatItemProps) {
   return (
-    <div className="flex items-center gap-1.5">
+    // Baseline-align so the mono value digits sit level with the sans label
+    // (their font metrics differ, so items-center looks vertically off).
+    <div className="flex items-baseline gap-1.5">
       <span className="text-content-muted">{label}:</span>
       <span className={`font-mono font-semibold ${highlight ? 'text-accent' : ''}`}>{value}</span>
     </div>
+  )
+}
+
+interface NameCellProps {
+  result: TypingTestResult
+  onRename?: (date: string, name: string) => void
+  deviceName?: string
+}
+
+/** Result label cell. A button (edit icon + current name / "Unnamed") that
+ *  opens the naming modal with quick-insert chips. Read-only when no rename
+ *  handler is provided. */
+function NameCell({ result, onRename, deviceName }: NameCellProps) {
+  const { t } = useTranslation()
+  const [modalOpen, setModalOpen] = useState(false)
+  const placeholder = t('editor.typingTest.history.unnamed')
+
+  const display = result.name || placeholder
+
+  if (!onRename) {
+    return (
+      <td className="max-w-[14rem] px-3 py-1.5 text-content-muted">
+        <Tooltip content={display} wrapperClassName="block max-w-full">
+          <span className="block truncate">{display}</span>
+        </Tooltip>
+      </td>
+    )
+  }
+
+  return (
+    <td className="max-w-[14rem] px-3 py-1.5">
+      <Tooltip content={display} wrapperClassName="block max-w-full">
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className={`flex w-full items-center gap-1.5 text-left transition-colors hover:text-content ${result.name ? 'text-content-secondary' : 'text-content-muted'}`}
+          data-testid={`history-name-${result.date}`}
+        >
+          <SquarePen size={ICON_SM} aria-hidden="true" className="shrink-0" />
+          <span className="min-w-0 truncate">{display}</span>
+        </button>
+      </Tooltip>
+      {modalOpen && (
+        <ResultNameModal
+          initialName={result.name ?? ''}
+          chips={buildResultNameChips(result, t, deviceName)}
+          onSave={(name) => onRename(result.date, name)}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
+    </td>
   )
 }

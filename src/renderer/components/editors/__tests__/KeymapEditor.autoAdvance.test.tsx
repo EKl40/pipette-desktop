@@ -108,6 +108,7 @@ vi.mock('../../../../shared/keycodes/keycodes', () => ({
   extractBasicKey: (code: number) => code & 0xff,
   buildModMaskKeycode: (mask: number, key: number) => (mask << 8) | key,
   findKeycode: (qmkId: string) => ({ qmkId, label: qmkId }),
+  findInnerKeycode: () => undefined,
 }))
 
 vi.mock('../../keycodes/ModifierCheckboxStrip', () => ({
@@ -122,14 +123,27 @@ vi.mock('../TapDanceModal', () => ({ TapDanceModal: () => null }))
 vi.mock('../MacroModal', () => ({ MacroModal: () => null }))
 
 import { KeymapEditor } from '../KeymapEditor'
+import type { KleKey } from '../../../../shared/kle/types'
+
+const KEY_DEFAULTS: KleKey = {
+  x: 0, y: 0, width: 1, height: 1, row: 0, col: 0,
+  encoderIdx: -1, encoderDir: -1, layoutIndex: -1, layoutOption: -1,
+  decal: false, labels: [], x2: 0, y2: 0, width2: 1, height2: 1,
+  rotation: 0, rotationX: 0, rotationY: 0, color: '',
+  textColor: [], textSize: [], nub: false, stepped: false, ghost: false,
+}
+
+const makeKey = (x: number, col: number): KleKey => ({ ...KEY_DEFAULTS, x, col })
 
 const makeLayout = () => ({
-  keys: [
-    { x: 0, y: 0, w: 1, h: 1, row: 0, col: 0, encoderIdx: -1, decal: false, labels: [] },
-    { x: 1, y: 0, w: 1, h: 1, row: 0, col: 1, encoderIdx: -1, decal: false, labels: [] },
-    { x: 2, y: 0, w: 1, h: 1, row: 0, col: 2, encoderIdx: -1, decal: false, labels: [] },
-  ],
+  keys: [makeKey(0, 0), makeKey(1, 1), makeKey(2, 2)],
 })
+
+// Column order a(0,0) < b(0,1) < c(0,2). Overriding c to logical (0,0) ties
+// it with a; the physical (row, col) tiebreak in sortKeysByViewMatrix then
+// keeps a first, pulling c ahead of the untouched b — see
+// view-matrix.test.ts's identical scenario for the ordering rationale.
+const REORDERING_VIEW_MATRIX = { '0,2': { row: 0, col: 0 } }
 
 describe('KeymapEditor — auto advance', () => {
   const onSetKey = vi.fn().mockResolvedValue(undefined)
@@ -328,5 +342,22 @@ describe('KeymapEditor — auto advance', () => {
     })
 
     expect(onSetKey).toHaveBeenCalledWith(0, 0, 0, 5)
+  })
+
+  it('advances following the view matrix order when a viewMatrix override is set', async () => {
+    render(<KeymapEditor {...defaultProps} autoAdvance={true} viewMatrix={REORDERING_VIEW_MATRIX} />)
+
+    // Select first key (0,0) — its effective position is unaffected by the
+    // override (only (0,2) is overridden), so the walk still starts here.
+    act(() => capturedOnKeyClick?.({ row: 0, col: 0 }))
+    expect(screen.getByText('[0,0]')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('kc-a'))
+    })
+
+    // Physical order would advance to (0,1); the view matrix override pulls
+    // (0,2) ahead of it, so the walk lands there instead.
+    expect(screen.getByText('[0,2]')).toBeInTheDocument()
   })
 })

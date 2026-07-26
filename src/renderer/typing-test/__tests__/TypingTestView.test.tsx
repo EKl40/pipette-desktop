@@ -13,6 +13,7 @@ import { DEFAULT_CONFIG } from '../types'
 function makeState(overrides: Partial<TypingTestState> = {}): TypingTestState {
   return {
     status: 'waiting',
+    runId: 'test-run',
     words: ['the', 'quick', 'brown'],
     currentWordIndex: 0,
     currentInput: '',
@@ -24,6 +25,13 @@ function makeState(overrides: Partial<TypingTestState> = {}): TypingTestState {
     incorrectChars: 0,
     currentQuote: null,
     wpmHistory: [],
+    lineBreaks: new Set(),
+    lineIndents: [],
+    romajiKeystrokes: '',
+    romajiCapable: false,
+    mistakes: {},
+    romajiSegmentErred: false,
+    missedPositions: [],
     ...overrides,
   }
 }
@@ -37,8 +45,6 @@ function renderView(props: Partial<Parameters<typeof TypingTestView>[0]> = {}) {
     remainingSeconds: null as number | null,
     config: DEFAULT_CONFIG,
     paused: false,
-    onRestart: vi.fn(),
-    onConfigChange: vi.fn(),
   }
   return render(
     <I18nextProvider i18n={i18n}>
@@ -51,6 +57,17 @@ describe('TypingTestView', () => {
   it('renders the view container', () => {
     renderView()
     expect(screen.getByTestId('typing-test-view')).toBeInTheDocument()
+  })
+
+  it('shows the stats row with "-" placeholders before measuring', () => {
+    // Stats bar is always present (no collapsing/layout shift); before a run
+    // is measured (waiting/countdown) every metric reads "-".
+    renderView({ state: makeState({ status: 'waiting', words: ['hello', 'world'] }) })
+    expect(screen.getByTestId('typing-test-wpm').textContent).toBe('-')
+    expect(screen.getByTestId('typing-test-kpm').textContent).toBe('-')
+    expect(screen.getByTestId('typing-test-accuracy').textContent).toBe('-')
+    expect(screen.getByTestId('typing-test-time').textContent).toBe('-')
+    expect(screen.getByTestId('typing-test-word-count').textContent).toBe('-')
   })
 
   it('cursor blinks in waiting state', () => {
@@ -69,10 +86,11 @@ describe('TypingTestView', () => {
     expect(cursor!.className).not.toContain('animate-blink')
   })
 
-  it('word container has fixed height to prevent layout shift', () => {
+  it('word container has a var-driven fixed-height window to prevent layout shift', () => {
     renderView({ state: makeState({ status: 'waiting' }) })
     const wordsContainer = screen.getByTestId('typing-test-words')
-    expect(wordsContainer.className).toContain('h-typing-display')
+    // All modes use the var-driven window (font/line settings are shared).
+    expect(wordsContainer.className).toContain('typing-multiline-window')
   })
 
   it('displays word elements when running', () => {
@@ -185,18 +203,13 @@ describe('TypingTestView', () => {
     expect(screen.getByTestId('typing-test-time').textContent).toBe('0:23')
   })
 
-  it('shows results panel and triggers onRestart when restart button clicked', () => {
-    const onRestart = vi.fn()
+  it('shows the results panel when finished', () => {
     renderView({
       state: makeState({ status: 'finished' }),
       wpm: 70,
       accuracy: 95,
-      onRestart,
     })
     expect(screen.getByTestId('typing-test-results')).toBeInTheDocument()
-    const restartBtn = screen.getByTestId('typing-test-restart')
-    fireEvent.click(restartBtn)
-    expect(onRestart).toHaveBeenCalledTimes(1)
   })
 
   it('displays current/total word count progress', () => {
@@ -226,166 +239,21 @@ describe('TypingTestView', () => {
   })
 })
 
-describe('TypingTestView mode tabs', () => {
-  it('renders mode tabs', () => {
-    renderView()
-    expect(screen.getByTestId('mode-words')).toBeInTheDocument()
-    expect(screen.getByTestId('mode-time')).toBeInTheDocument()
-    expect(screen.getByTestId('mode-quote')).toBeInTheDocument()
+describe('TypingTestView measurement toggle (hideStatsRow)', () => {
+  it('shows the live measurement row during a run when measurement is on', () => {
+    renderView({ hideStatsRow: false, state: makeState({ status: 'running', words: ['a'] }) })
+    expect(screen.getByTestId('typing-test-results')).toBeInTheDocument()
   })
 
-  it('highlights the active mode tab', () => {
-    renderView()
-    expect(screen.getByTestId('mode-words').className).toContain('text-accent')
-    expect(screen.getByTestId('mode-time').className).not.toContain('text-accent')
+  it('hides the live measurement row during a run when measurement is off', () => {
+    renderView({ hideStatsRow: true, state: makeState({ status: 'running', words: ['a'] }) })
+    expect(screen.queryByTestId('typing-test-results')).toBeNull()
   })
 
-  it('calls onConfigChange when mode tab clicked', () => {
-    const onConfigChange = vi.fn()
-    renderView({ onConfigChange })
-    fireEvent.click(screen.getByTestId('mode-time'))
-    expect(onConfigChange).toHaveBeenCalledTimes(1)
-    const arg = onConfigChange.mock.calls[0][0] as TypingTestConfig
-    expect(arg.mode).toBe('time')
-  })
-
-  it('shows word count options in words mode', () => {
-    renderView()
-    expect(screen.getByTestId('word-count-15')).toBeInTheDocument()
-    expect(screen.getByTestId('word-count-30')).toBeInTheDocument()
-    expect(screen.getByTestId('word-count-60')).toBeInTheDocument()
-    expect(screen.getByTestId('word-count-120')).toBeInTheDocument()
-  })
-
-  it('highlights the selected word count option with accent color', () => {
-    const config: TypingTestConfig = { mode: 'words', wordCount: 60, punctuation: false, numbers: false }
-    renderView({ config })
-    expect(screen.getByTestId('word-count-60').className).toContain('text-accent')
-    expect(screen.getByTestId('word-count-30').className).not.toContain('text-accent')
-  })
-
-  it('calls onConfigChange when word count option clicked', () => {
-    const onConfigChange = vi.fn()
-    renderView({ onConfigChange })
-    fireEvent.click(screen.getByTestId('word-count-60'))
-    expect(onConfigChange).toHaveBeenCalledTimes(1)
-    const arg = onConfigChange.mock.calls[0][0] as TypingTestConfig
-    expect(arg.mode).toBe('words')
-    if (arg.mode === 'words') {
-      expect(arg.wordCount).toBe(60)
-    }
-  })
-
-  it('shows duration options in time mode', () => {
-    const config: TypingTestConfig = { mode: 'time', duration: 30, punctuation: false, numbers: false }
-    renderView({ config })
-    expect(screen.getByTestId('duration-15')).toBeInTheDocument()
-    expect(screen.getByTestId('duration-30')).toBeInTheDocument()
-    expect(screen.getByTestId('duration-60')).toBeInTheDocument()
-    expect(screen.getByTestId('duration-120')).toBeInTheDocument()
-  })
-
-  it('shows quote length options in quote mode', () => {
-    const config: TypingTestConfig = { mode: 'quote', quoteLength: 'medium' }
-    renderView({ config })
-    expect(screen.getByTestId('quote-short')).toBeInTheDocument()
-    expect(screen.getByTestId('quote-medium')).toBeInTheDocument()
-    expect(screen.getByTestId('quote-long')).toBeInTheDocument()
-    expect(screen.getByTestId('quote-all')).toBeInTheDocument()
-  })
-})
-
-describe('TypingTestView toggles', () => {
-  it('shows punctuation and numbers toggles in words mode', () => {
-    renderView()
-    expect(screen.getByTestId('toggle-punctuation')).toBeInTheDocument()
-    expect(screen.getByTestId('toggle-numbers')).toBeInTheDocument()
-  })
-
-  it('shows punctuation and numbers toggles in time mode', () => {
-    const config: TypingTestConfig = { mode: 'time', duration: 30, punctuation: false, numbers: false }
-    renderView({ config })
-    expect(screen.getByTestId('toggle-punctuation')).toBeInTheDocument()
-    expect(screen.getByTestId('toggle-numbers')).toBeInTheDocument()
-  })
-
-  it('hides punctuation and numbers toggles in quote mode', () => {
-    const config: TypingTestConfig = { mode: 'quote', quoteLength: 'medium' }
-    renderView({ config })
-    expect(screen.queryByTestId('toggle-punctuation')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('toggle-numbers')).not.toBeInTheDocument()
-  })
-
-  it('highlights active punctuation toggle', () => {
-    const config: TypingTestConfig = { mode: 'words', wordCount: 30, punctuation: true, numbers: false }
-    renderView({ config })
-    expect(screen.getByTestId('toggle-punctuation').className).toContain('text-accent')
-  })
-
-  it('calls onConfigChange when punctuation toggle clicked', () => {
-    const onConfigChange = vi.fn()
-    renderView({ onConfigChange })
-    fireEvent.click(screen.getByTestId('toggle-punctuation'))
-    expect(onConfigChange).toHaveBeenCalledTimes(1)
-    const arg = onConfigChange.mock.calls[0][0] as TypingTestConfig
-    if (arg.mode === 'words') {
-      expect(arg.punctuation).toBe(true)
-    }
-  })
-})
-
-describe('TypingTestView toggle preservation', () => {
-  it('preserves punctuation/numbers when switching words -> quote -> time', () => {
-    const onConfigChange = vi.fn()
-    // Start in words mode with punctuation enabled
-    const config: TypingTestConfig = { mode: 'words', wordCount: 30, punctuation: true, numbers: true }
-    const { rerender } = render(
-      <I18nextProvider i18n={i18n}>
-        <TypingTestView
-          state={makeState()}
-          wpm={0}
-          accuracy={100}
-          elapsedSeconds={0}
-          remainingSeconds={null}
-          config={config}
-          paused={false}
-          onRestart={vi.fn()}
-          onConfigChange={onConfigChange}
-        />
-      </I18nextProvider>,
-    )
-
-    // Switch to quote mode
-    fireEvent.click(screen.getByTestId('mode-quote'))
-    const quoteConfig = onConfigChange.mock.calls[0][0] as TypingTestConfig
-    expect(quoteConfig.mode).toBe('quote')
-
-    // Rerender in quote mode
-    onConfigChange.mockClear()
-    rerender(
-      <I18nextProvider i18n={i18n}>
-        <TypingTestView
-          state={makeState()}
-          wpm={0}
-          accuracy={100}
-          elapsedSeconds={0}
-          remainingSeconds={null}
-          config={quoteConfig}
-          paused={false}
-          onRestart={vi.fn()}
-          onConfigChange={onConfigChange}
-        />
-      </I18nextProvider>,
-    )
-
-    // Switch to time mode - toggles should be preserved from before quote mode
-    fireEvent.click(screen.getByTestId('mode-time'))
-    const timeConfig = onConfigChange.mock.calls[0][0] as TypingTestConfig
-    expect(timeConfig.mode).toBe('time')
-    if (timeConfig.mode === 'time') {
-      expect(timeConfig.punctuation).toBe(true)
-      expect(timeConfig.numbers).toBe(true)
-    }
+  it('always shows the results when finished, even with measurement off', () => {
+    // The toggle only hides the in-run live metrics — finished results are absolute.
+    renderView({ hideStatsRow: true, state: makeState({ status: 'finished' }), wpm: 70, accuracy: 95 })
+    expect(screen.getByTestId('typing-test-results')).toBeInTheDocument()
   })
 })
 
@@ -415,6 +283,181 @@ describe('TypingTestView quote mode display', () => {
     })
     expect(screen.getByTestId('typing-test-results')).toBeInTheDocument()
     expect(screen.getByTestId('typing-test-quote-source').textContent).toContain('Test Book')
+  })
+})
+
+// Plan-typing-mistake-analysis Phase 1: the completion screen's "missed
+// characters" list, sourced from the just-finished run's state.mistakes.
+describe('TypingTestView mistakes list', () => {
+  it('renders the mistakes list, sorted by count DESC then key ASC, when the run finished with mistakes', () => {
+    renderView({
+      state: makeState({
+        status: 'finished',
+        mistakes: { a: 1, shi: 3, b: 3 },
+      }),
+      wpm: 50,
+      accuracy: 90,
+    })
+    const block = screen.getByTestId('typing-test-mistakes')
+    expect(block).toBeInTheDocument()
+    // count DESC first (shi/b tie at 3, broken by key ASC), then a (1).
+    expect(screen.getByTestId('typing-test-mistake-b').textContent).toBe('b:3')
+    expect(screen.getByTestId('typing-test-mistake-shi').textContent).toBe('shi:3')
+    expect(screen.getByTestId('typing-test-mistake-a').textContent).toBe('a:1')
+    const order = [...block.querySelectorAll('[data-testid^="typing-test-mistake-"]')].map((el) => el.getAttribute('data-testid'))
+    expect(order).toEqual(['typing-test-mistake-b', 'typing-test-mistake-shi', 'typing-test-mistake-a'])
+  })
+
+  it('renders nothing when the finished run had no mistakes', () => {
+    renderView({
+      state: makeState({ status: 'finished', mistakes: {} }),
+      wpm: 50,
+      accuracy: 100,
+    })
+    expect(screen.queryByTestId('typing-test-mistakes')).toBeNull()
+  })
+
+  it('does not render the mistakes list before the run finishes, even if mistakes were already tallied', () => {
+    renderView({
+      state: makeState({ status: 'running', mistakes: { a: 1 } }),
+      wpm: 50,
+      accuracy: 90,
+    })
+    expect(screen.queryByTestId('typing-test-mistakes')).toBeNull()
+  })
+
+  it('caps the list to the top 12 entries', () => {
+    const mistakes: Record<string, number> = {}
+    for (let i = 0; i < 20; i++) mistakes[`k${String(i).padStart(2, '0')}`] = 20 - i
+    renderView({
+      state: makeState({ status: 'finished', mistakes }),
+      wpm: 50,
+      accuracy: 90,
+    })
+    const block = screen.getByTestId('typing-test-mistakes')
+    expect(block.querySelectorAll('[data-testid^="typing-test-mistake-"]')).toHaveLength(12)
+  })
+})
+
+describe('TypingTestView controls row (state-based)', () => {
+  const fileImportConfig: TypingTestConfig = { mode: 'fileImport', textId: 'abc' }
+
+  it('shows Next Test (not Restart) before a run starts', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'waiting' }) })
+    expect(screen.getByTestId('typing-test-start')).toBeInTheDocument()
+    expect(screen.queryByTestId('typing-test-restart')).toBeNull()
+  })
+
+  it('shows Pause + Restart while running (fileImport)', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'running' }) })
+    expect(screen.getByTestId('typing-memory-pause')).toBeInTheDocument()
+    expect(screen.getByTestId('typing-test-restart')).toBeInTheDocument()
+  })
+
+  it('shows Resume + Restart while paused (fileImport)', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'paused' }) })
+    expect(screen.getByTestId('typing-memory-resume')).toBeInTheDocument()
+    expect(screen.getByTestId('typing-test-restart')).toBeInTheDocument()
+  })
+
+  it('shows Resume in the waiting state when a fileImport run is saved', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'waiting' }), hasSavedMemory: true })
+    expect(screen.getByTestId('typing-memory-resume')).toBeInTheDocument()
+  })
+
+  it('shows the result name field on finish for normal modes too', () => {
+    const wordsConfig: TypingTestConfig = { mode: 'words', wordCount: 30, punctuation: false, numbers: false }
+    renderView({ config: wordsConfig, state: makeState({ status: 'finished' }) })
+    expect(screen.getByTestId('typing-test-result-name')).toBeInTheDocument()
+  })
+
+  it('shows the Complete message on the finished screen', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'finished' }) })
+    expect(screen.getByTestId('typing-test-complete')).toBeInTheDocument()
+  })
+
+  it('hides the Complete message while running', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'running' }) })
+    expect(screen.queryByTestId('typing-test-complete')).toBeNull()
+  })
+
+  it('never shows Resume on the finished screen, even with a saved memory', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'finished' }), hasSavedMemory: true })
+    expect(screen.queryByTestId('typing-memory-resume')).toBeNull()
+    expect(screen.getByTestId('typing-test-result-name')).toBeInTheDocument()
+    expect(screen.getByTestId('typing-test-start')).toBeInTheDocument()
+  })
+})
+
+describe('TypingTestView fileImport mode result naming', () => {
+  const fileImportConfig: TypingTestConfig = { mode: 'fileImport', textId: 'abc' }
+
+  it('shows an inline name field (placeholder Unnamed) instead of the quote source', () => {
+    renderView({
+      config: fileImportConfig,
+      state: makeState({ status: 'finished', currentQuote: { id: 1, text: 'x', source: 'code', length: 1 } }),
+    })
+    expect(screen.queryByTestId('typing-test-quote-source')).toBeNull()
+    const field = screen.getByTestId('typing-test-result-name')
+    expect(field.textContent).toBe('Unnamed')
+  })
+
+  it('shows both WPM and KPM in fileImport mode', () => {
+    renderView({
+      config: fileImportConfig,
+      state: makeState({ status: 'running' }),
+      wpm: 24,
+      kpm: 120,
+    })
+    expect(screen.getByTestId('typing-test-wpm').textContent).toBe('24')
+    expect(screen.getByTestId('typing-test-kpm').textContent).toBe('120')
+  })
+
+  it('preserves leading indentation per line (display only)', () => {
+    renderView({
+      config: fileImportConfig,
+      state: makeState({
+        status: 'running',
+        words: ['def', 'x'],
+        lineBreaks: new Set([0]),
+        lineIndents: ['', '  '],
+      }),
+    })
+    // First line has no indent; second line keeps its two-space indent.
+    expect(screen.queryByTestId('line-indent-0')).toBeNull()
+    expect(screen.getByTestId('line-indent-1').textContent).toBe('  ')
+  })
+
+  it('counts fileImport progress by character, the word gap included', () => {
+    // "AAA AA" -> 3 + 2 + 1 separator = 6 characters total.
+    renderView({
+      config: fileImportConfig,
+      state: makeState({ status: 'running', words: ['AAA', 'AA'], currentWordIndex: 1, currentInput: '' }),
+    })
+    // 1 word done (3 chars) + 1 separator passed = 4 / 6.
+    expect(screen.getByTestId('typing-test-word-count').textContent).toBe('4 / 6')
+  })
+
+  it('hides the words/time/quote settings bar in fileImport mode', () => {
+    renderView({ config: fileImportConfig, state: makeState({ status: 'running' }) })
+    expect(screen.queryByTestId('mode-words')).toBeNull()
+    expect(screen.queryByTestId('mode-time')).toBeNull()
+    expect(screen.queryByTestId('mode-quote')).toBeNull()
+  })
+
+  it('names the finished result on commit', () => {
+    const onNameResult = vi.fn()
+    renderView({
+      config: fileImportConfig,
+      state: makeState({ status: 'finished' }),
+      onNameResult,
+    })
+    // Click opens the naming modal; type and Save commits.
+    fireEvent.click(screen.getByTestId('typing-test-result-name'))
+    const input = screen.getByTestId('result-name-modal-input')
+    fireEvent.change(input, { target: { value: 'QWERTY baseline' } })
+    fireEvent.click(screen.getByTestId('result-name-modal-save'))
+    expect(onNameResult).toHaveBeenCalledWith('QWERTY baseline')
   })
 })
 
@@ -472,6 +515,115 @@ describe('TypingTestView IME space key', () => {
   })
 })
 
+describe('TypingTestView romaji guide', () => {
+  it('does not render the guide row when romajiGuide is null', () => {
+    renderView({ state: makeState({ status: 'running', words: ['あい'] }) })
+    expect(screen.queryByTestId('typing-test-romaji-guide')).toBeNull()
+  })
+
+  it('renders typed and remaining romaji, and rewrites on prop changes', () => {
+    const { rerender } = renderView({
+      state: makeState({ status: 'running', words: ['あい'] }),
+      romajiGuide: { typed: '', remaining: 'ai', kanaCompleted: 0, lookahead: [], showRow: true },
+    })
+    let guide = screen.getByTestId('typing-test-romaji-guide')
+    expect(guide.textContent).toBe('ai')
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TypingTestView
+          state={makeState({ status: 'running', words: ['あい'] })}
+          wpm={0}
+          accuracy={100}
+          elapsedSeconds={0}
+          remainingSeconds={null}
+          config={DEFAULT_CONFIG}
+          paused={false}
+          romajiGuide={{ typed: 'a', remaining: 'i', kanaCompleted: 1, lookahead: [], showRow: true }}
+        />
+      </I18nextProvider>,
+    )
+    guide = screen.getByTestId('typing-test-romaji-guide')
+    expect(guide.textContent).toBe('ai')
+    expect(guide.querySelector('.text-success')?.textContent).toBe('a')
+    expect(guide.querySelector('.text-content-muted')?.textContent).toBe('i')
+  })
+
+  it('renders the lookahead words, space-separated, after typed/remaining', () => {
+    renderView({
+      state: makeState({ status: 'running', words: ['あい', 'かめ', 'いぬ'] }),
+      romajiGuide: { typed: 'a', remaining: 'i', kanaCompleted: 1, lookahead: ['kame', 'inu'], showRow: true },
+    })
+    const guide = screen.getByTestId('typing-test-romaji-guide')
+    const lookaheadSpans = screen.getAllByTestId('typing-test-romaji-lookahead')
+    expect(lookaheadSpans).toHaveLength(2)
+    expect(lookaheadSpans[0].textContent).toBe(' kame')
+    expect(lookaheadSpans[1].textContent).toBe(' inu')
+    expect(guide.textContent).toBe('ai kame inu')
+  })
+
+  it('does not render any lookahead span when lookahead is empty', () => {
+    renderView({
+      state: makeState({ status: 'running', words: ['あい'] }),
+      romajiGuide: { typed: '', remaining: 'ai', kanaCompleted: 0, lookahead: [], showRow: true },
+    })
+    expect(screen.queryByTestId('typing-test-romaji-lookahead')).toBeNull()
+  })
+
+  it('shows the IME hint once a composition event fires in romaji mode', () => {
+    renderView({
+      state: makeState({ status: 'running', words: ['あい'] }),
+      romajiGuide: { typed: '', remaining: 'ai', kanaCompleted: 0, lookahead: [], showRow: true },
+    })
+    expect(screen.queryByTestId('typing-test-romaji-ime-hint')).toBeNull()
+    const textarea = screen.getByLabelText('IME input') as HTMLTextAreaElement
+    fireEvent.compositionStart(textarea)
+    expect(screen.getByTestId('typing-test-romaji-ime-hint')).toBeInTheDocument()
+  })
+
+  it('does not show the IME hint outside romaji mode', () => {
+    renderView({ state: makeState({ status: 'running', words: ['hello'] }) })
+    const textarea = screen.getByLabelText('IME input') as HTMLTextAreaElement
+    fireEvent.compositionStart(textarea)
+    expect(screen.queryByTestId('typing-test-romaji-ime-hint')).toBeNull()
+  })
+
+  it('tracks the Font setting via --tt-font, same as the reading window', () => {
+    renderView({
+      fontSize: 40,
+      state: makeState({ status: 'running', words: ['あい'] }),
+      romajiGuide: { typed: '', remaining: 'ai', kanaCompleted: 0, lookahead: [], showRow: true },
+    })
+    const guide = screen.getByTestId('typing-test-romaji-guide')
+    expect(guide.style.getPropertyValue('--tt-font')).toBe('40')
+    const typedRemaining = guide.querySelector('.typing-romaji-guide-text')
+    expect(typedRemaining).not.toBeNull()
+    // The IME hint stays a fixed small size, not tied to --tt-font.
+    expect(guide.querySelector('[data-testid="typing-test-romaji-ime-hint"]')).toBeNull()
+  })
+
+  it('hides the guide row entirely when showRow is false and no IME hint is active', () => {
+    renderView({
+      state: makeState({ status: 'running', words: ['あい'] }),
+      romajiGuide: { typed: '', remaining: 'ai', kanaCompleted: 0, lookahead: [], showRow: false },
+    })
+    expect(screen.queryByTestId('typing-test-romaji-guide')).toBeNull()
+  })
+
+  it('shows only the IME hint (no spelling row) when showRow is false but the IME is detected', () => {
+    renderView({
+      state: makeState({ status: 'running', words: ['あい'] }),
+      romajiGuide: { typed: '', remaining: 'ai', kanaCompleted: 0, lookahead: [], showRow: false },
+    })
+    const textarea = screen.getByLabelText('IME input') as HTMLTextAreaElement
+    fireEvent.compositionStart(textarea)
+    const guide = screen.getByTestId('typing-test-romaji-guide')
+    expect(screen.getByTestId('typing-test-romaji-ime-hint')).toBeInTheDocument()
+    expect(guide.querySelector('.typing-romaji-guide-text')).toBeNull()
+  })
+
+})
+
 describe('TypingTestView paused overlay', () => {
   it('shows paused overlay when paused and running', () => {
     renderView({
@@ -495,5 +647,62 @@ describe('TypingTestView paused overlay', () => {
       paused: true,
     })
     expect(screen.queryByTestId('typing-test-paused')).not.toBeInTheDocument()
+  })
+})
+
+describe('TypingTestView — imported fileImport text (line breaks)', () => {
+  it('renders one row per logical line with ⏎ at line ends, and uses the 4-line window', () => {
+    const { container } = renderView({
+      state: makeState({
+        status: 'running',
+        words: ['a', 'b', 'c', 'd'],
+        currentInput: '',
+        lineBreaks: new Set([1]),
+      }),
+    })
+    // Two logical lines: [a b] / [c d].
+    const rows = container.querySelectorAll('[data-line-row]')
+    expect(rows).toHaveLength(2)
+    // ⏎ marker only after the non-final line.
+    expect(container.textContent).toContain('⏎')
+    expect(container.querySelectorAll('[data-line-row]')[0].textContent).toContain('⏎')
+    expect(container.querySelectorAll('[data-line-row]')[1].textContent).not.toContain('⏎')
+    // Imported text uses the var-driven multiline window.
+    expect(screen.getByTestId('typing-test-words').className).toContain('typing-multiline-window')
+  })
+
+  it('applies font size and line count as CSS vars on the fileImport window', () => {
+    renderView({
+      displayLines: 6,
+      fontSize: 32,
+      state: makeState({ status: 'running', words: ['a', 'b', 'c', 'd'], lineBreaks: new Set([1]) }),
+    })
+    const win = screen.getByTestId('typing-test-words')
+    expect(win.style.getPropertyValue('--tt-font')).toBe('32')
+    expect(win.style.getPropertyValue('--tt-lines')).toBe('6')
+  })
+
+  it('shows character progress (not word/line progress) in the stats bar', () => {
+    renderView({
+      config: { mode: 'fileImport', textId: 'x' },
+      state: makeState({
+        status: 'running',
+        words: ['a', 'b', 'c', 'd'],
+        currentWordIndex: 2,
+        lineBreaks: new Set([1]),
+      }),
+    })
+    // total = 4 word chars + 3 separators = 7. Done: 2 words (2 chars) + 2
+    // separators passed = 4 → "4 / 7".
+    expect(screen.getByTestId('typing-test-word-count').textContent).toBe('4 / 7')
+  })
+
+  it('keeps the flat word-flow layout (no line rows) when there are no line breaks', () => {
+    const { container } = renderView({
+      state: makeState({ status: 'running', words: ['a', 'b'], lineBreaks: new Set() }),
+    })
+    expect(container.querySelectorAll('[data-line-row]')).toHaveLength(0)
+    // Flat word-flow still uses the shared var-driven window (no line rows).
+    expect(screen.getByTestId('typing-test-words').className).toContain('typing-multiline-window')
   })
 })

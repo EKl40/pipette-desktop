@@ -1,5 +1,5 @@
 {
-  "version": "0.1.4",
+  "version": "0.1.43",
   "name": "English",
   "common": {
     "save": "Save",
@@ -27,6 +27,7 @@
     "exported": "Exported",
     "imported": "Imported",
     "load": "Load",
+    "confirmLoad": "Load?",
     "labelPlaceholder": "Label",
     "noLabel": "(No label)",
     "synced": "Synced",
@@ -35,7 +36,15 @@
     "done": "Done",
     "findOnHub": "Find on Hub",
     "searchPlaceholder": "Search Pipette Hub (type 2 or more characters)...",
-    "findOnHubHint": "Browse uploaded files on <hub>Pipette Hub</hub>."
+    "findOnHubHint": "Browse uploaded files on <hub>Pipette Hub</hub>.",
+    "sortByName": "Name",
+    "importing": "Importing...",
+    "importedNamed": "Imported {{name}}",
+    "updatedNamed": "Updated {{name}}",
+    "importBatchFailed_one": "{{count}} file could not be imported:",
+    "importBatchFailed_other": "{{count}} files could not be imported:",
+    "importSummary_one": "Imported {{count}} file (success {{success}}, failure {{failure}})",
+    "importSummary_other": "Imported {{count}} files (success {{success}}, failure {{failure}})"
   },
   "app": {
     "title": "Pipette",
@@ -66,6 +75,14 @@
   },
   "editor": {
     "autoAdvance": "Auto Move",
+    "viewMatrix": {
+      "label": "View Matrix",
+      "edit": "Edit",
+      "done": "Done",
+      "rowLabel": "Row",
+      "colLabel": "Col",
+      "blankOption": "—"
+    },
     "keymap": {
       "title": "Keymap",
       "layer": "Layer {{number}}",
@@ -90,6 +107,7 @@
       "previousLayers": "Previous layers",
       "nextLayers": "Next layers",
       "layerN": "Layer {{n}}",
+      "layerPreview": "Preview - {{label}}",
       "undo": "Undo",
       "redo": "Redo",
       "zoomIn": "Zoom In",
@@ -249,22 +267,109 @@
       "switchToTypingMode": "Typing Test",
       "exitTypingMode": "Exit Typing Test",
       "restart": "Restart",
+      "nextTest": "Next Test",
+      "complete": "Complete",
+      "collapseSettings": "Collapse settings",
+      "expandSettings": "Expand settings",
+      "keymapToggle": "Keymap",
+      "statsToggle": "Measurement",
+      "controlsToggle": "Operation",
+      "hideKeymap": "Hide keymap",
+      "showKeymap": "Show keymap",
+      "hideStats": "Hide measurement",
+      "showStats": "Show measurement",
+      "hideControls": "Hide operation",
+      "showControls": "Show operation",
+      "saveUnnamedToggle": "Save Unnamed",
+      "enableSaveUnnamed": "Auto-save results without a name",
+      "disableSaveUnnamed": "Require a name to save results",
+      "section": {
+        "settings": "Settings",
+        "data": "Data",
+        "view": "View"
+      },
+      "compare": {
+        "button": "Compare",
+        "title": "Comparison",
+        "previous": "Previous",
+        "best": "Best",
+        "average": "Average",
+        "pinned": "Result",
+        "off": "Off",
+        "noResults": "No results to pin yet",
+        "colName": "Name",
+        "colKeyboard": "Keyboard",
+        "colTime": "Time"
+      },
       "wpm": "WPM",
+      "kpm": "KPM",
       "accuracy": "Accuracy",
       "time": "Time",
       "words": "Words",
+      "lines": "Lines",
+      "chars": "Chars",
+      "fontSize": "Font",
       "correct": "Correct",
       "incorrect": "Incorrect",
-      "finished": "Complete",
       "loading": "Loading...",
       "wordCount": "{{current}} / {{total}}",
       "mode": {
         "words": "words",
         "time": "time",
-        "quote": "quote"
+        "quote": "quote",
+        "fileImport": "text",
+        "lines": "Lines"
       },
       "punctuation": "punctuation",
       "numbers": "numbers",
+      "romaji": {
+        "toggle": "Romaji",
+        "imeHint": "Turn off your OS IME to type in romaji input mode"
+      },
+      "romajiSettings": {
+        "title": "Romaji Settings",
+        "caseLabel": "Displayed case",
+        "case": {
+          "upper": "ROMAJI",
+          "capital": "Romaji",
+          "lower": "romaji"
+        },
+        "guideWordsLabel": "Words shown",
+        "guideLabel": "Guide spelling pattern",
+        "guideHint": "Display only — typing any accepted pattern is still correct",
+        "inputLabel": "Accepted input patterns",
+        "inputHint": "Turned-off patterns are rejected; at least one base system stays enabled",
+        "style": {
+          "hepburn": "Hepburn (shi/chi)",
+          "kunrei": "Kunrei (si/ti)",
+          "c": "C notation (ca)",
+          "q": "Q notation (qu)",
+          "digraph": "Digraph (jya)",
+          "xSmall": "Small x (xa)",
+          "lSmall": "Small l (la)",
+          "w": "W notation (wi)",
+          "v": "V notation (va)",
+          "f": "F notation (fa)",
+          "ye": "YE notation (ye)",
+          "xn": "Nasal x (xn)",
+          "nApos": "N separator (n')"
+        },
+        "styleTip": {
+          "hepburn": "し:shi じ:ji ち:chi つ:tsu ふ:fu しゃ:sha しゅ:shu しょ:sho じゃ:ja じゅ:ju じょ:jo ちゃ:cha ちゅ:chu ちょ:cho\nっし:sshi っち:cchi っち:tchi っつ:ttsu っふ:ffu っしゃ:ssha っちゃ:tcha っじゃ:jja",
+          "kunrei": "し:si じ:zi ち:ti つ:tu ふ:hu しゃ:sya しゅ:syu しょ:syo じゃ:zya じゅ:zyu じょ:zyo ちゃ:tya ちゅ:tyu ちょ:tyo\nっし:ssi っち:tti っつ:ttu っふ:hhu っしゃ:ssya っちゃ:ttya っじゃ:zzya",
+          "c": "か:ca く:cu こ:co し:ci せ:ce ちゃ:cya ちゅ:cyu ちょ:cyo ちぃ:cyi ちぇ:cye",
+          "q": "く:qu くぁ:qa くぃ:qi くぇ:qe くぉ:qo",
+          "digraph": "じゃ:jya じゅ:jyu じょ:jyo じぃ:jyi じぇ:jye",
+          "xSmall": "ぁ:xa ぃ:xi ぅ:xu ぇ:xe ぉ:xo ゃ:xya ゅ:xyu ょ:xyo ゎ:xwa ゕ:xka ゖ:xke ぃ:xyi ぇ:xye っ:xtu っ:xtsu",
+          "lSmall": "ぁ:la ぃ:li ぅ:lu ぇ:le ぉ:lo ゃ:lya ゅ:lyu ょ:lyo ゎ:lwa ゕ:lka ゖ:lke ぃ:lyi ぇ:lye っ:ltu っ:ltsu",
+          "w": "うぃ:wi うぃ:whi うぇ:we うぇ:whe うぉ:who うぁ:wha う:wu う:whu",
+          "v": "ゔ:vu ゔぁ:va ゔぃ:vi ゔぇ:ve ゔぉ:vo ゔゃ:vya ゔゅ:vyu ゔょ:vyo ゔぃ:vyi ゔぇ:vye",
+          "f": "ふぁ:fa ふぃ:fi ふぇ:fe ふぉ:fo ふゅ:fyu ふゃ:fya ふょ:fyo ふぁ:hwa ふぃ:hwi ふぇ:hwe ふぉ:hwo ふゅ:hwyu",
+          "ye": "いぇ:ye",
+          "xn": "ん:xn",
+          "nApos": "ん:n'"
+        }
+      },
       "quoteLength": {
         "short": "short",
         "medium": "medium",
@@ -272,12 +377,15 @@
         "all": "all"
       },
       "quoteSource": "-- {{source}}",
+      "nameResult": "Name this result",
+      "nameModal": {
+        "title": "Name result"
+      },
       "viewOnly": "Typing View",
       "exitViewOnly": "Exit Typing View",
       "alwaysOnTop": "top",
       "recordStart": "Start",
       "recordStop": "Stop",
-      "viewAnalytics": "View Analytics",
       "tab": {
         "window": "Window",
         "rec": "REC"
@@ -286,13 +394,20 @@
         "label": "Monitor App"
       },
       "heatmap": {
-        "legend": "Heatmap: last 1 hour"
+        "legend": "Heatmap: last {{minutes}} min"
       },
       "closeHint": "Click to open menu",
       "recordingIndicator": "Recording",
       "resetSize": "Default Size",
       "fitSize": "Fit Size",
-      "baseLayer": "Base Layer",
+      "baseLayer": "Layer",
+      "modeLabel": "Data Source",
+      "pattern": "Pattern",
+      "units": "Units",
+      "unitsWords": "Units(Words)",
+      "unitsSec": "Units(Sec)",
+      "unitsLines": "Units(Lines)",
+      "optionLabel": "Option",
       "baseLayerShort": "Base",
       "heatmapWindow": "Heatmap window (minutes)",
       "heatmapWindowShort": "HeatMap",
@@ -317,14 +432,50 @@
       "paused": "Window lost focus",
       "layerNote": "Only MO / LT / LM layer switches are tracked. Other layer keys and advanced features may not be reflected.",
       "language": {
-        "title": "Languages",
+        "title": "Data Source",
         "searchPlaceholder": "Search languages...",
         "downloaded": "Downloaded",
         "available": "Available",
         "noResults": "No matching languages",
         "words": "{{count}} words",
+        "lines": "{{count}} lines",
         "loadingLanguage": "Loading language...",
-        "downloadFailed": "Download failed"
+        "downloadFailed": "Download failed",
+        "tabMonkeytype": "MonkeyType",
+        "tabTatoeba": "Tatoeba",
+        "tabFileImport": "File Import",
+        "tabAozora": "Aozora Bunko",
+        "import": "Import UTF-8 text file",
+        "importEmpty": "No imported texts yet",
+        "importFailed": "Import failed",
+        "importErrorNotUtf8": "Only UTF-8 encoded text files are supported",
+        "importErrorTooLarge": "File is too large (max 5 MB)",
+        "importErrorEmpty": "The file has no typeable text",
+        "importOverwritePrompt": "\"{{name}}\" already exists. Overwrite?",
+        "confirmOverwrite": "Overwrite",
+        "fileImportText": "Imported text",
+        "datasetUpdateAvailable": "An update is available for the word lists.",
+        "datasetUpdate": "Update",
+        "datasetUpdating": "Updating…",
+        "catalogSearchPlaceholder": "Search title or author...",
+        "catalogImportAction": "Import",
+        "estimatedChars": "~{{count}} chars",
+        "catalogImportErrorDuplicate": "A text with this title already exists",
+        "catalogImportErrorGeneric": "Download failed ({{code}})",
+        "catalogLoadFailed": "Failed to load the catalog. Check your connection and try again.",
+        "kanaRowLabel": "row",
+        "kanaRowGroupAriaLabel": "Filter by author reading, gojuon row",
+        "kanaColumnGroupAriaLabel": "Filter by author reading, gojuon column",
+        "romajiBadge": "Romaji",
+        "romajiFilter": "Show romaji-input entries only"
+      },
+      "memory": {
+        "pause": "Pause",
+        "resumeButton": "Resume",
+        "resumeTitle": "Resume saved test?",
+        "resumeBody": "You paused at word {{current}} of {{total}}. Continue from there, or start over?",
+        "resume": "Resume",
+        "restart": "Start over"
       },
       "history": {
         "title": "History",
@@ -334,11 +485,30 @@
         "totalTests": "Tests",
         "avgAccuracy": "Avg Acc",
         "date": "Date",
+        "name": "Name",
+        "unnamed": "Unnamed",
         "mode": "Mode",
+        "tabMonkeytype": "MonkeyType",
+        "tabFileImport": "File Import",
+        "tabText": "Text",
         "noResults": "No results yet",
         "pb": "PB",
         "allModes": "All",
-        "exportCsv": "Export CSV"
+        "filterMode": "Filter by mode",
+        "filterText": "Filter by text",
+        "exportCsv": "Export CSV",
+        "delete": "Delete",
+        "accuracyTrendTitle": "Accuracy Trend",
+        "conditionFilterLabel": "Filter by condition",
+        "conditionPunctuation": "+punct",
+        "conditionNumbers": "+nums",
+        "conditionRomaji": "+romaji",
+        "conditionTatoeba": "Tatoeba",
+        "mistakeRankingTitle": "Most missed",
+        "mistakeRankingEmpty": "No mistakes recorded yet"
+      },
+      "results": {
+        "mistakesLabel": "Missed"
       }
     }
   },
@@ -400,8 +570,12 @@
       "keyOverrideKeys": "Key",
       "altRepeatKeyKeys": "Key",
       "capsWord": "Caps Word",
+      "tappingTerm": "Dynamic Tapping Term",
+      "autocorrect": "Autocorrect",
+      "leader": "Leader",
       "boot": "Boot",
       "osm": "One-Shot Modifiers",
+      "oneShotControl": "One-Shot Control",
       "modMask": "Modifier Masks",
       "modTap": "Mod-Tap",
       "modSpecial": "Special",
@@ -455,7 +629,6 @@
     "autoAdvance": "Auto Move",
     "locked": "Locked",
     "unlocked": "Unlocked",
-    "keyTester": "Key Tester",
     "sync": {
       "pending": "Pending",
       "syncing": "Syncing...",
@@ -585,7 +758,6 @@
     "defaultLayout": "Key Labels",
     "defaultAutoAdvance": "Auto Move",
     "defaultLayerPanelOpen": "Layer List Open",
-    "defaultBasicViewType": "Basic Tab View",
     "defaultSplitKeyMode": "Separate Shift in Key Picker",
     "defaultQuickSelect": "Instant Key Selection",
     "basicViewTypeList": "LIST",
@@ -605,7 +777,15 @@
       "licenseValue": "GPL-3.0-or-later"
     },
     "zoomLevel": "Zoom",
-    "zoomLevelWarning": "Changing this may cause layout issues. Use at your own risk."
+    "zoomLevelWarning": "Changing this may cause layout issues. Use at your own risk.",
+    "autoLaunch": "Launch at Login",
+    "autoLaunchDescription": "Start Pipette automatically when you sign in",
+    "trayResident": "Stay in System Tray",
+    "trayResidentDescription": "Closing the window keeps Pipette running in the tray",
+    "restoreLastSession": "Restore Last Session",
+    "restoreLastSessionDescription": "Reconnect the last keyboard and screen at launch",
+    "startInTray": "Start Hidden in Tray",
+    "startInTrayDescription": "Launch resident in the system tray without opening the window"
   },
   "analyze": {
     "noKeyboards": "No typing data yet.",
@@ -949,10 +1129,18 @@
         "slow": "Pair interval",
         "fingerIki": "Finger IKI"
       },
+      "cappedNotice": "Computed from the {{limit}} most frequent pairs — rare pairs may be missing.",
+      "gramToggle": {
+        "ariaLabel": "N-gram size",
+        "bigram": "2-gram",
+        "trigram": "3-gram"
+      },
       "column": {
         "pair": "Pair",
         "count": "Count",
         "avgIki": "Avg IKI",
+        "avgIkiTrigramTooltip": "Average of the two intervals between the three keystrokes — not the total time across all three.",
+        "sd": "SD",
         "p95": "p95 IKI"
       },
       "fingerIki": {
@@ -978,6 +1166,17 @@
       "bondToggle": "Bond Layer {{i}} with another group",
       "noLayout": "Layout data not available for this snapshot.",
       "noSnapshot": "No keymap snapshot recorded for this range. Start a record session to capture one.",
+      "modeToggle": {
+        "ariaLabel": "Heatmap colouring mode",
+        "count": "Count",
+        "speed": "Speed"
+      },
+      "speed": {
+        "colAvgIki": "Avg IKI",
+        "empty": "No reach-speed data in this range yet.",
+        "minSampleNote": "Keys reached fewer than {{n}} times are left uncoloured.",
+        "cappedNotice": "Computed from the {{limit}} most frequent pairs — rare pairs may be missing."
+      },
       "ranking": {
         "frequentUsedN": "Top N",
         "frequentUsed": "Frequently Used",
@@ -1167,6 +1366,17 @@
         "none": "All apps",
         "multi": "{{first}} +{{rest}}"
       },
+      "typingTest": "TypingTest",
+      "typingTestOption": {
+        "none": "All tests",
+        "multi": "{{first}} +{{rest}}"
+      },
+      "run": "Results",
+      "runOption": {
+        "none": "All runs",
+        "multi": "{{first}} +{{rest}}"
+      },
+      "dimensionLabel": "Filter by App or TypingTest",
       "unit": "Display",
       "unitOption": {
         "sec": "Seconds",
@@ -1248,7 +1458,12 @@
         "day3": "3 days",
         "week1": "1 week",
         "month1": "1 month"
-      }
+      },
+      "sourceLabel": "Source",
+      "editConditions": "Edit filter conditions",
+      "chipAriaLabel": "Edit filter conditions",
+      "sourceDisabledByApp": "By App combines every source, so this filter is disabled.",
+      "distributionDisabledNote": "Distribution view always uses this device, so this filter is disabled."
     }
   },
   "dataModal": {
@@ -1263,7 +1478,7 @@
     "noSaves": "No saves found",
     "importExportDesc": "Import/Export all local data (keyboards, favorites, settings)",
     "deleteAll": "Delete All Data",
-    "deleteAllConfirm": "This will delete all data including synced data.",
+    "deleteAllConfirm": "This deletes everything tied to this keyboard — keymaps, typing history & analytics, and settings — including synced data.",
     "syncNoOrphans": "All synced data is available locally",
     "resetAppSettings": "Reset application settings",
     "typing": {
@@ -1304,7 +1519,7 @@
     "title": "Menu",
     "tabData": "Data",
     "tabSave": "Save",
-    "tabTools": "Settings",
+    "tabTools": "Settings / Import",
     "tabLayout": "Layout",
     "basicViewType": "Basic Tab View",
     "splitKeyMode": "Separate Shift in Key Picker",
@@ -1346,6 +1561,30 @@
     "displayNameSaveFailed": "Failed to save display name",
     "displayNameTaken": "This display name is already taken",
     "openInBrowser": "Open",
+    "uploadConfirm": {
+      "title": {
+        "create": "Upload to Hub",
+        "update": "Update Hub post"
+      },
+      "visibilityPublic": "Public",
+      "publicDesc": "Listed and searchable on Hub.",
+      "visibilityPrivate": "Private (unlisted)",
+      "privateDesc": "Shareable by secret link only. Not listed or searchable.",
+      "expiryLabel": "Link expires",
+      "expiryDays_one": "{{count}} day",
+      "expiryDays_other": "{{count}} days",
+      "expiresAtPreview": "Expires {{date}}",
+      "warnUrlExpiryChange": "Updating replaces the post — the share link and expiry will change.",
+      "confirm": "Confirm",
+      "cancel": "Cancel"
+    },
+    "private": {
+      "badgePublic": "Hub (Public)",
+      "badgePrivate": "Hub (Private)",
+      "expiresAt": "Expires {{date}}",
+      "noExpiry": "No expiry",
+      "removeConfirm": "Remove from Hub? The private link stops working immediately."
+    },
     "needsDisplayName": "Set a display name in Settings to upload",
     "displayNameRequired": "Required to upload to Hub",
     "authDisplayNameConflict": "Your Google account name conflicts with an existing display name. Please choose a different display name to continue.",
@@ -1413,6 +1652,12 @@
     "actionDownload": "Download",
     "actionDelete": "Delete",
     "actionExport": ".json",
+    "typeKeymapWrite": "Keymap Write",
+    "typeViewOnly": "View Only",
+    "typeKeymapWriteShort": "Write",
+    "typeViewOnlyShort": "View",
+    "qwertyDefaultName": "QWERTY (Default)",
+    "qwertyDefaultShort": "Default",
     "hubRemoved": "(removed)",
     "errorDuplicate": "A label with the same name already exists",
     "errorImportFailed": "Failed to import key label",
@@ -1422,7 +1667,14 @@
     "missingTitle": "Key Label not found",
     "missingMessage": "The key label \"{{name}}\" is not installed. Showing keymap with QWERTY labels.",
     "missingHint": "You can download \"{{name}}\" from {{settings}} > {{tools}} > {{keyLabels}}, or from the keypicker overlay's Edit button.",
-    "missingClose": "Close"
+    "missingClose": "Close",
+    "keymapApply": {
+      "title": "Apply {{name}} to the Keymap?",
+      "saveRecommendation": "Save your current keymap first. Rewrite replaces keycodes on every layer and clears the undo/redo history; restoring your saved file is the only way back.",
+      "confirmApply": "Apply?",
+      "tabsLabel": "Keymap view",
+      "errorPartial": "Some keys could not be rewritten. The change stops here — restore from a previously saved .vil file or snapshot if needed."
+    }
   },
   "i18n": {
     "modalTitle": "Language Packs",

@@ -57,35 +57,69 @@ describe('TypingTestHistory', () => {
     expect(svgs.length).toBe(1) // cell trophy icon
   })
 
-  it('filters by mode when clicking filter buttons', () => {
+  it('filters by mode via the dropdown', () => {
     const results = [
       makeResult({ wpm: 80, mode: 'words', mode2: 30 }),
       makeResult({ wpm: 90, mode: 'time', mode2: 60 }),
       makeResult({ wpm: 70, mode: 'quote', mode2: 'short' }),
     ]
     renderWithI18n(<TypingTestHistory results={results} />)
+    const select = screen.getByTestId('history-filter-mode')
 
     // Default is 'all', all three should show
     expect(screen.getAllByText('80').length).toBeGreaterThan(0)
     expect(screen.getAllByText('90').length).toBeGreaterThan(0)
     expect(screen.getAllByText('70').length).toBeGreaterThan(0)
 
-    // Click 'words' filter
-    fireEvent.click(screen.getByTestId('history-filter-words'))
+    // Select 'words'
+    fireEvent.change(select, { target: { value: 'words' } })
     expect(screen.getAllByText('80').length).toBeGreaterThan(0)
     expect(screen.queryByText('90')).toBeNull()
     expect(screen.queryByText('70')).toBeNull()
 
-    // Click 'time' filter
-    fireEvent.click(screen.getByTestId('history-filter-time'))
+    // Select 'time'
+    fireEvent.change(select, { target: { value: 'time' } })
     expect(screen.queryByText('80')).toBeNull()
     expect(screen.getAllByText('90').length).toBeGreaterThan(0)
 
-    // Click 'all' to reset
-    fireEvent.click(screen.getByTestId('history-filter-all'))
+    // Back to 'all'
+    fireEvent.change(select, { target: { value: 'all' } })
     expect(screen.getAllByText('80').length).toBeGreaterThan(0)
     expect(screen.getAllByText('90').length).toBeGreaterThan(0)
     expect(screen.getAllByText('70').length).toBeGreaterThan(0)
+  })
+
+  it('filters the Text tab by imported text via the dropdown', () => {
+    const results = [
+      makeResult({ wpm: 80, mode: 'fileImport', mode2: 't1', fileImportTextName: 'Alpha' }),
+      makeResult({ wpm: 65, mode: 'fileImport', mode2: 't2', fileImportTextName: 'Beta' }),
+    ]
+    renderWithI18n(<TypingTestHistory results={results} />)
+
+    // Switch to the Text tab
+    fireEvent.click(screen.getByTestId('history-tab-text'))
+    expect(screen.getAllByText('80').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('65').length).toBeGreaterThan(0)
+
+    // Filter to a single text → the other text's row drops out
+    fireEvent.change(screen.getByTestId('history-filter-text'), { target: { value: 't1' } })
+    expect(screen.getAllByText('80').length).toBeGreaterThan(0)
+    expect(screen.queryByText('65')).toBeNull()
+  })
+
+  it('shows the Text-tab filter dropdown even with a single imported text', () => {
+    const results = [
+      makeResult({ wpm: 80, mode: 'fileImport', mode2: 't1', fileImportTextName: 'Alpha' }),
+    ]
+    renderWithI18n(<TypingTestHistory results={results} />)
+
+    // The Monkeytype tab never renders the text filter…
+    expect(screen.queryByTestId('history-filter-text')).toBeNull()
+
+    // …but the Text tab shows it as soon as one imported text exists, matching
+    // the always-present Normal mode filter.
+    fireEvent.click(screen.getByTestId('history-tab-text'))
+    expect(screen.getByTestId('history-filter-text')).toBeTruthy()
   })
 
   it('sorts by WPM when clicking header', () => {
@@ -101,7 +135,8 @@ describe('TypingTestHistory', () => {
       const trs = history.querySelectorAll('tbody tr')
       return Array.from(trs).map((tr) => {
         const cells = tr.querySelectorAll('td')
-        return Number(cells[1].textContent)
+        // Columns: Name, Date, WPM, Accuracy, Mode, Duration, PB
+        return Number(cells[2].textContent)
       })
     }
 
@@ -131,7 +166,7 @@ describe('TypingTestHistory', () => {
 
     // Other sortable headers should be 'none'
     const noneHeaders = Array.from(headers).filter((h) => h.getAttribute('aria-sort') === 'none')
-    expect(noneHeaders.length).toBe(4) // wpm, accuracy, mode, duration
+    expect(noneHeaders.length).toBe(5) // wpm, kpm, accuracy, mode, duration
   })
 
   it('computes stats from filtered data', () => {
@@ -142,7 +177,7 @@ describe('TypingTestHistory', () => {
     renderWithI18n(<TypingTestHistory results={results} />)
 
     // Filter to words only
-    fireEvent.click(screen.getByTestId('history-filter-words'))
+    fireEvent.change(screen.getByTestId('history-filter-mode'), { target: { value: 'words' } })
 
     // Stats should reflect only words results (best=100, tests=1)
     expect(screen.getAllByText('100').length).toBeGreaterThan(0)
@@ -164,13 +199,182 @@ describe('TypingTestHistory', () => {
     expect(onExportCsv).toHaveBeenCalledTimes(1)
 
     const csv = onExportCsv.mock.calls[0][0] as string
-    expect(csv).toContain('date,wpm,accuracy')
+    expect(csv).toContain('date,name,wpm,kpm,accuracy')
     expect(csv).toContain('2025-01-01T00:00:00Z')
     expect(csv).toContain('80')
+    // Default (MonkeyType tab, All) → 'monkeytype' slug
+    expect(onExportCsv.mock.calls[0][1]).toBe('monkeytype')
+  })
+
+  it('passes a filename slug reflecting the active filter selection', () => {
+    const onExportCsv = vi.fn()
+    const results = [
+      makeResult({ wpm: 80, mode: 'words', mode2: 30 }),
+      makeResult({ wpm: 70, mode: 'fileImport', mode2: 't1', fileImportTextName: 'Alpha' }),
+    ]
+    renderWithI18n(<TypingTestHistory results={results} onExportCsv={onExportCsv} />)
+
+    // MonkeyType tab, filter to words → 'monkeytype-words'
+    fireEvent.change(screen.getByTestId('history-filter-mode'), { target: { value: 'words' } })
+    fireEvent.click(screen.getByTestId('history-export-csv'))
+    expect(onExportCsv.mock.calls.at(-1)?.[1]).toBe('monkeytype-words')
+
+    // Text tab, all → 'text'
+    fireEvent.click(screen.getByTestId('history-tab-text'))
+    fireEvent.click(screen.getByTestId('history-export-csv'))
+    expect(onExportCsv.mock.calls.at(-1)?.[1]).toBe('text')
   })
 
   it('does not show export button when onExportCsv is not provided', () => {
     renderWithI18n(<TypingTestHistory results={[makeResult()]} />)
     expect(screen.queryByTestId('history-export-csv')).toBeNull()
+  })
+
+  it('renames a result via the naming modal and calls onRename', () => {
+    const date = '2025-02-02T03:04:05.000Z'
+    const onRename = vi.fn()
+    renderWithI18n(<TypingTestHistory results={[makeResult({ date })]} onRename={onRename} />)
+    // The name cell opens the naming modal; type and Save commits.
+    fireEvent.click(screen.getByTestId(`history-name-${date}`))
+    const input = screen.getByTestId('result-name-modal-input')
+    fireEvent.change(input, { target: { value: 'QWERTY baseline' } })
+    fireEvent.click(screen.getByTestId('result-name-modal-save'))
+    expect(onRename).toHaveBeenCalledWith(date, 'QWERTY baseline')
+  })
+
+  it('shows the imported-text name (not the textId) for fileImport-mode rows under the Text tab', () => {
+    const results = [makeResult({
+      mode: 'fileImport',
+      mode2: 'b286fff1-78d1-40d5-8ea0-6dd57561badf',
+      fileImportTextName: 'my-novel.txt',
+    })]
+    renderWithI18n(<TypingTestHistory results={results} />)
+    // FileImport rows live under the Text tab, not Monkeytype (the default).
+    fireEvent.click(screen.getByTestId('history-tab-text'))
+    // The name shows in the table row (the dropdown also lists it as an option).
+    expect(screen.getByText('my-novel.txt', { selector: 'td' })).toBeTruthy()
+    expect(screen.queryByText(/b286fff1/)).toBeNull()
+  })
+
+  it('shows a KPM column derived from chars and duration', () => {
+    // correctChars 100 over 30s → 100 * 60 / 30 = 200 KPM.
+    renderWithI18n(<TypingTestHistory results={[makeResult({ correctChars: 100, durationSeconds: 30 })]} />)
+    expect(screen.getAllByText('200').length).toBeGreaterThan(0)
+  })
+
+  it('separates Monkeytype and Text results into tabs', () => {
+    const results = [
+      makeResult({ wpm: 81, mode: 'words', mode2: 30 }),
+      makeResult({ wpm: 82, mode: 'fileImport', mode2: 'id-1', fileImportTextName: 'novel.txt' }),
+    ]
+    renderWithI18n(<TypingTestHistory results={results} />)
+    // Monkeytype tab (default): words result shown, fileImport hidden.
+    expect(screen.getAllByText('81').length).toBeGreaterThan(0)
+    expect(screen.queryByText('novel.txt')).toBeNull()
+    // Text tab: fileImport result shown, words hidden.
+    fireEvent.click(screen.getByTestId('history-tab-text'))
+    // The name shows in the table row (the dropdown also lists it as an option).
+    expect(screen.getByText('novel.txt', { selector: 'td' })).toBeTruthy()
+    expect(screen.queryByText('81')).toBeNull()
+  })
+
+  it('deletes a result only after confirmation', () => {
+    const date = '2025-03-03T01:02:03.000Z'
+    const onDelete = vi.fn()
+    renderWithI18n(<TypingTestHistory results={[makeResult({ date })]} onDelete={onDelete} />)
+    // First click asks for confirmation, does not delete yet.
+    fireEvent.click(screen.getByTestId(`history-delete-${date}`))
+    expect(onDelete).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId(`history-delete-confirm-${date}`))
+    expect(onDelete).toHaveBeenCalledWith(date)
+  })
+
+  it('cancels deletion when cancel is clicked', () => {
+    const date = '2025-04-04T01:02:03.000Z'
+    const onDelete = vi.fn()
+    renderWithI18n(<TypingTestHistory results={[makeResult({ date })]} onDelete={onDelete} />)
+    fireEvent.click(screen.getByTestId(`history-delete-${date}`))
+    fireEvent.click(screen.getByTestId(`history-delete-cancel-${date}`))
+    expect(onDelete).not.toHaveBeenCalled()
+    // Delete button is back.
+    expect(screen.getByTestId(`history-delete-${date}`)).toBeTruthy()
+  })
+
+  it('shows no delete button when no onDelete handler', () => {
+    renderWithI18n(<TypingTestHistory results={[makeResult({ date: 'd1' })]} />)
+    expect(screen.queryByTestId('history-delete-d1')).toBeNull()
+  })
+
+  it('renders the name read-only (no edit) when no onRename handler', () => {
+    renderWithI18n(<TypingTestHistory results={[makeResult({ date: 'x', name: 'kept' })]} />)
+    expect(screen.queryByTestId('history-name-x')).toBeNull()
+    // The name shows in the cell (and again in its hover tooltip bubble).
+    expect(screen.getAllByText('kept').length).toBeGreaterThan(0)
+  })
+
+  describe('Accuracy Trend condition selector', () => {
+    it('defaults to the latest run\'s condition and hides the chart below 2 same-condition runs', () => {
+      // Newest-first, mirroring the real prop order (useDevicePrefs prepends
+      // new runs) that the condition grouping relies on.
+      const results = [
+        makeResult({ wpm: 80, accuracy: 96, mode: 'time', mode2: 30, language: 'english', date: '2026-01-03T00:00:00.000Z' }),
+        makeResult({ wpm: 65, accuracy: 92, mode: 'words', mode2: 30, language: 'english', date: '2026-01-02T00:00:00.000Z' }),
+        makeResult({ wpm: 60, accuracy: 90, mode: 'words', mode2: 30, language: 'english', date: '2026-01-01T00:00:00.000Z' }),
+      ]
+      renderWithI18n(<TypingTestHistory results={results} />)
+      const select = screen.getByTestId('history-condition-filter') as HTMLSelectElement
+      expect(select.options.length).toBe(2)
+      // The latest run (2026-01-03) is 'time', so it's the default selection.
+      expect(select.value).toContain('time')
+      // Its condition only has 1 run, so the chart doesn't render yet.
+      expect(screen.queryByTestId('accuracy-trend-chart')).toBeNull()
+    })
+
+    it('renders the trend chart once the selected condition has 2+ runs', () => {
+      const results = [
+        makeResult({ wpm: 60, accuracy: 90, mode: 'words', mode2: 30, language: 'english', date: '2026-01-01T00:00:00.000Z' }),
+        makeResult({ wpm: 65, accuracy: 92, mode: 'words', mode2: 30, language: 'english', date: '2026-01-02T00:00:00.000Z' }),
+      ]
+      renderWithI18n(<TypingTestHistory results={results} />)
+      expect(screen.getByTestId('accuracy-trend-chart')).toBeTruthy()
+    })
+
+    it('switches the trend chart series when a different condition is selected', () => {
+      // Newest-first, mirroring the real prop order (useDevicePrefs prepends
+      // new runs) that the condition grouping relies on.
+      const results = [
+        makeResult({ wpm: 70, accuracy: 88, mode: 'time', mode2: 60, language: 'english', date: '2026-01-04T00:00:00.000Z' }),
+        makeResult({ wpm: 65, accuracy: 92, mode: 'words', mode2: 30, language: 'english', date: '2026-01-02T00:00:00.000Z' }),
+        makeResult({ wpm: 60, accuracy: 90, mode: 'words', mode2: 30, language: 'english', date: '2026-01-01T00:00:00.000Z' }),
+      ]
+      renderWithI18n(<TypingTestHistory results={results} />)
+      // Default (latest = time|60) has only 1 run → no chart yet.
+      expect(screen.queryByTestId('accuracy-trend-chart')).toBeNull()
+
+      const select = screen.getByTestId('history-condition-filter')
+      const wordsOption = Array.from((select as HTMLSelectElement).options).find((o) => o.value.startsWith('words|'))
+      expect(wordsOption).toBeTruthy()
+      fireEvent.change(select, { target: { value: wordsOption!.value } })
+      expect(screen.getByTestId('accuracy-trend-chart')).toBeTruthy()
+    })
+
+    it('is independent of the mode filter dropdown (coarse filter above it)', () => {
+      const results = [
+        makeResult({ wpm: 60, accuracy: 90, mode: 'words', mode2: 30, language: 'english', date: '2026-01-01T00:00:00.000Z' }),
+        makeResult({ wpm: 65, accuracy: 92, mode: 'words', mode2: 30, language: 'english', date: '2026-01-02T00:00:00.000Z' }),
+      ]
+      renderWithI18n(<TypingTestHistory results={results} />)
+      expect(screen.getByTestId('accuracy-trend-chart')).toBeTruthy()
+      // Switching the table's mode filter to a mode with zero matching rows
+      // must not affect the condition selector/chart, which is scoped to
+      // the whole tab's results, not the mode-filtered table.
+      fireEvent.change(screen.getByTestId('history-filter-mode'), { target: { value: 'time' } })
+      expect(screen.getByTestId('accuracy-trend-chart')).toBeTruthy()
+    })
+
+    it('is not shown when the active tab has no results', () => {
+      renderWithI18n(<TypingTestHistory results={[]} />)
+      expect(screen.queryByTestId('history-condition-filter')).toBeNull()
+    })
   })
 })
